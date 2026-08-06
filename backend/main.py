@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Request
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
@@ -248,8 +248,23 @@ def root():
     return {"status": "RWA Backend Running", "version": "1.0.0"}
 
 
+def _run_semantic_matching(dataset_id: str, detected_tables: List[TableRegion], upload_date: str):
+    try:
+        if not is_matcher_available():
+            return
+        matcher = get_matcher()
+        for table in detected_tables:
+            column_names = [column.name for column in table.columns]
+            mappings = matcher.match_columns(column_names, threshold=0.1)
+            db.store_column_mappings(dataset_id, table.id, mappings, upload_date)
+        print(f"Semantic matching completed for {len(detected_tables)} table(s)")
+    except Exception as e:
+        print(f"Warning: Semantic matching failed: {e}")
+
+
 @app.post("/api/datasets/upload")
 async def upload_dataset(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     dataset_name: str = Form(...),
     version: str = Form("v1.0.0")
@@ -318,26 +333,6 @@ async def upload_dataset(
         
         # Store in SQLite database
         db.store_dataset(dataset_id, dataset_name.strip(), file.filename, upload_date, metadata, version)
-        
-        # Perform semantic matching on column headers
-        try:
-            if is_matcher_available():
-                matcher = get_matcher()
-                
-                for table in detected_tables:
-                    # Get column names from the table
-                    column_names = [col.name for col in table.columns]
-                    
-                    # Match columns to abacus fields
-                    mappings = matcher.match_columns(column_names, threshold=0.1)
-                    
-                    # Store the mappings in the database
-                    db.store_column_mappings(dataset_id, table.id, mappings, upload_date)
-                    
-                print(f"Semantic matching completed for {len(detected_tables)} table(s)")
-        except Exception as e:
-            print(f"Warning: Semantic matching failed: {e}")
-            # Continue without failing the upload
         
         # Store each detected table in SQLite
         for table in detected_tables:
@@ -412,6 +407,10 @@ async def upload_dataset(
 
         metadata["user_name"] = normalized_dataset_name
         metadata["auto_cluster"] = auto_cluster
+        semantic_matching_enabled = os.environ.get("ENABLE_SEMANTIC_MATCHING", "true").lower() in ("1", "true", "yes")
+        metadata["semantic_matching"] = "scheduled" if semantic_matching_enabled else "disabled"
+        if semantic_matching_enabled:
+            background_tasks.add_task(_run_semantic_matching, dataset_id, detected_tables, upload_date)
         return metadata
         
     except HTTPException:

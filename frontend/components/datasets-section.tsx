@@ -141,7 +141,7 @@ export function DatasetsSection({
       setUploadStage(t("uploadStageDetecting"));
 
       if (!response.ok) {
-        let errorMessage = t("uploadFailedDesc");
+        let errorMessage = `${t("uploadFailedDesc")} (HTTP ${response.status})`;
         try {
           const errData = await response.json();
           if (errData?.detail && typeof errData.detail === "string") {
