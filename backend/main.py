@@ -407,7 +407,7 @@ async def upload_dataset(
 
         metadata["user_name"] = normalized_dataset_name
         metadata["auto_cluster"] = auto_cluster
-        semantic_matching_enabled = os.environ.get("ENABLE_SEMANTIC_MATCHING", "true").lower() in ("1", "true", "yes")
+        semantic_matching_enabled = os.environ.get("ENABLE_SEMANTIC_MATCHING", "false").lower() in ("1", "true", "yes")
         metadata["semantic_matching"] = "scheduled" if semantic_matching_enabled else "disabled"
         if semantic_matching_enabled:
             background_tasks.add_task(_run_semantic_matching, dataset_id, detected_tables, upload_date)
