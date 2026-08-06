@@ -919,14 +919,14 @@ def generate_code(request: GenerateCodeRequest):
             content = "\n".join(lines)
         return content
 
-    # Use an httpx client that ignores SSL_CERT_FILE env (avoids FileNotFoundError when that path is missing)
-    import httpx
-    _http = httpx.Client(trust_env=False)
-
     if openai_api_key:
         try:
             from openai import OpenAI
-            client = OpenAI(api_key=openai_api_key, http_client=_http)
+            client = OpenAI(
+                api_key=openai_api_key,
+                timeout=60.0,
+                max_retries=1,
+            )
             response = client.chat.completions.create(
                 **{**kwargs, "model": openai_model}
             )
@@ -934,6 +934,10 @@ def generate_code(request: GenerateCodeRequest):
         except Exception as e:
             traceback.print_exc()
             raise HTTPException(502, f"OpenAI request failed: {e}") from e
+
+            # Azure/custom gateways may need to ignore a broken local SSL_CERT_FILE setting.
+            import httpx
+            _http = httpx.Client(trust_env=False)
 
     last_error: Optional[Exception] = None
     base_url_style = os.environ.get("AZURE_OPENAI_USE_BASE_URL", "").lower() in ("1", "true", "yes")
