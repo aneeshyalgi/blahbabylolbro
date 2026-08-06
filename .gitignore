@@ -1,0 +1,33 @@
+# Secrets and local credentials
+creds.txt
+**/.env
+**/.env.*
+!**/.env.example
+
+# Python environments and caches
+**/.venv/
+**/venv/
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+
+# JavaScript dependencies and build output
+**/node_modules/
+**/.next/
+**/out/
+**/.turbo/
+**/*.tsbuildinfo
+
+# Runtime data
+backend/uploads/
+backend/results/
+backend/*.db
+backend/*.db-*
+backend/*.sqlite*
+
+# Local tooling and OS files
+**/.vscode/
+**/.idea/
+**/.DS_Store
+**/Thumbs.db
+**/*.log
