@@ -20,7 +20,6 @@ from pydantic import BaseModel as PydanticBaseModel
 from table_detector import TableDetector
 from models import TableRegion, ColumnInfo, ColumnDataType
 import database as db
-from semantic_matcher import get_matcher, is_matcher_available
 import web_scraper
 import auth as auth_module
 
@@ -250,6 +249,8 @@ def root():
 
 def _run_semantic_matching(dataset_id: str, detected_tables: List[TableRegion], upload_date: str):
     try:
+        from semantic_matcher import get_matcher, is_matcher_available
+
         if not is_matcher_available():
             return
         matcher = get_matcher()
