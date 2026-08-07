@@ -346,7 +346,7 @@
     "semanticLineageDesc": "Seleccione un cluster y una ejecución para generar el grafo de lineaje semántico.",
     "refresh": "Actualizar",
     "loadingExecutionResult": "Cargando resultado de ejecución…",
-    "noExecutionsRunCluster": "No hay ejecuciones para este cluster. Ejecute el cluster en la pestaña Clusters para añadir historial.",
+    "noExecutionsRunCluster": "No hay ejecuciones para este cluster. Ejecute el cluster en la pestaña Resultados para añadir historial.",
     "executionResultFullScreen": "Resultado de ejecución — pantalla completa"
   },
   "contentLineage": {
@@ -370,7 +370,21 @@
     "download": "Descargar:",
     "downloadFile": "Descargar archivo",
     "none": "Ninguno",
-    "annexesLabel": "Anexos:"
+    "annexesLabel": "Anexos:",
+    "liveTitle": "Normativas recopiladas en vivo (EUR-Lex)",
+    "liveDescription": "Recopila directamente de EUR-Lex las normativas actuales de la UE sobre banca, finanzas y requisitos de capital relevantes para Abacus.",
+    "scrapeNow": "Recopilar ahora",
+    "stop": "Detener",
+    "clearResults": "Borrar resultados",
+    "clearSuccess": "Normativas recopiladas borradas",
+    "clearFailed": "No se pudieron borrar los resultados",
+    "scraping": "Recopilando...",
+    "lastRun": "Última ejecución: {date}",
+    "neverRun": "Aún no ejecutado",
+    "noLiveResults": "Aún no hay resultados en vivo. Haga clic en \"Recopilar ahora\" para obtener las últimas normativas de EUR-Lex.",
+    "updatedVersion": "Versión más reciente",
+    "scrapeFailed": "Error al recopilar",
+    "scrapeStarted": "Recopilación iniciada. Esto puede tardar un minuto."
   },
   "releaseNotes": {
     "title": "Notas de versión R7.18.0.00",

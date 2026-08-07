@@ -18,6 +18,9 @@ export const API_ENDPOINTS = {
     `${API_BASE_URL}/api/datasets/${datasetId}/tables/${tableId}/data`,
   datasetDelete: (id: string) => `${API_BASE_URL}/api/datasets/${id}`,
   datasetMappings: (id: string) => `${API_BASE_URL}/api/datasets/${id}/mappings`,
+  datasetSheets: (id: string) => `${API_BASE_URL}/api/datasets/${id}/sheets`,
+  datasetSheet: (id: string, sheetIndex: number) =>
+    `${API_BASE_URL}/api/datasets/${id}/sheets/${sheetIndex}`,
   
   // Code
   code: `${API_BASE_URL}/api/code`,
@@ -46,6 +49,17 @@ export const API_ENDPOINTS = {
 
   // Regulations (EUR-Lex scraper)
   regulations: `${API_BASE_URL}/api/regulations`,
+  regulationsScrape: `${API_BASE_URL}/api/regulations/scrape`,
+  regulationsStop: `${API_BASE_URL}/api/regulations/stop`,
+  regulationsClear: `${API_BASE_URL}/api/regulations/results`,
+
+  // Release notes workbooks
+  releaseNotes: `${API_BASE_URL}/api/release-notes`,
+  releaseNotesStatic: `${API_BASE_URL}/api/release-notes/static`,
+  releaseNoteSheet: (id: string, sheetIndex: number) =>
+    `${API_BASE_URL}/api/release-notes/${id}/sheets/${sheetIndex}`,
+  releaseNoteFile: (id: string) => `${API_BASE_URL}/api/release-notes/${id}/file`,
+  releaseNoteDelete: (id: string) => `${API_BASE_URL}/api/release-notes/${id}`,
 
   // Health check
   health: `${API_BASE_URL}/`,

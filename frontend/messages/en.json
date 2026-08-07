@@ -346,7 +346,7 @@
     "semanticLineageDesc": "Select a cluster and an execution to generate the semantic lineage graph.",
     "refresh": "Refresh",
     "loadingExecutionResult": "Loading execution result…",
-    "noExecutionsRunCluster": "No executions for this cluster. Run the cluster in the Clusters tab to add execution history.",
+    "noExecutionsRunCluster": "No executions for this cluster. Run the cluster in the Results tab to add execution history.",
     "executionResultFullScreen": "Execution result — full screen"
   },
   "contentLineage": {
@@ -370,7 +370,21 @@
     "download": "Download:",
     "downloadFile": "Download file",
     "none": "None",
-    "annexesLabel": "Annexes:"
+    "annexesLabel": "Annexes:",
+    "liveTitle": "Live Scraped Regulations (EUR-Lex)",
+    "liveDescription": "Scrapes EUR-Lex directly for current EU banking, finance, and capital-requirements regulations relevant to Abacus reporting.",
+    "scrapeNow": "Scrape now",
+    "stop": "Stop",
+    "clearResults": "Clear results",
+    "clearSuccess": "Scraped regulations cleared",
+    "clearFailed": "Could not clear results",
+    "scraping": "Scraping...",
+    "lastRun": "Last run: {date}",
+    "neverRun": "Not run yet",
+    "noLiveResults": "No live results yet. Click \"Scrape now\" to fetch the latest regulations from EUR-Lex.",
+    "updatedVersion": "Newer version",
+    "scrapeFailed": "Scrape failed",
+    "scrapeStarted": "Scrape started. This can take a minute."
   },
   "releaseNotes": {
     "title": "Release Notes Summary R7.18.0.00",

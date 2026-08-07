@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { CheckCircle, Play, Upload, FileCode, Loader2, Trash2, Sparkles, Copy } from "lucide-react";
+import { Braces, CheckCircle, Play, Upload, FileCode, Loader2, Trash2, Sparkles, Copy, SlidersHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { API_ENDPOINTS } from "@/lib/api-config";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -50,6 +50,8 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { useTranslations } from "next-intl";
+import { GuidedCodeEditor } from "@/components/guided-code-editor";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 
 interface CodeTabContentProps {
   isLoading?: boolean;
@@ -63,6 +65,7 @@ export function CodeTabContent({ isLoading = false }: CodeTabContentProps) {
   const [codeContent, setCodeContent] = useState<string>("");
   const [editedContent, setEditedContent] = useState<string>("");
   const [isEditing, setIsEditing] = useState(false);
+  const [editorMode, setEditorMode] = useState<"guided" | "python">("guided");
   const [loadingContent, setLoadingContent] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -118,6 +121,7 @@ export function CodeTabContent({ isLoading = false }: CodeTabContentProps) {
       setCodeContent(data.content || '');
       setEditedContent(data.content || '');
       setIsEditing(false);
+      setEditorMode("guided");
     } catch (error) {
       console.error('Error fetching code content:', error);
       setCodeContent('// Error loading code content');
@@ -145,6 +149,7 @@ export function CodeTabContent({ isLoading = false }: CodeTabContentProps) {
         body: JSON.stringify({ content: editedContent }),
       });
       
+      const data = await response.json().catch(() => ({}));
       if (response.ok) {
         setCodeContent(editedContent);
         setIsEditing(false);
@@ -153,13 +158,13 @@ export function CodeTabContent({ isLoading = false }: CodeTabContentProps) {
           description: "Code saved successfully",
         });
       } else {
-        throw new Error('Failed to save code');
+        throw new Error((data as { detail?: string }).detail || 'Failed to save code');
       }
     } catch (error) {
       console.error('Error saving code:', error);
       toast({
         title: "Error",
-        description: "Failed to save code",
+        description: error instanceof Error ? error.message : "Failed to save code",
         variant: "destructive",
       });
     } finally {
@@ -663,7 +668,28 @@ export function CodeTabContent({ isLoading = false }: CodeTabContentProps) {
       <Card>
         <CardHeader className="pb-4">
           <div className="flex items-center justify-between">
-            <CardTitle className="text-base font-semibold">{t("codeEditorTitle")}</CardTitle>
+            <div className="flex items-center gap-3">
+              <CardTitle className="text-base font-semibold">{t("codeEditorTitle")}</CardTitle>
+              {selectedFile && !loadingContent && (
+                <ToggleGroup
+                  type="single"
+                  variant="outline"
+                  size="sm"
+                  value={editorMode}
+                  onValueChange={(value) => value && setEditorMode(value as "guided" | "python")}
+                  aria-label="Editor mode"
+                >
+                  <ToggleGroupItem value="guided" aria-label="Guided editor">
+                    <SlidersHorizontal className="mr-1.5 h-3.5 w-3.5" />
+                    Guided
+                  </ToggleGroupItem>
+                  <ToggleGroupItem value="python" aria-label="Python editor">
+                    <Braces className="mr-1.5 h-3.5 w-3.5" />
+                    Python
+                  </ToggleGroupItem>
+                </ToggleGroup>
+              )}
+            </div>
             {selectedFile && !loadingContent && (
               <div className="flex gap-2">
                 {isEditing ? (
@@ -714,6 +740,12 @@ export function CodeTabContent({ isLoading = false }: CodeTabContentProps) {
                 {t("noCodeFileSelectedHint")}
               </p>
             </div>
+          ) : editorMode === "guided" ? (
+            <GuidedCodeEditor
+              source={isEditing ? editedContent : codeContent}
+              onChange={setEditedContent}
+              disabled={!isEditing}
+            />
           ) : isEditing ? (
             <Textarea
               value={editedContent}

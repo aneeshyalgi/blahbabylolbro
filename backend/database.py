@@ -197,7 +197,7 @@ def store_dataset(dataset_id: str, user_name: str, filename: str, upload_date: s
     cursor.execute("""
         INSERT INTO datasets (id, user_name, filename, upload_date, metadata, version)
         VALUES (?, ?, ?, ?, ?, ?)
-    """, (dataset_id, user_name, filename, upload_date, json.dumps(metadata), version))
+    """, (dataset_id, user_name, filename, upload_date, json.dumps(metadata, default=str), version))
     
     conn.commit()
     conn.close()
@@ -312,7 +312,7 @@ def update_dataset_metadata(dataset_id: str, metadata: Dict) -> bool:
 
     cursor.execute(
         "UPDATE datasets SET metadata = ? WHERE id = ?",
-        (json.dumps(metadata), dataset_id),
+        (json.dumps(metadata, default=str), dataset_id),
     )
     updated = cursor.rowcount > 0
     conn.commit()

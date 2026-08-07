@@ -1,70 +1,222 @@
 "use client";
 
-import { useTranslations } from "next-intl";
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { useEffect, useRef, useState } from "react";
+import { Download, FileSpreadsheet, Loader2, RefreshCw, Trash2, Upload } from "lucide-react";
+import { API_ENDPOINTS } from "@/lib/api-config";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useToast } from "@/hooks/use-toast";
+import { ReleaseNotesWorkbookViewer, type ReleaseNoteSheet } from "@/components/release-notes-workbook-viewer";
+
+type Workbook = { id: string; filename: string; size: number; upload_date: string; sheets: string[] };
+type StaticReleaseNotes = {
+  title: string;
+  intro: string;
+  highlights: { area: string; description: string }[];
+  file_downloads: string[];
+};
 
 export function PatchNotesTabContent() {
-  const t = useTranslations("releaseNotes");
+  const [workbooks, setWorkbooks] = useState<Workbook[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [activeSheet, setActiveSheet] = useState(0);
+  const [sheet, setSheet] = useState<ReleaseNoteSheet | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadingSheet, setLoadingSheet] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Workbook | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [staticReleaseNotes, setStaticReleaseNotes] = useState<StaticReleaseNotes | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const { toast } = useToast();
+  const selected = workbooks.find((workbook) => workbook.id === selectedId) ?? null;
+
+  const fetchWorkbooks = async (preferredId?: string) => {
+    setLoading(true);
+    try {
+      const response = await fetch(API_ENDPOINTS.releaseNotes);
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail || "Could not load release notes.");
+      const next: Workbook[] = payload.workbooks || [];
+      setWorkbooks(next);
+      const nextId = preferredId && next.some((item) => item.id === preferredId)
+        ? preferredId
+        : next.some((item) => item.id === selectedId) ? selectedId : next[0]?.id ?? null;
+      setSelectedId(nextId);
+      if (nextId !== selectedId) setActiveSheet(0);
+    } catch (requestError) {
+      toast({ title: "Could not load release notes", description: requestError instanceof Error ? requestError.message : "Request failed", variant: "destructive" });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void fetchWorkbooks();
+    fetch(API_ENDPOINTS.releaseNotesStatic)
+      .then((response) => response.ok ? response.json() : null)
+      .then((payload) => payload && setStaticReleaseNotes(payload))
+      .catch(() => setStaticReleaseNotes(null));
+  }, []);
+
+  useEffect(() => {
+    if (!selectedId) { setSheet(null); return; }
+    let cancelled = false;
+    setLoadingSheet(true);
+    setError(null);
+    fetch(API_ENDPOINTS.releaseNoteSheet(selectedId, activeSheet))
+      .then(async (response) => {
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.detail || "Could not load worksheet.");
+        if (!cancelled) setSheet(payload);
+      })
+      .catch((requestError) => {
+        if (!cancelled) { setSheet(null); setError(requestError instanceof Error ? requestError.message : "Could not load worksheet."); }
+      })
+      .finally(() => { if (!cancelled) setLoadingSheet(false); });
+    return () => { cancelled = true; };
+  }, [selectedId, activeSheet]);
+
+  const uploadWorkbook = async (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    setUploading(true);
+    try {
+      const response = await fetch(API_ENDPOINTS.releaseNotes, { method: "POST", body: form });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail || "Upload failed.");
+      await fetchWorkbooks(payload.id);
+      setActiveSheet(0);
+      toast({ title: "Release notes uploaded", description: payload.filename });
+    } catch (requestError) {
+      toast({ title: "Upload failed", description: requestError instanceof Error ? requestError.message : "Could not upload workbook.", variant: "destructive" });
+    } finally {
+      setUploading(false);
+      if (inputRef.current) inputRef.current.value = "";
+    }
+  };
+
+  const deleteWorkbook = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      const response = await fetch(API_ENDPOINTS.releaseNoteDelete(deleteTarget.id), { method: "DELETE" });
+      const responseText = await response.text();
+      let payload: { detail?: string } = {};
+      try {
+        payload = responseText ? JSON.parse(responseText) : {};
+      } catch {
+        payload = {};
+      }
+      if (!response.ok) throw new Error(payload.detail || "Delete failed.");
+      setDeleteTarget(null);
+      await fetchWorkbooks();
+      toast({ title: "Release notes deleted" });
+    } catch (requestError) {
+      toast({ title: "Delete failed", description: requestError instanceof Error ? requestError.message : "Could not delete workbook.", variant: "destructive" });
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   return (
-    <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle>{t("title")}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm mb-4">
-            {t("intro")}
-          </p>
-          <ul className="list-disc pl-4 space-y-2 text-sm">
-            <li>
-              <strong>Regulatory Framework Updates:</strong> Full support for DPM 4.2 across modules such as FinRep, ESG Disclosure, IRRBB, Resolution Planning, IFR, and Supervisory Benchmarking Portfolios. 
-            </li>
-            <li>
-              <strong>Own Funds & Credit Risk:</strong> Allocation logic corrected for IRB/SA exposures, new data fields like CRE133, VAD275, and VAL531, Output Floor enhancements, collateral logic fixes, and improvements in templates C08, C09, C10, C34. 
-            </li>
-            <li>
-              <strong>ESG EU Taxonomy:</strong> Adoption of NACE Rev. 2.1, fixes for GAR KPI denominators, support for nuclear & gas activities, new instrument fields for non‑material and non‑assessed exposures, and exclusion of artificial zero‑value allocations. 
-            </li>
-            <li>
-              <strong>AnaCredit Enhancements:</strong> Bulgaria and Croatia added as reporting countries, new XSD schemas (Germany v2.8, Luxembourg v1.0.13), updated national identifiers, address logic corrections, KPI corrections, and improved XML export stability. 
-            </li>
-            <li>
-              <strong>Liquidity (LCR/NSFR/AMM/AE):</strong> Corrected reporting of non‑HQLA collaterals, fixed weighting logic in C75.01, corrected sign handling for operating expenses, plus resolution of GUI execution errors for liquidity processes. 
-            </li>
-            <li>
-              <strong>Large Exposure & Leverage Ratio:</strong> Czech Republic enabled as reporting country, new exception rules, correct handling of securitisation tranches, and improved SME classification logic. 
-            </li>
-            <li>
-              <strong>Resolution Reporting (SRB MBDT):</strong> Bail‑in logic corrected for structured products, intragroup liabilities included, improved liability descriptions, and corrected handling of carrying amounts and close‑out valuations. 
-            </li>
-            <li>
-              <strong>FinRep IFRS/nGAAP:</strong> IAS32‑aligned derivatives offsetting, updated country code (x01 → 7B), logic corrections for profit/loss accounts, and updated cross‑module validations. 
-            </li>
-            <li>
-              <strong>National Reporting:</strong> Updates across Germany (BiSta, WiFSta, SHS), Netherlands (RRE/CRE), Finland (TOL25, LTC report), Ireland (RS3/MR1), UK (PRA 3.1 deviations), Canada (BCAR), and Australia (APRA). 
-            </li>
-            <li>
-              <strong>Technical Improvements:</strong> Performance optimizations, enhanced security (OpenID, secure cookies), adapter mapping fixes, UI enhancements, and database performance improvements across clusters. 
-            </li>
-          </ul>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader>
-          <CardTitle>{t("fileDownloads")}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p>
-              <a
-                href={"/Abacus360_preReleasenotes_R7.18.0.00.xlsm"}
-                target="_blank"
-                className="text-blue-600 underline"
-              >
-                {t("abacusReleaseNotes")}
-              </a>
-          </p>
-        </CardContent>
-        </Card>
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-4">
+        <div><h2 className="text-lg font-semibold">Release notes</h2><p className="text-sm text-muted-foreground">Upload and view Excel release-note workbooks.</p></div>
+        <div className="flex gap-2">
+          <input ref={inputRef} type="file" accept=".xlsx,.xlsm" className="hidden" onChange={(event) => event.target.files?.[0] && void uploadWorkbook(event.target.files[0])} />
+          <Button variant="outline" size="icon" onClick={() => void fetchWorkbooks()} aria-label="Refresh"><RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} /></Button>
+          <Button onClick={() => inputRef.current?.click()} disabled={uploading}>{uploading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}Upload Excel</Button>
+        </div>
+      </div>
+
+      <div className="grid min-h-[640px] grid-cols-[280px_minmax(0,1fr)] overflow-hidden rounded-md border bg-card">
+        <aside className="border-r bg-muted/20 p-3">
+          <h3 className="mb-3 px-2 text-xs font-semibold uppercase text-muted-foreground">Workbooks</h3>
+          {loading ? <div className="px-2 py-8 text-sm text-muted-foreground"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />Loading</div> : workbooks.length === 0 ? <div className="px-2 py-8 text-center text-sm text-muted-foreground"><FileSpreadsheet className="mx-auto mb-2 h-8 w-8" />No release notes uploaded</div> : (
+            <div className="space-y-1">{workbooks.map((workbook) => (
+              <div key={workbook.id} className={`flex items-start gap-2 rounded-md px-2 py-2 ${selectedId === workbook.id ? "bg-accent" : "hover:bg-accent/60"}`}>
+                <button type="button" className="min-w-0 flex-1 text-left" onClick={() => { setSelectedId(workbook.id); setActiveSheet(0); }}>
+                  <span className="block truncate text-sm font-medium">{workbook.filename}</span>
+                  <span className="block text-xs text-muted-foreground">{workbook.sheets.length} sheet{workbook.sheets.length === 1 ? "" : "s"} · {new Date(workbook.upload_date).toLocaleDateString()}</span>
+                </button>
+                <a href={API_ENDPOINTS.releaseNoteFile(workbook.id)} target="_blank" rel="noreferrer" className="rounded p-1 text-muted-foreground hover:text-foreground" aria-label="Download"><Download className="h-3.5 w-3.5" /></a>
+                <button type="button" className="rounded p-1 text-muted-foreground hover:text-destructive" onClick={() => setDeleteTarget(workbook)} aria-label="Delete"><Trash2 className="h-3.5 w-3.5" /></button>
+              </div>
+            ))}</div>
+          )}
+        </aside>
+
+        <section className="flex min-w-0 flex-col">
+          {selected && <div className="flex items-center justify-between gap-4 border-b px-4 py-3">
+            <div className="min-w-0"><h3 className="truncate text-sm font-semibold">{selected.filename}</h3><p className="text-xs text-muted-foreground">{(selected.size / 1024).toFixed(1)} KB</p></div>
+            <Tabs value={String(activeSheet)} onValueChange={(value) => setActiveSheet(Number(value))}><TabsList className="max-w-[640px] overflow-x-auto">{selected.sheets.map((name, index) => <TabsTrigger key={`${name}-${index}`} value={String(index)}>{name}</TabsTrigger>)}</TabsList></Tabs>
+          </div>}
+          <ReleaseNotesWorkbookViewer sheet={sheet} loading={loadingSheet} error={error} />
+        </section>
+      </div>
+
+      {staticReleaseNotes && (
+        <div className="space-y-4 pt-2">
+          <Card>
+            <CardHeader><CardTitle>{staticReleaseNotes.title}</CardTitle></CardHeader>
+            <CardContent>
+              <p className="mb-4 text-sm">{staticReleaseNotes.intro}</p>
+              <ul className="list-disc space-y-2 pl-5 text-sm">
+                {staticReleaseNotes.highlights.map((highlight) => (
+                  <li key={highlight.area}><strong>{highlight.area}:</strong> {highlight.description}</li>
+                ))}
+              </ul>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader><CardTitle>File downloads</CardTitle></CardHeader>
+            <CardContent className="space-y-2">
+              {staticReleaseNotes.file_downloads.map((filename) => (
+                <a key={filename} href={`/${filename}`} target="_blank" rel="noreferrer" className="block text-primary underline underline-offset-2">
+                  Abacus360 release notes
+                </a>
+              ))}
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      <AlertDialog open={Boolean(deleteTarget)} onOpenChange={(open) => !open && !deleting && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete release notes?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently deletes “{deleteTarget?.filename ?? ""}” from backend storage. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(event) => {
+                event.preventDefault();
+                void deleteWorkbook();
+              }}
+              disabled={deleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleting ? "Deleting..." : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

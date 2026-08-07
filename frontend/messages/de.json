@@ -346,7 +346,7 @@
     "semanticLineageDesc": "Wählen Sie einen Cluster und eine Ausführung für den semantischen Linien-Graphen.",
     "refresh": "Aktualisieren",
     "loadingExecutionResult": "Ausführungsergebnis wird geladen…",
-    "noExecutionsRunCluster": "Keine Ausführungen für diesen Cluster. Führen Sie den Cluster im Tab „Cluster“ aus, um die Historie zu füllen.",
+    "noExecutionsRunCluster": "Keine Ausführungen für diesen Cluster. Führen Sie den Cluster im Tab „Ergebnisse“ aus, um die Historie zu füllen.",
     "executionResultFullScreen": "Ausführungsergebnis — Vollbild"
   },
   "contentLineage": {
@@ -370,7 +370,21 @@
     "download": "Download:",
     "downloadFile": "Datei herunterladen",
     "none": "Keine",
-    "annexesLabel": "Anhänge:"
+    "annexesLabel": "Anhänge:",
+    "liveTitle": "Live gescrapte Vorschriften (EUR-Lex)",
+    "liveDescription": "Durchsucht EUR-Lex direkt nach aktuellen EU-Vorschriften zu Banken, Finanzen und Eigenkapitalanforderungen, die für Abacus relevant sind.",
+    "scrapeNow": "Jetzt scrapen",
+    "stop": "Stoppen",
+    "clearResults": "Ergebnisse löschen",
+    "clearSuccess": "Gescrapte Vorschriften gelöscht",
+    "clearFailed": "Ergebnisse konnten nicht gelöscht werden",
+    "scraping": "Wird gescrapt...",
+    "lastRun": "Letzter Lauf: {date}",
+    "neverRun": "Noch nicht ausgeführt",
+    "noLiveResults": "Noch keine Live-Ergebnisse. Klicken Sie auf „Jetzt scrapen“, um aktuelle Vorschriften von EUR-Lex abzurufen.",
+    "updatedVersion": "Neuere Version",
+    "scrapeFailed": "Scraping fehlgeschlagen",
+    "scrapeStarted": "Scraping gestartet. Dies kann eine Minute dauern."
   },
   "releaseNotes": {
     "title": "Versionshinweise R7.18.0.00",

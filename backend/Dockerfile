@@ -33,7 +33,7 @@ ENV RESULTS_DIR=/data/results
 ENV RWA_DATABASE_PATH=/data/rwa_data.db
 
 # Prepare writable data directories for local container runs.
-RUN mkdir -p /data/uploads/datasets /data/uploads/code /data/results
+RUN mkdir -p /data/uploads/datasets /data/uploads/code /data/uploads/release_notes /data/results
 
 # Run the application
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

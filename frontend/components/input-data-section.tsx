@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
-import { Upload, Maximize2, X, Edit2, Save, RotateCcw } from "lucide-react";
+import { Upload, Maximize2, X, Edit2, Save, RotateCcw, LayoutGrid, FileSpreadsheet, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { API_ENDPOINTS } from "@/lib/api-config";
@@ -22,6 +22,9 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ReleaseNotesWorkbookViewer, type ReleaseNoteSheet } from "@/components/release-notes-workbook-viewer";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
@@ -82,6 +85,13 @@ export function InputDataSection({ isLoading = false, datasetId }: InputDataSect
   const [fullScreenTableId, setFullScreenTableId] = useState<string | null>(null);
   const [columnDescriptions, setColumnDescriptions] = useState<Record<string, any>>({});
   const [editStates, setEditStates] = useState<Record<string, EditState>>({});
+  const [viewMode, setViewMode] = useState<"modern" | "classic">("modern");
+  const [sheetNames, setSheetNames] = useState<string[]>([]);
+  const [activeSheetIndex, setActiveSheetIndex] = useState(0);
+  const [classicSheet, setClassicSheet] = useState<ReleaseNoteSheet | null>(null);
+  const [loadingSheetNames, setLoadingSheetNames] = useState(false);
+  const [loadingClassicSheet, setLoadingClassicSheet] = useState(false);
+  const [classicError, setClassicError] = useState<string | null>(null);
 
   const tables: InputTable[] = useMemo(() => tableData?.tables || [], [tableData]);
   const fullScreenTable = useMemo(
@@ -97,6 +107,61 @@ export function InputDataSection({ isLoading = false, datasetId }: InputDataSect
       setLoading(false);
     }
   }, [datasetId]);
+
+  useEffect(() => {
+    setActiveSheetIndex(0);
+    setSheetNames([]);
+    setClassicSheet(null);
+  }, [datasetId]);
+
+  useEffect(() => {
+    if (viewMode !== "classic" || !datasetId) return;
+    let cancelled = false;
+    setLoadingSheetNames(true);
+    fetch(API_ENDPOINTS.datasetSheets(datasetId))
+      .then(async (res) => {
+        const payload = await res.json();
+        if (!res.ok) throw new Error(payload.detail || "Could not load sheets.");
+        if (!cancelled) setSheetNames(payload.sheets || []);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setSheetNames([]);
+          setClassicError(error instanceof Error ? error.message : "Could not load sheets.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingSheetNames(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [viewMode, datasetId]);
+
+  useEffect(() => {
+    if (viewMode !== "classic" || !datasetId) return;
+    let cancelled = false;
+    setLoadingClassicSheet(true);
+    setClassicError(null);
+    fetch(API_ENDPOINTS.datasetSheet(datasetId, activeSheetIndex))
+      .then(async (res) => {
+        const payload = await res.json();
+        if (!res.ok) throw new Error(payload.detail || "Could not load worksheet.");
+        if (!cancelled) setClassicSheet(payload);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setClassicSheet(null);
+          setClassicError(error instanceof Error ? error.message : "Could not load worksheet.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingClassicSheet(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [viewMode, datasetId, activeSheetIndex]);
 
   const fetchDataset = async (id: string) => {
     try {
@@ -408,11 +473,63 @@ export function InputDataSection({ isLoading = false, datasetId }: InputDataSect
             <CardTitle className="text-base font-semibold">{t("title")}</CardTitle>
             <p className="mt-1 text-sm text-muted-foreground">{t("subtitle")}</p>
           </div>
+          <ToggleGroup
+            type="single"
+            variant="outline"
+            size="sm"
+            value={viewMode}
+            onValueChange={(value) => value && setViewMode(value as "modern" | "classic")}
+            aria-label="Viewer mode"
+          >
+            <ToggleGroupItem value="modern" aria-label="Modern viewer">
+              <LayoutGrid className="mr-1.5 h-3.5 w-3.5" />
+              Modern
+            </ToggleGroupItem>
+            <ToggleGroupItem value="classic" aria-label="Classic Excel viewer">
+              <FileSpreadsheet className="mr-1.5 h-3.5 w-3.5" />
+              Classic
+            </ToggleGroupItem>
+          </ToggleGroup>
         </div>
       </CardHeader>
 
       <CardContent>
-        {loading || isLoading ? (
+        {viewMode === "modern" && (
+          <div className="mb-4 flex items-start gap-2 rounded-md border border-amber-300/50 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-400/30 dark:bg-amber-950/40 dark:text-amber-200">
+            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span>
+              Not displaying correctly? Switch to <strong>Classic</strong> view above to see the original Excel layout.
+            </span>
+          </div>
+        )}
+        {viewMode === "classic" ? (
+          !datasetId ? (
+            <div className="flex flex-col items-center justify-center py-12 text-center">
+              <Upload className="mb-4 h-12 w-12 text-muted-foreground" />
+              <h3 className="text-lg font-medium text-foreground">{t("noInputData")}</h3>
+              <p className="mt-1 text-sm text-muted-foreground">{t("noInputDataHint")}</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {sheetNames.length > 0 && (
+                <Tabs value={String(activeSheetIndex)} onValueChange={(value) => setActiveSheetIndex(Number(value))}>
+                  <TabsList className="max-w-full overflow-x-auto">
+                    {sheetNames.map((name, index) => (
+                      <TabsTrigger key={`${name}-${index}`} value={String(index)}>{name}</TabsTrigger>
+                    ))}
+                  </TabsList>
+                </Tabs>
+              )}
+              <div className="max-h-[500px] overflow-auto rounded-lg border border-border">
+                <ReleaseNotesWorkbookViewer
+                  sheet={classicSheet}
+                  loading={loadingSheetNames || loadingClassicSheet}
+                  error={classicError}
+                />
+              </div>
+            </div>
+          )
+        ) : loading || isLoading ? (
           <div className="space-y-3">
             {[1, 2, 3, 4].map((i) => (
               <Skeleton key={i} className="h-12 w-full" />

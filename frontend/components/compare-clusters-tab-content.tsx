@@ -323,6 +323,7 @@ export function CompareClustersTabContent() {
   };
 
   const getDeviationType = (value_a: any, value_b: any, diff: any): string => {
+    if (!value_a && !value_b) return "Missing in both clusters";
     if (!value_a) return "Value only exists in compare cluster";
     if (!value_b) return "Value only exists in base cluster";
     if (diff != null && diff > 0) return "Amount variance positive";

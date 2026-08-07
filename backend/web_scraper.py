@@ -5,10 +5,87 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 import re
 import threading
+from datetime import datetime, timezone
 
 _scrape_running = False
 _scrape_lock = threading.Lock()
 _last_results = None
+_last_run_at = None
+_last_error = None
+_stop_requested = False
+_stopped = False
+_current_driver = None
+_progress_lock = threading.Lock()
+_progress = {"index": 0, "total": 0, "url": None, "regulation_name": None, "phase": "Idle", "detail": ""}
+
+# EUR-Lex ELI URLs for EU banking/finance regulations relevant to regulatory reporting
+# (COREP/FINREP, capital requirements, recovery & resolution, supervision).
+REGULATION_URLS = [
+    "https://eur-lex.europa.eu/eli/reg/2013/575/oj/eng",       # CRR - Capital Requirements Regulation
+    "https://eur-lex.europa.eu/eli/reg_impl/2021/451/oj/eng",  # CRR ITS - COREP/FINREP reporting
+    "https://eur-lex.europa.eu/eli/dir/2013/36/oj/eng",        # CRD IV - Capital Requirements Directive
+    "https://eur-lex.europa.eu/eli/dir/2014/59/oj/eng",        # BRRD - Bank Recovery and Resolution Directive
+    "https://eur-lex.europa.eu/eli/reg/2013/1024/oj/eng",      # SSM Regulation - Single Supervisory Mechanism
+]
+
+
+def _set_progress(index=None, total=None, url=None, regulation_name=None, phase=None, detail=""):
+    global _progress
+    with _progress_lock:
+        _progress = {
+            "index": index if index is not None else _progress.get("index", 0),
+            "total": total if total is not None else _progress.get("total", 0),
+            "url": url if url is not None else _progress.get("url"),
+            "regulation_name": regulation_name if regulation_name is not None else _progress.get("regulation_name"),
+            "phase": phase if phase is not None else _progress.get("phase", "Idle"),
+            "detail": detail,
+        }
+
+
+def get_status():
+    """Return the current scrape status without blocking on the lock."""
+    with _progress_lock:
+        progress = dict(_progress)
+    return {
+        "running": _scrape_running,
+        "results": _last_results,
+        "last_run_at": _last_run_at,
+        "error": _last_error,
+        "stopped": _stopped,
+        "progress": progress,
+    }
+
+
+def is_scraping() -> bool:
+    return _scrape_running
+
+
+def request_stop():
+    """Best-effort stop: flags the loop to halt and force-quits the active browser
+    so any in-progress blocking Selenium call fails and unblocks the scraping thread."""
+    global _stop_requested
+    _stop_requested = True
+    driver = _current_driver
+    if driver is not None:
+        try:
+            driver.quit()
+        except Exception:
+            pass
+    return {"stopping": True}
+
+
+def clear_results():
+    global _last_results, _last_run_at, _last_error, _stopped, _stop_requested
+    with _scrape_lock:
+        if _scrape_running:
+            raise RuntimeError("Stop the active scrape before clearing results")
+        _last_results = None
+        _last_run_at = None
+        _last_error = None
+        _stopped = False
+        _stop_requested = False
+    _set_progress(index=0, total=0, url=None, regulation_name=None, phase="Idle", detail="")
+    return {"cleared": True}
 
 
 def extract_regulation_name(url):
@@ -51,10 +128,12 @@ def extract_regulation_name(url):
 
 class EurLexScraper:
 
-    def __init__(self, url, headless=True, driver=None):
+    def __init__(self, url, headless=True, driver=None, index=None, total=None):
         self.original_url = url
         self.headless = headless
         self.driver = driver
+        self.index = index
+        self.total = total
 
     def setup_driver(self):
         if self.driver:
@@ -91,6 +170,10 @@ class EurLexScraper:
     def find_updated_version_link(self, max_depth=10, visited_urls=None):
         if visited_urls is None:
             visited_urls = set()
+
+        if _stop_requested:
+            print("Stop requested, halting version lookup")
+            return None
 
         if max_depth <= 0:
             print(f"Max recursion depth reached")
@@ -138,6 +221,7 @@ class EurLexScraper:
             print(f"  → Found update: {updated_version_url}")
             print(f"  → Loading updated version... (depth: {11 - max_depth})")
 
+            _set_progress(phase="Checking newer consolidated version", detail=updated_version_url)
             self.driver.get(updated_version_url)
             WebDriverWait(self.driver, 15).until(
                 EC.presence_of_element_located((By.TAG_NAME, "body"))
@@ -242,8 +326,15 @@ class EurLexScraper:
                 print("Error: Failed to initialize WebDriver")
                 return results
 
+            global _current_driver
+            _current_driver = self.driver
+
             print(f"Loading page: {self.original_url}")
             print(f"Regulation: {regulation_name}")
+            _set_progress(
+                index=self.index, total=self.total, url=self.original_url,
+                regulation_name=regulation_name, phase="Loading page", detail=self.original_url,
+            )
             self.driver.get(self.original_url)
 
             WebDriverWait(self.driver, 15).until(
@@ -252,7 +343,12 @@ class EurLexScraper:
 
             print("Page loaded successfully")
 
+            if _stop_requested:
+                print("Stop requested, skipping remaining steps for this regulation")
+                return results
+
             print("\nSearching for latest version (recursive)...")
+            _set_progress(phase="Searching for latest consolidated version", detail="")
             updated_version = self.find_updated_version_link()
             results['updated_version_url'] = updated_version
 
@@ -261,7 +357,12 @@ class EurLexScraper:
             else:
                 print("✓ Already on the latest version (no updates found)")
 
+            if _stop_requested:
+                print("Stop requested, skipping remaining steps for this regulation")
+                return results
+
             print(f"\nSearching for PDF download link on current page...")
+            _set_progress(phase="Searching for PDF download link", detail="")
             pdf_link = self.find_pdf_download_link()
             results['pdf_download_url'] = pdf_link
             if pdf_link:
@@ -269,7 +370,12 @@ class EurLexScraper:
             else:
                 print("✗ No PDF link found")
 
+            if _stop_requested:
+                print("Stop requested, skipping remaining steps for this regulation")
+                return results
+
             print(f"\nSearching for annex anchors on current page...")
+            _set_progress(phase="Searching for annex anchors", detail="")
             annex_links = self.find_annex_anchors()
             results['annex_links'] = annex_links
 
@@ -286,13 +392,18 @@ class EurLexScraper:
             print(f"Error during scraping: {e}")
         finally:
             if self.driver:
-                self.driver.quit()
+                try:
+                    self.driver.quit()
+                except Exception:
+                    pass
+            if _current_driver is self.driver:
+                _current_driver = None
 
         return results
 
 
 def main():
-    global _scrape_running, _last_results
+    global _scrape_running, _last_results, _last_run_at, _last_error, _stop_requested, _stopped
 
     with _scrape_lock:
         if _scrape_running:
@@ -301,22 +412,34 @@ def main():
 
         _scrape_running = True
 
+    _stop_requested = False
+    _stopped = False
+    total = len(REGULATION_URLS)
+    _set_progress(index=0, total=total, url=None, regulation_name=None, phase="Starting scrape...", detail="")
+
     try:
         print("Starting Selenium scrape...")
         results = []
 
-        urls = [
-            "https://eur-lex.europa.eu/eli/reg/2013/575/oj/eng",
-            "https://eur-lex.europa.eu/eli/reg_impl/2021/451/oj/eng",
-        ]
-
-        for url in urls:
-            scraper = EurLexScraper(url, headless=True)
+        for index, url in enumerate(REGULATION_URLS, start=1):
+            if _stop_requested:
+                _stopped = True
+                break
+            scraper = EurLexScraper(url, headless=True, index=index, total=total)
             results.append(scraper.scrape())
+            if _stop_requested:
+                _stopped = True
+                break
 
         _last_results = results
+        _last_run_at = datetime.now(timezone.utc).isoformat()
+        _last_error = None
         return results
+    except Exception as e:
+        _last_error = str(e)
+        raise
     finally:
+        _set_progress(phase="Stopped" if _stopped else "Idle", detail="")
         with _scrape_lock:
             _scrape_running = False
 

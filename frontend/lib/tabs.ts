@@ -4,8 +4,8 @@
 export const DEFAULT_TAB_ORDER = [
   "code",
   "data-modal",
-  "technical-lineage",
   "data",
+  "technical-lineage",
   "clustering",
   "content-lineage",
   "compare-clusters",
