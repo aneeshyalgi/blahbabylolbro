@@ -206,6 +206,7 @@ RWA_INPUT_HARDCODED_FILENAMES = {
     "rwacalculator_coderequirement (4) - copy.xlsx",
     "rwacalculator_coderequirement (5) - copy.xlsx",
     "rwacalculator_coderequirement_1.xlsx",
+    "rwa_calculator_coderequirement_1_neu.xlsx",
     "rwacalculator_coderequirement_1 - copy.xlsx",
     "rwacalculator_coderequirement_1 - copy (1).xlsx",
     "rwacalculator_coderequirement_1 - copy (2).xlsx",
