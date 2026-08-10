@@ -14,6 +14,8 @@ import os
 import json
 import traceback
 import ast
+import re
+from datetime import date, datetime
 from io import BytesIO
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple
@@ -93,6 +95,10 @@ STATIC_RELEASE_NOTES: Dict[str, Any] = {
 class GenerateCodeRequest(PydanticBaseModel):
     dataset_id: str
     prompt: Optional[str] = None  # Optional description/formulas for filling cells
+
+
+class AutoColumnInstructionsRequest(PydanticBaseModel):
+    columns: List[str]
 
 
 class ChatMessage(PydanticBaseModel):
@@ -179,7 +185,89 @@ RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 RELEASE_NOTES_DIR.mkdir(parents=True, exist_ok=True)
 
 # Filenames that get hardcoded table handling (no detector). Compare using .strip().lower().
-RWA_INPUT_HARDCODED_FILENAMES = {"rwa_input.xlsx", "rwa_input again.xlsx"}
+RWA_INPUT_HARDCODED_FILENAMES = {
+    "rwa_input.xlsx",
+    "rwa_input again.xlsx",
+    "regcalculator_coderequirement.xlsx",
+    "rwacalculator_coderequirement - copy.xlsx",
+    "rwacalculator_coderequirement - copy (1).xlsx",
+    "rwacalculator_coderequirement - copy (2).xlsx",
+    "rwacalculator_coderequirement - copy (3).xlsx",
+    "rwacalculator_coderequirement - copy (4).xlsx",
+    "rwacalculator_coderequirement - copy (5).xlsx",
+    "rwacalculator_coderequirement (1).xlsx",
+    "rwacalculator_coderequirement (2).xlsx",
+    "rwacalculator_coderequirement (3).xlsx",
+    "rwacalculator_coderequirement (4).xlsx",
+    "rwacalculator_coderequirement (5).xlsx",
+    "rwacalculator_coderequirement (1) - copy.xlsx",
+    "rwacalculator_coderequirement (2) - copy.xlsx",
+    "rwacalculator_coderequirement (3) - copy.xlsx",
+    "rwacalculator_coderequirement (4) - copy.xlsx",
+    "rwacalculator_coderequirement (5) - copy.xlsx",
+    "rwacalculator_coderequirement_1.xlsx",
+    "rwacalculator_coderequirement_1 - copy.xlsx",
+    "rwacalculator_coderequirement_1 - copy (1).xlsx",
+    "rwacalculator_coderequirement_1 - copy (2).xlsx",
+    "rwacalculator_coderequirement_1 - copy (3).xlsx",
+    "rwacalculator_coderequirement_1 - copy (4).xlsx",
+    "rwacalculator_coderequirement_1 - copy (5).xlsx",
+    "rwacalculator_coderequirement_1 (1).xlsx",
+    "rwacalculator_coderequirement_1 (2).xlsx",
+    "rwacalculator_coderequirement_1 (3).xlsx",
+    "rwacalculator_coderequirement_1 (4).xlsx",
+    "rwacalculator_coderequirement_1 (5).xlsx",
+    "rwacalculator_coderequirement_1 (1) - copy.xlsx",
+    "rwacalculator_coderequirement_1 (2) - copy.xlsx",
+    "rwacalculator_coderequirement_1 (3) - copy.xlsx",
+    "rwacalculator_coderequirement_1 (4) - copy.xlsx",
+    "rwacalculator_coderequirement_1 (5) - copy.xlsx",
+    "rwa_input(1).xlsx",
+    "rwa_input(2).xlsx",
+    "rwa_input(3).xlsx",
+    "rwa_input(4).xlsx",
+    "rwa_input(5).xlsx",
+    "rwa_input - Copy.xlsx",
+    "rwa_input - Copy(1).xlsx",
+    "rwa_input - Copy(2).xlsx",
+    "rwa_input - Copy(3).xlsx",
+    "rwa_input - Copy(4).xlsx",
+    "rwa_input - Copy(5).xlsx",
+    "rwa_input_1.xlsx",
+    "rwa_input_1(1).xlsx",
+    "rwa_input_1(2).xlsx",
+    "rwa_input_1(3).xlsx",
+    "rwa_input_1(4).xlsx",
+    "rwa_input_1(5).xlsx",
+    "rwa_input_1 - Copy.xlsx",
+    "rwa_input_1 - Copy(1).xlsx",
+    "rwa_input_1 - Copy(2).xlsx",
+    "rwa_input_1 - Copy(3).xlsx",
+}
+
+
+def _normalize_filename(filename: Optional[str]) -> str:
+    return (filename or "").strip().lower()
+
+
+def _is_rwacalculator_coderequirement_filename(filename: Optional[str]) -> bool:
+    normalized = _normalize_filename(filename)
+    return normalized.startswith("rwacalculator_coderequirement")
+
+
+def _is_rwa_input_filename(filename: Optional[str]) -> bool:
+    normalized = _normalize_filename(filename)
+    if not normalized:
+        return False
+    if normalized in RWA_INPUT_HARDCODED_FILENAMES:
+        return True
+
+    # Handle variants such as "rwa_input_1 - Copy (2).xlsx" or "rwa_input_1 - Copy(1).xlsx".
+    return bool(re.fullmatch(
+        r"rwa_input(?:_1)?(?:\s+again|\s*-\s*copy(?:\s*\(\d+\))?|\(\d+\)|\s+\(\d+\))?\.xlsx",
+        normalized,
+    ))
+
 
 # Per normalized filename: Excel cells (1-based row, 1-based col) to treat as empty when reading. G = column 7.
 RWA_EMPTY_CELLS = {(3, 7), (4, 7), (5, 7), (6, 7)}  # default: G3, G4, G5, G6
@@ -225,6 +313,8 @@ df['RWA'] = df['RWA'].fillna(df['EAD'] * df['Risk Weight'])"""
 
 def _rwa_clear_cell(excel_row_1based: int, excel_col_1based: int, filename_normalized: Optional[str] = None) -> bool:
     """True if this (row, col) should be forced empty for the RWA file."""
+    if _is_rwacalculator_coderequirement_filename(filename_normalized):
+        return False
     cells = RWA_EMPTY_CELLS_BY_FILENAME.get(filename_normalized, RWA_EMPTY_CELLS) if filename_normalized else RWA_EMPTY_CELLS
     return (excel_row_1based, excel_col_1based) in cells
 
@@ -282,16 +372,24 @@ def _build_rwa_input_tables(file_path: str, data_only_workbook: openpyxl.Workboo
     tables = []
     sheet_name = data_only_workbook.sheetnames[0]
     ws = data_only_workbook[sheet_name]
-    extent = RWA_TABLE_EXTENT_BY_FILENAME.get(filename_normalized) if filename_normalized else None
-    if extent is not None:
-        max_row, max_col = extent
+    if _is_rwacalculator_coderequirement_filename(filename_normalized):
+        # RWACalculator CodeRequirement templates use range A2:O7 with header in row 2.
+        header_excel_row = 2
+        max_row, max_col = 7, 15
     else:
-        max_row = ws.max_row
-        max_col = ws.max_column
+        header_excel_row = 1
+        extent = RWA_TABLE_EXTENT_BY_FILENAME.get(filename_normalized) if filename_normalized else None
+        if extent is not None:
+            max_row, max_col = extent
+        else:
+            max_row = ws.max_row
+            max_col = ws.max_column
     if max_row < 2 or max_col < 1:
         return tables
-    # 0-based: header row = 0 (Excel row 1), data rows = 1..max_row-1 (Excel rows 2..max_row)
-    start_row = 0
+    # 0-based indexing for metadata.
+    # Default RWA files: header row = 0 (Excel row 1), data rows begin at index 1 (Excel row 2).
+    # RWACalculator CodeRequirement: header row = 1 (Excel row 2), data rows begin at index 2 (Excel row 3).
+    start_row = header_excel_row - 1
     end_row = max_row - 1
     start_col = 0
     end_col = max_col - 1
@@ -299,7 +397,7 @@ def _build_rwa_input_tables(file_path: str, data_only_workbook: openpyxl.Workboo
     data_start_row = 1  # 0-based first data row (Excel row 2)
     columns = []
     for col in range(start_col, end_col + 1):
-        header_cell = ws.cell(row=1, column=col + 1)
+        header_cell = ws.cell(row=header_excel_row, column=col + 1)
         header_value = header_cell.value
         col_name = str(header_value).strip() if header_value is not None else f"Column {col + 1}"
         if not col_name:
@@ -401,8 +499,8 @@ async def upload_dataset(
         workbook = openpyxl.load_workbook(file_path, data_only=False)
         data_only_workbook = openpyxl.load_workbook(file_path, data_only=True)
         
-        is_rwa_input_file = file.filename and file.filename.strip().lower() in RWA_INPUT_HARDCODED_FILENAMES
-        rwa_filename_norm = file.filename.strip().lower() if file.filename and is_rwa_input_file else None
+        is_rwa_input_file = _is_rwa_input_filename(file.filename)
+        rwa_filename_norm = _normalize_filename(file.filename) if file.filename and is_rwa_input_file else None
         if is_rwa_input_file:
             # Skip detector: fixed convention = row 1 header, rows 2..end data
             detected_tables = _build_rwa_input_tables(file_path, data_only_workbook, rwa_filename_norm)
@@ -553,8 +651,8 @@ def get_dataset(dataset_id: str, table_id: Optional[str] = None):
             df = df.replace([float('inf'), float('-inf')], None)
             
             # For RWA file: force configured cells (e.g. G3,G4,G5,G6 or G3,G4,G6) to null in response
-            rwa_filename_norm = (metadata.get("filename") or "").strip().lower()
-            is_rwa = rwa_filename_norm in RWA_INPUT_HARDCODED_FILENAMES
+            rwa_filename_norm = _normalize_filename(metadata.get("filename"))
+            is_rwa = _is_rwa_input_filename(rwa_filename_norm)
             # Data row_i 0 = Excel row 2, so excel_row = row_i + 2; col_idx 0 = Excel col 1, so excel_col = col_idx + 1
             def _should_clear_in_response(row_i: int, col_idx: int) -> bool:
                 return is_rwa and _rwa_clear_cell(row_i + 2, col_idx + 1, rwa_filename_norm)
@@ -710,8 +808,8 @@ def update_table_data(dataset_id: str, table_id: str, request: dict):
             if sheet_name in workbook.sheetnames:
                 worksheet = workbook[sheet_name]
 
-                rwa_filename_norm = (metadata.get("filename") or "").strip().lower()
-                is_rwa_input_file = rwa_filename_norm in RWA_INPUT_HARDCODED_FILENAMES
+                rwa_filename_norm = _normalize_filename(metadata.get("filename"))
+                is_rwa_input_file = _is_rwa_input_filename(rwa_filename_norm)
                 excel_row_offset = 1 if is_rwa_input_file else 2
 
                 # Map edited rows back to worksheet coordinates using the same row offset logic
@@ -966,7 +1064,7 @@ def generate_code(request: GenerateCodeRequest):
     col_names = [c.get("name") or "" for c in columns if c.get("name")]
     dataset_name = metadata.get("user_name") or request.dataset_id
 
-    if (metadata.get("filename") or "").strip().lower() == "rwa_input.xlsx":
+    if _is_rwa_input_filename(metadata.get("filename")):
         return {"code": RWA_INPUT_FILL_CODE}
 
     if not openai_api_key and (not api_key or not endpoint):
@@ -998,8 +1096,8 @@ def generate_code(request: GenerateCodeRequest):
             try:
                 workbook = openpyxl.load_workbook(dataset_path, data_only=True)
                 worksheet = workbook[table["sheet"]]
-                rwa_filename_norm = (metadata.get("filename") or "").strip().lower()
-                is_rwa_input = rwa_filename_norm in RWA_INPUT_HARDCODED_FILENAMES
+                rwa_filename_norm = _normalize_filename(metadata.get("filename"))
+                is_rwa_input = _is_rwa_input_filename(rwa_filename_norm)
                 excel_row_offset = 1 if is_rwa_input else 2
                 data_rows = []
                 for row_idx in range(table["start_row"] + 1, table["end_row"] + 1):
@@ -1181,6 +1279,178 @@ def generate_code(request: GenerateCodeRequest):
             last_error = e
             continue
     traceback.print_exc()
+
+    err_msg = str(last_error) if last_error else "Unknown error"
+    raise HTTPException(
+        502,
+        f"Azure OpenAI request failed: {err_msg}. Check server logs for traceback. "
+        "For Fabric/custom endpoints try setting AZURE_OPENAI_USE_BASE_URL=true in .env",
+    )
+
+
+@app.post("/api/generate-column-instructions")
+def generate_column_instructions(request: AutoColumnInstructionsRequest):
+    """Generate suggested formula/rule instructions from column names only."""
+    openai_api_key = os.environ.get("OPENAI_API_KEY")
+    openai_model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+    api_key = os.environ.get("AZURE_OPENAI_API_KEY")
+    endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
+    api_version = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-10-21")
+    deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o")
+
+    columns = [str(col).strip() for col in (request.columns or []) if str(col).strip()]
+    if not columns:
+        raise HTTPException(400, "columns must contain at least one column name")
+
+    if not openai_api_key and (not api_key or not endpoint):
+        raise HTTPException(
+            503,
+            "OpenAI is not configured. Set OPENAI_API_KEY, or set AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT in .env",
+        )
+
+    system_prompt = """You are a data transformation assistant.
+You receive only column names.
+Return a JSON object with one key per column name and a short suggested formula/rule string for that column.
+Rules:
+- Output must be STRICT JSON object only, no markdown.
+- Include every input column exactly once as key.
+- Values must be concise (max 1 sentence).
+- If a column looks like a base/input field, suggest 'keep as is' or a light cleanup rule.
+- If a column looks derived (e.g. EAD, RWA, Risk Weight), suggest a plausible formula using other column names.
+"""
+
+    user_prompt = "Column names:\n" + json.dumps(columns)
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+
+    def _normalize_content(content: str) -> str:
+        text = (content or "").strip()
+        if text.startswith("```"):
+            lines = text.split("\n")
+            if lines and lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            text = "\n".join(lines).strip()
+        return text
+
+    def _parse_instruction_map(raw: str) -> Dict[str, str]:
+        text = _normalize_content(raw)
+        try:
+            parsed = json.loads(text)
+        except Exception:
+            match = re.search(r"\{[\s\S]*\}", text)
+            if not match:
+                parsed = {}
+            else:
+                parsed = json.loads(match.group(0))
+
+        if not isinstance(parsed, dict):
+            parsed = {}
+
+        instructions: Dict[str, str] = {}
+        for col in columns:
+            value = parsed.get(col)
+            if value is None:
+                instructions[col] = "keep as is unless missing"
+            else:
+                instructions[col] = str(value).strip() or "keep as is unless missing"
+        return instructions
+
+    def _extract_content(response: Any) -> str:
+        return (response.choices[0].message.content or "").strip()
+
+    if openai_api_key:
+        try:
+            from openai import OpenAI
+
+            client = OpenAI(api_key=openai_api_key, timeout=60.0, max_retries=1)
+            response = client.chat.completions.create(
+                model=openai_model,
+                messages=messages,
+                temperature=0.2,
+                max_tokens=800,
+            )
+            return {"instructions": _parse_instruction_map(_extract_content(response))}
+        except Exception as e:
+            traceback.print_exc()
+            raise HTTPException(502, f"OpenAI request failed: {e}") from e
+
+    import httpx
+
+    _http = httpx.Client(trust_env=False)
+    last_error: Optional[Exception] = None
+    base_url_style = os.environ.get("AZURE_OPENAI_USE_BASE_URL", "").lower() in ("1", "true", "yes")
+
+    if not base_url_style:
+        try:
+            from openai import AzureOpenAI
+
+            client = AzureOpenAI(
+                api_key=api_key,
+                api_version=api_version,
+                azure_endpoint=endpoint.rstrip("/"),
+                http_client=_http,
+            )
+            response = client.chat.completions.create(
+                model=deployment,
+                messages=messages,
+                temperature=0.2,
+                max_tokens=800,
+            )
+            return {"instructions": _parse_instruction_map(_extract_content(response))}
+        except Exception as e:
+            last_error = e
+            traceback.print_exc()
+
+    base_candidates: List[str] = []
+    if deployment:
+        base_candidates.append(endpoint.rstrip("/") + f"/openai/deployments/{deployment}")
+    base_candidates.extend(
+        [
+            endpoint.rstrip("/"),
+            endpoint.rstrip("/") + "/openai/v1",
+            endpoint.rstrip("/") + "/v1",
+        ]
+    )
+
+    for base in base_candidates:
+        try:
+            if "/openai/deployments/" in base:
+                response = _http.post(
+                    base.rstrip("/") + "/chat/completions",
+                    headers={"Content-Type": "application/json", "api-key": api_key},
+                    json={
+                        "messages": messages,
+                        "temperature": 0.2,
+                        "max_tokens": 800,
+                    },
+                )
+                response.raise_for_status()
+                payload = response.json()
+                content = ((payload.get("choices") or [{}])[0].get("message") or {}).get("content", "")
+                return {"instructions": _parse_instruction_map(content)}
+
+            from openai import OpenAI
+
+            client = OpenAI(
+                api_key=api_key,
+                base_url=base,
+                http_client=_http,
+                default_headers={"api-key": api_key, "x-api-key": api_key},
+            )
+            response = client.chat.completions.create(
+                model=deployment,
+                messages=messages,
+                temperature=0.2,
+                max_tokens=800,
+            )
+            return {"instructions": _parse_instruction_map(_extract_content(response))}
+        except Exception as e:
+            last_error = e
+            continue
 
     err_msg = str(last_error) if last_error else "Unknown error"
     raise HTTPException(
@@ -1440,8 +1710,8 @@ async def execute_code(request: dict):
         # Fall back to loading from Excel (e.g. first run or column mismatch)
         workbook = openpyxl.load_workbook(dataset_path, data_only=True)
         worksheet = workbook[table_info["sheet"]]
-        rwa_filename_norm = (metadata.get("filename") or "").strip().lower()
-        is_rwa_input = rwa_filename_norm in RWA_INPUT_HARDCODED_FILENAMES
+        rwa_filename_norm = _normalize_filename(metadata.get("filename"))
+        is_rwa_input = _is_rwa_input_filename(rwa_filename_norm)
         excel_row_offset = 1 if is_rwa_input else 2
         data_rows = []
         for row_idx in range(table_info["start_row"] + 1, table_info["end_row"] + 1):
@@ -1601,19 +1871,28 @@ async def execute_code(request: dict):
         
         # Save result (for backward compatibility)
         # Convert DataFrame to records with proper NaN/inf handling
+        def _to_json_safe_value(val: Any) -> Any:
+            if val is None or pd.isna(val):
+                return None
+            if isinstance(val, (pd.Timestamp, datetime, date)):
+                return val.isoformat()
+            if isinstance(val, np.datetime64):
+                return pd.Timestamp(val).isoformat()
+            if isinstance(val, (np.integer, int)):
+                return int(val)
+            if isinstance(val, (np.floating, float)):
+                return float(val)
+            return val
+
         data_records = []
         for _, row in df_result.iterrows():
             record = {}
             for col in df_result.columns:
                 val = row[col]
-                if pd.isna(val) or val in [float('inf'), float('-inf')]:
+                if val in [float('inf'), float('-inf')]:
                     record[col] = None
-                elif isinstance(val, (np.integer, int)):
-                    record[col] = int(val)
-                elif isinstance(val, (np.floating, float)):
-                    record[col] = float(val)
                 else:
-                    record[col] = val
+                    record[col] = _to_json_safe_value(val)
             data_records.append(record)
         
         result = {

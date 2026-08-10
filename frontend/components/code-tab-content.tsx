@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { Braces, CheckCircle, Play, Upload, FileCode, Loader2, Trash2, Sparkles, Copy, SlidersHorizontal } from "lucide-react";
+import { Braces, CheckCircle, Play, Upload, FileCode, Loader2, Trash2, Sparkles, Copy, SlidersHorizontal, Wand2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { API_ENDPOINTS } from "@/lib/api-config";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -77,7 +77,10 @@ export function CodeTabContent({ isLoading = false }: CodeTabContentProps) {
   const [deleting, setDeleting] = useState(false);
   const [datasets, setDatasets] = useState<{ id: string; user_name?: string; filename?: string }[]>([]);
   const [generateDatasetId, setGenerateDatasetId] = useState<string>("");
-  const [generatePrompt, setGeneratePrompt] = useState<string>("");
+  const [generateColumns, setGenerateColumns] = useState<string[]>([]);
+  const [columnPrompts, setColumnPrompts] = useState<Record<string, string>>({});
+  const [loadingGenerateColumns, setLoadingGenerateColumns] = useState(false);
+  const [autoFillingColumnPrompts, setAutoFillingColumnPrompts] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [generatedCodeDialog, setGeneratedCodeDialog] = useState<string | null>(null);
   const [generatedFileBaseName, setGeneratedFileBaseName] = useState("");
@@ -95,6 +98,43 @@ export function CodeTabContent({ isLoading = false }: CodeTabContentProps) {
       .then((data) => setDatasets(data.datasets || []))
       .catch(() => setDatasets([]));
   }, []);
+
+  useEffect(() => {
+    if (!generateDatasetId) {
+      setGenerateColumns([]);
+      setColumnPrompts({});
+      return;
+    }
+
+    const loadColumns = async () => {
+      try {
+        setLoadingGenerateColumns(true);
+        const response = await fetch(API_ENDPOINTS.datasetById(generateDatasetId));
+        const data = await response.json();
+        const firstTable = data?.tables?.[0];
+        const columns = (firstTable?.columns || [])
+          .map((column: { name?: string }) => (column.name || "").trim())
+          .filter(Boolean);
+
+        setGenerateColumns(columns);
+        setColumnPrompts((previous) => {
+          const next: Record<string, string> = {};
+          for (const column of columns) {
+            next[column] = previous[column] || "";
+          }
+          return next;
+        });
+      } catch (error) {
+        console.error("Error loading dataset columns for generation:", error);
+        setGenerateColumns([]);
+        setColumnPrompts({});
+      } finally {
+        setLoadingGenerateColumns(false);
+      }
+    };
+
+    void loadColumns();
+  }, [generateDatasetId]);
 
   const fetchCodeFiles = async () => {
     try {
@@ -311,6 +351,19 @@ export function CodeTabContent({ isLoading = false }: CodeTabContentProps) {
       });
       return;
     }
+
+    const promptLines = Object.entries(columnPrompts)
+      .map(([column, instruction]) => ({ column, instruction: instruction.trim() }))
+      .filter((item) => item.instruction.length > 0)
+      .map((item) => `- ${item.column}: ${item.instruction}`);
+
+    const composedPrompt = promptLines.length
+      ? [
+          "Apply these column-specific rules when generating the transformation code:",
+          ...promptLines,
+        ].join("\n")
+      : undefined;
+
     setGenerating(true);
     try {
       const res = await fetch(API_ENDPOINTS.generateCode, {
@@ -318,7 +371,7 @@ export function CodeTabContent({ isLoading = false }: CodeTabContentProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           dataset_id: generateDatasetId,
-          prompt: generatePrompt.trim() || undefined,
+          prompt: composedPrompt,
         }),
       });
       if (!res.ok) {
@@ -342,6 +395,58 @@ export function CodeTabContent({ isLoading = false }: CodeTabContentProps) {
       });
     } finally {
       setGenerating(false);
+    }
+  };
+
+  const handleAutoFillColumnPrompts = async () => {
+    if (!generateColumns.length) {
+      toast({
+        title: "No columns found",
+        description: "Select a dataset with columns before auto-filling.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setAutoFillingColumnPrompts(true);
+    try {
+      const response = await fetch(API_ENDPOINTS.generateColumnInstructions, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ columns: generateColumns }),
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error((err as { detail?: string }).detail || `HTTP ${response.status}`);
+      }
+
+      const data = await response.json();
+      const instructions = (data?.instructions || {}) as Record<string, string>;
+
+      setColumnPrompts((previous) => {
+        const next: Record<string, string> = { ...previous };
+        for (const column of generateColumns) {
+          const suggestion = (instructions[column] || "").trim();
+          if (suggestion) {
+            next[column] = suggestion;
+          }
+        }
+        return next;
+      });
+
+      toast({
+        title: "Instructions generated",
+        description: "AI suggestions were added using only the column names.",
+      });
+    } catch (error) {
+      toast({
+        title: "Auto-fill failed",
+        description: error instanceof Error ? error.message : "Could not generate column instructions",
+        variant: "destructive",
+      });
+    } finally {
+      setAutoFillingColumnPrompts(false);
     }
   };
 
@@ -537,14 +642,54 @@ export function CodeTabContent({ isLoading = false }: CodeTabContentProps) {
               </Select>
             </div>
             <div className="space-y-2">
-              <Label>{t("formulasOptional")}</Label>
-              <Textarea
-                placeholder={t("formulasPlaceholder")}
-                value={generatePrompt}
-                onChange={(e) => setGeneratePrompt(e.target.value)}
-                rows={3}
-                className="resize-none"
-              />
+              <div className="flex items-center justify-between gap-2">
+                <Label>Column instructions</Label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleAutoFillColumnPrompts}
+                  disabled={!generateDatasetId || loadingGenerateColumns || autoFillingColumnPrompts || generateColumns.length === 0}
+                >
+                  {autoFillingColumnPrompts ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Wand2 className="mr-2 h-4 w-4" />
+                  )}
+                  {autoFillingColumnPrompts ? "Generating..." : "Auto-fill with AI"}
+                </Button>
+              </div>
+              {!generateDatasetId ? (
+                <div className="rounded-md border border-dashed border-border bg-muted/30 p-3 text-sm text-muted-foreground">
+                  Select a dataset to enter formula instructions per column.
+                </div>
+              ) : loadingGenerateColumns ? (
+                <Skeleton className="h-24 w-full" />
+              ) : generateColumns.length === 0 ? (
+                <div className="rounded-md border border-dashed border-border bg-muted/30 p-3 text-sm text-muted-foreground">
+                  No columns found for this dataset.
+                </div>
+              ) : (
+                <div className="max-h-72 space-y-3 overflow-auto rounded-md border p-3">
+                  {generateColumns.map((column) => (
+                    <div key={column} className="grid grid-cols-[minmax(0,180px)_minmax(0,1fr)] items-start gap-2">
+                      <div className="pt-2 text-sm font-medium text-foreground">{column}</div>
+                      <Textarea
+                        placeholder={`Describe formula or rule for ${column}`}
+                        value={columnPrompts[column] || ""}
+                        onChange={(event) =>
+                          setColumnPrompts((previous) => ({
+                            ...previous,
+                            [column]: event.target.value,
+                          }))
+                        }
+                        rows={2}
+                        className="resize-y"
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
             <Button onClick={handleGenerateCode} disabled={generating}>
               {generating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}

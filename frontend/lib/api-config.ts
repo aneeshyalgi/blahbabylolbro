@@ -28,6 +28,7 @@ export const API_ENDPOINTS = {
   codeById: (id: string) => `${API_BASE_URL}/api/code/${id}`,
   codeDelete: (id: string) => `${API_BASE_URL}/api/code/${id}`,
   generateCode: `${API_BASE_URL}/api/generate-code`,
+  generateColumnInstructions: `${API_BASE_URL}/api/generate-column-instructions`,
   chat: `${API_BASE_URL}/api/chat`,
   
   // Execution
