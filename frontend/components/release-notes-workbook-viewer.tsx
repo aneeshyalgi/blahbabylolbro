@@ -7,6 +7,12 @@ export type ReleaseNoteCell = {
   row: number;
   column: number;
   display: string;
+  images?: {
+    src: string;
+    mime_type: string;
+    row_span?: number;
+    col_span?: number;
+  }[];
   row_span?: number;
   col_span?: number;
   style?: {
@@ -23,7 +29,9 @@ export type ReleaseNoteCell = {
 
 export type ReleaseNoteSheet = {
   name: string;
+  min_row?: number;
   max_row: number;
+  min_column?: number;
   max_column: number;
   truncated: boolean;
   column_widths: Record<string, number>;
@@ -44,6 +52,8 @@ export function ReleaseNotesWorkbookViewer({ sheet, loading, error }: Props) {
 
   const cells = new Map(sheet.cells.map((cell) => [`${cell.row}:${cell.column}`, cell]));
   const covered = new Set<string>();
+  const minRow = sheet.min_row ?? 1;
+  const minColumn = sheet.min_column ?? 1;
   for (const cell of sheet.cells) {
     for (let row = cell.row; row < cell.row + (cell.row_span ?? 1); row += 1) {
       for (let column = cell.column; column < cell.column + (cell.col_span ?? 1); column += 1) {
@@ -56,15 +66,18 @@ export function ReleaseNotesWorkbookViewer({ sheet, loading, error }: Props) {
     <div className="min-h-0 flex-1 overflow-auto bg-white text-black">
       <table className="border-collapse text-xs">
         <colgroup>
-          {Array.from({ length: sheet.max_column }, (_item, index) => <col key={index + 1} style={{ width: `${Math.max((sheet.column_widths[String(index + 1)] ?? 10) * 7, 32)}px` }} />)}
+          {Array.from({ length: sheet.max_column - minColumn + 1 }, (_item, index) => {
+            const column = minColumn + index;
+            return <col key={column} style={{ width: `${Math.max((sheet.column_widths[String(column)] ?? 10) * 7, 32)}px` }} />;
+          })}
         </colgroup>
         <tbody>
-          {Array.from({ length: sheet.max_row }, (_item, rowIndex) => {
-            const row = rowIndex + 1;
+          {Array.from({ length: sheet.max_row - minRow + 1 }, (_item, rowIndex) => {
+            const row = minRow + rowIndex;
             return (
               <tr key={row} style={{ height: `${sheet.row_heights[String(row)] ?? 20}px` }}>
-                {Array.from({ length: sheet.max_column }, (_columnItem, columnIndex) => {
-                  const column = columnIndex + 1;
+                {Array.from({ length: sheet.max_column - minColumn + 1 }, (_columnItem, columnIndex) => {
+                  const column = minColumn + columnIndex;
                   const key = `${row}:${column}`;
                   if (covered.has(key)) return null;
                   const cell = cells.get(key);
@@ -78,7 +91,19 @@ export function ReleaseNotesWorkbookViewer({ sheet, loading, error }: Props) {
                     verticalAlign: cell?.style?.vertical,
                     whiteSpace: cell?.style?.wrap_text ? "pre-wrap" : "nowrap",
                   };
-                  return <td key={key} rowSpan={cell?.row_span} colSpan={cell?.col_span} style={style} className="border border-neutral-300 px-1.5 py-1">{cell?.display ?? ""}</td>;
+                  return (
+                    <td key={key} rowSpan={cell?.row_span} colSpan={cell?.col_span} style={style} className="border border-neutral-300 px-1.5 py-1 align-top">
+                      {cell?.images?.map((image, imageIndex) => (
+                        <img
+                          key={`${key}-img-${imageIndex}`}
+                          src={image.src}
+                          alt="Excel cell visual"
+                          className="mb-1 max-h-40 max-w-full object-contain"
+                        />
+                      ))}
+                      {cell?.display ?? ""}
+                    </td>
+                  );
                 })}
               </tr>
             );

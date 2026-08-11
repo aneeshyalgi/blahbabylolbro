@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Download, FileSpreadsheet, Loader2, RefreshCw, Trash2, Upload } from "lucide-react";
 import { API_ENDPOINTS } from "@/lib/api-config";
 import { Button } from "@/components/ui/button";
@@ -20,11 +20,20 @@ import { useToast } from "@/hooks/use-toast";
 import { ReleaseNotesWorkbookViewer, type ReleaseNoteSheet } from "@/components/release-notes-workbook-viewer";
 
 type Workbook = { id: string; filename: string; size: number; upload_date: string; sheets: string[] };
-type StaticReleaseNotes = {
-  title: string;
-  intro: string;
-  highlights: { area: string; description: string }[];
-  file_downloads: string[];
+
+const SPECIAL_RELEASE_NOTE_FILENAME = "rwa release notes 1.xlsm";
+
+const normalizeName = (value: string) => value.trim().toLowerCase();
+
+const isSpecialReleaseNotesWorkbook = (workbook: Workbook | null) => (
+  workbook ? normalizeName(workbook.filename) === SPECIAL_RELEASE_NOTE_FILENAME : false
+);
+
+const getVisibleSheets = (workbook: Workbook | null) => {
+  if (!workbook) return [] as { name: string; sourceIndex: number }[];
+  return workbook.sheets
+    .map((name, sourceIndex) => ({ name, sourceIndex }))
+    .filter((sheet) => !(isSpecialReleaseNotesWorkbook(workbook) && normalizeName(sheet.name) === "tabelle1"));
 };
 
 export function PatchNotesTabContent() {
@@ -38,10 +47,11 @@ export function PatchNotesTabContent() {
   const [error, setError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Workbook | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const [staticReleaseNotes, setStaticReleaseNotes] = useState<StaticReleaseNotes | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
   const selected = workbooks.find((workbook) => workbook.id === selectedId) ?? null;
+  const selectedVisibleSheets = useMemo(() => getVisibleSheets(selected), [selected]);
+  const selectedSheetIndex = selectedVisibleSheets[activeSheet]?.sourceIndex ?? 0;
 
   const fetchWorkbooks = async (preferredId?: string) => {
     setLoading(true);
@@ -65,18 +75,15 @@ export function PatchNotesTabContent() {
 
   useEffect(() => {
     void fetchWorkbooks();
-    fetch(API_ENDPOINTS.releaseNotesStatic)
-      .then((response) => response.ok ? response.json() : null)
-      .then((payload) => payload && setStaticReleaseNotes(payload))
-      .catch(() => setStaticReleaseNotes(null));
   }, []);
 
   useEffect(() => {
     if (!selectedId) { setSheet(null); return; }
+    if (selectedVisibleSheets.length === 0) { setSheet(null); return; }
     let cancelled = false;
     setLoadingSheet(true);
     setError(null);
-    fetch(API_ENDPOINTS.releaseNoteSheet(selectedId, activeSheet))
+    fetch(API_ENDPOINTS.releaseNoteSheet(selectedId, selectedSheetIndex))
       .then(async (response) => {
         const payload = await response.json();
         if (!response.ok) throw new Error(payload.detail || "Could not load worksheet.");
@@ -87,7 +94,12 @@ export function PatchNotesTabContent() {
       })
       .finally(() => { if (!cancelled) setLoadingSheet(false); });
     return () => { cancelled = true; };
-  }, [selectedId, activeSheet]);
+  }, [selectedId, activeSheet, selectedSheetIndex, selectedVisibleSheets.length]);
+
+  useEffect(() => {
+    if (selectedVisibleSheets.length === 0) return;
+    if (activeSheet >= selectedVisibleSheets.length) setActiveSheet(0);
+  }, [activeSheet, selectedVisibleSheets.length]);
 
   const uploadWorkbook = async (file: File) => {
     const form = new FormData();
@@ -146,53 +158,32 @@ export function PatchNotesTabContent() {
         <aside className="border-r bg-muted/20 p-3">
           <h3 className="mb-3 px-2 text-xs font-semibold uppercase text-muted-foreground">Workbooks</h3>
           {loading ? <div className="px-2 py-8 text-sm text-muted-foreground"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />Loading</div> : workbooks.length === 0 ? <div className="px-2 py-8 text-center text-sm text-muted-foreground"><FileSpreadsheet className="mx-auto mb-2 h-8 w-8" />No release notes uploaded</div> : (
-            <div className="space-y-1">{workbooks.map((workbook) => (
-              <div key={workbook.id} className={`flex items-start gap-2 rounded-md px-2 py-2 ${selectedId === workbook.id ? "bg-accent" : "hover:bg-accent/60"}`}>
-                <button type="button" className="min-w-0 flex-1 text-left" onClick={() => { setSelectedId(workbook.id); setActiveSheet(0); }}>
-                  <span className="block truncate text-sm font-medium">{workbook.filename}</span>
-                  <span className="block text-xs text-muted-foreground">{workbook.sheets.length} sheet{workbook.sheets.length === 1 ? "" : "s"} · {new Date(workbook.upload_date).toLocaleDateString()}</span>
-                </button>
-                <a href={API_ENDPOINTS.releaseNoteFile(workbook.id)} target="_blank" rel="noreferrer" className="rounded p-1 text-muted-foreground hover:text-foreground" aria-label="Download"><Download className="h-3.5 w-3.5" /></a>
-                <button type="button" className="rounded p-1 text-muted-foreground hover:text-destructive" onClick={() => setDeleteTarget(workbook)} aria-label="Delete"><Trash2 className="h-3.5 w-3.5" /></button>
-              </div>
-            ))}</div>
+            <div className="space-y-1">{workbooks.map((workbook) => {
+              const visibleSheetCount = getVisibleSheets(workbook).length;
+              return (
+                <div key={workbook.id} className={`flex items-start gap-2 rounded-md px-2 py-2 ${selectedId === workbook.id ? "bg-accent" : "hover:bg-accent/60"}`}>
+                  <button type="button" className="min-w-0 flex-1 text-left" onClick={() => { setSelectedId(workbook.id); setActiveSheet(0); }}>
+                    <span className="block truncate text-sm font-medium">{workbook.filename}</span>
+                    <span className="block text-xs text-muted-foreground">{visibleSheetCount} sheet{visibleSheetCount === 1 ? "" : "s"} · {new Date(workbook.upload_date).toLocaleDateString()}</span>
+                  </button>
+                  <a href={API_ENDPOINTS.releaseNoteFile(workbook.id)} target="_blank" rel="noreferrer" className="rounded p-1 text-muted-foreground hover:text-foreground" aria-label="Download"><Download className="h-3.5 w-3.5" /></a>
+                  {!isSpecialReleaseNotesWorkbook(workbook) && (
+                    <button type="button" className="rounded p-1 text-muted-foreground hover:text-destructive" onClick={() => setDeleteTarget(workbook)} aria-label="Delete"><Trash2 className="h-3.5 w-3.5" /></button>
+                  )}
+                </div>
+              );
+            })}</div>
           )}
         </aside>
 
         <section className="flex min-w-0 flex-col">
           {selected && <div className="flex items-center justify-between gap-4 border-b px-4 py-3">
             <div className="min-w-0"><h3 className="truncate text-sm font-semibold">{selected.filename}</h3><p className="text-xs text-muted-foreground">{(selected.size / 1024).toFixed(1)} KB</p></div>
-            <Tabs value={String(activeSheet)} onValueChange={(value) => setActiveSheet(Number(value))}><TabsList className="max-w-[640px] overflow-x-auto">{selected.sheets.map((name, index) => <TabsTrigger key={`${name}-${index}`} value={String(index)}>{name}</TabsTrigger>)}</TabsList></Tabs>
+            <Tabs value={String(activeSheet)} onValueChange={(value) => setActiveSheet(Number(value))}><TabsList className="max-w-[640px] overflow-x-auto">{selectedVisibleSheets.map((sheet, index) => <TabsTrigger key={`${sheet.name}-${sheet.sourceIndex}`} value={String(index)}>{sheet.name}</TabsTrigger>)}</TabsList></Tabs>
           </div>}
           <ReleaseNotesWorkbookViewer sheet={sheet} loading={loadingSheet} error={error} />
         </section>
       </div>
-
-      {staticReleaseNotes && (
-        <div className="space-y-4 pt-2">
-          <Card>
-            <CardHeader><CardTitle>{staticReleaseNotes.title}</CardTitle></CardHeader>
-            <CardContent>
-              <p className="mb-4 text-sm">{staticReleaseNotes.intro}</p>
-              <ul className="list-disc space-y-2 pl-5 text-sm">
-                {staticReleaseNotes.highlights.map((highlight) => (
-                  <li key={highlight.area}><strong>{highlight.area}:</strong> {highlight.description}</li>
-                ))}
-              </ul>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader><CardTitle>File downloads</CardTitle></CardHeader>
-            <CardContent className="space-y-2">
-              {staticReleaseNotes.file_downloads.map((filename) => (
-                <a key={filename} href={`/${filename}`} target="_blank" rel="noreferrer" className="block text-primary underline underline-offset-2">
-                  Abacus360 release notes
-                </a>
-              ))}
-            </CardContent>
-          </Card>
-        </div>
-      )}
 
       <AlertDialog open={Boolean(deleteTarget)} onOpenChange={(open) => !open && !deleting && setDeleteTarget(null)}>
         <AlertDialogContent>

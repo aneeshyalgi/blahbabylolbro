@@ -15,11 +15,15 @@ import json
 import traceback
 import ast
 import re
+import base64
+import mimetypes
+import time
 from datetime import date, datetime
 from io import BytesIO
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple
 from pydantic import BaseModel as PydanticBaseModel
+from openpyxl.utils.cell import coordinate_to_tuple, range_boundaries
 from table_detector import TableDetector
 from models import TableRegion, ColumnInfo, ColumnDataType
 import database as db
@@ -67,30 +71,6 @@ EXAMPLE_REGULATIONS: List[Dict[str, Any]] = [
         "annex_links": [],
     },
 ]
-
-STATIC_RELEASE_NOTES: Dict[str, Any] = {
-    "title": "Release Notes Summary R7.18.0.00",
-    "intro": (
-        "This release delivers extensive regulatory, functional, and technical enhancements "
-        "across EBA, ECB, ESMA, SRB, and national reporting modules. Key improvements include "
-        "updated taxonomies, enhanced allocation logic, new data fields, cross-module "
-        "consistency fixes, and expanded support for country-specific rules."
-    ),
-    "highlights": [
-        {"area": "Regulatory Framework Updates", "description": "Full support for DPM 4.2 across modules such as FinRep, ESG Disclosure, IRRBB, Resolution Planning, IFR, and Supervisory Benchmarking Portfolios."},
-        {"area": "Own Funds & Credit Risk", "description": "Allocation logic corrected for IRB/SA exposures, new data fields like CRE133, VAD275, and VAL531, Output Floor enhancements, collateral logic fixes, and improvements in templates C08, C09, C10, C34."},
-        {"area": "ESG EU Taxonomy", "description": "Adoption of NACE Rev. 2.1, fixes for GAR KPI denominators, support for nuclear & gas activities, new instrument fields for non-material and non-assessed exposures, and exclusion of artificial zero-value allocations."},
-        {"area": "AnaCredit Enhancements", "description": "Bulgaria and Croatia added as reporting countries, new XSD schemas (Germany v2.8, Luxembourg v1.0.13), updated national identifiers, address logic corrections, KPI corrections, and improved XML export stability."},
-        {"area": "Liquidity (LCR/NSFR/AMM/AE)", "description": "Corrected reporting of non-HQLA collaterals, fixed weighting logic in C75.01, corrected sign handling for operating expenses, plus resolution of GUI execution errors for liquidity processes."},
-        {"area": "Large Exposure & Leverage Ratio", "description": "Czech Republic enabled as reporting country, new exception rules, correct handling of securitisation tranches, and improved SME classification logic."},
-        {"area": "Resolution Reporting (SRB MBDT)", "description": "Bail-in logic corrected for structured products, intragroup liabilities included, improved liability descriptions, and corrected handling of carrying amounts and close-out valuations."},
-        {"area": "FinRep IFRS/nGAAP", "description": "IAS32-aligned derivatives offsetting, updated country code (x01 -> 7B), logic corrections for profit/loss accounts, and updated cross-module validations."},
-        {"area": "National Reporting", "description": "Updates across Germany (BiSta, WiFSta, SHS), Netherlands (RRE/CRE), Finland (TOL25, LTC report), Ireland (RS3/MR1), UK (PRA 3.1 deviations), Canada (BCAR), and Australia (APRA)."},
-        {"area": "Technical Improvements", "description": "Performance optimizations, enhanced security (OpenID, secure cookies), adapter mapping fixes, UI enhancements, and database performance improvements across clusters."},
-    ],
-    "file_downloads": ["Abacus360_preReleasenotes_R7.18.0.00.xlsm"],
-}
-
 
 class GenerateCodeRequest(PydanticBaseModel):
     dataset_id: str
@@ -157,6 +137,17 @@ RESULTS_DIR = Path(os.environ.get("RESULTS_DIR", str(APP_DATA_ROOT / "results"))
 RELEASE_NOTES_DIR = Path(
     os.environ.get("RELEASE_NOTES_DIR", str(APP_DATA_ROOT / "uploads" / "release_notes"))
 )
+
+RELEASE_NOTES_SHEET_RANGES: Dict[str, Tuple[str, str]] = {
+    "abacus360 r7.18.0.00": ("A2", "K6"),
+    "module definition": ("A1", "C172"),
+}
+SPECIAL_RELEASE_NOTES_FILENAME = "rwa release notes 1.xlsm"
+SPECIAL_RELEASE_NOTES_MODULE_SHEET = "module definition"
+SPECIAL_RELEASE_NOTES_MODULE_IMAGE = "Picture1.png"
+CHAT_RELEASE_NOTES_MAX_SHEETS_PER_WORKBOOK = 12
+CHAT_RELEASE_NOTES_MAX_ROWS_PER_SHEET = 140
+CHAT_RELEASE_NOTES_MAX_COLS_PER_SHEET = 24
 
 # CORS: configure with BACKEND_CORS_ORIGINS as comma-separated values.
 cors_origins = [
@@ -1481,6 +1472,13 @@ def _chat_table_context(dataset_name: str, table: Dict[str, Any]) -> Dict[str, A
 
 
 def _build_chat_context() -> Dict[str, Any]:
+    release_note_workbooks = _list_release_note_workbooks()
+    release_note_contents = []
+    for workbook in release_note_workbooks:
+        workbook_context = _chat_release_note_workbook_context(workbook)
+        if workbook_context:
+            release_note_contents.append(workbook_context)
+
     datasets_context = []
     for dataset in db.get_all_datasets()[:30]:
         metadata = db.get_dataset_metadata(dataset["id"]) or {}
@@ -1607,8 +1605,8 @@ def _build_chat_context() -> Dict[str, Any]:
             "live_scraped_eur_lex": web_scraper.get_status(),
         },
         "release_notes": {
-            "static_summary": STATIC_RELEASE_NOTES,
-            "uploaded_workbooks": _list_release_note_workbooks(),
+            "uploaded_workbooks": release_note_workbooks,
+            "workbook_contents": release_note_contents,
         },
         # Placed last on purpose: these are the largest sections (raw uploaded Excel
         # sample rows and full code file text). If the size budget is ever exceeded,
@@ -1621,6 +1619,9 @@ def _build_chat_context() -> Dict[str, Any]:
             "result_rows_per_execution": 50,
             "lineage_rows_per_cluster": 100,
             "comparison_rows_per_pair": 50,
+            "release_note_sheets_per_workbook": CHAT_RELEASE_NOTES_MAX_SHEETS_PER_WORKBOOK,
+            "release_note_rows_per_sheet": CHAT_RELEASE_NOTES_MAX_ROWS_PER_SHEET,
+            "release_note_columns_per_sheet": CHAT_RELEASE_NOTES_MAX_COLS_PER_SHEET,
             "purpose": "Bounded but comprehensive context spanning every tab (Code, Data Model/uploaded Excel files, Results/Executions, Clusters, Technical Lineage, Content Lineage, Rootcause, Semantic Lineage, Regulations, Release Notes), independent of the active tab.",
         },
     }
@@ -2489,6 +2490,309 @@ def _excel_display_value(value: Any, number_format: str) -> str:
     return str(value)
 
 
+def _sanitize_release_note_header(value: str, fallback_index: int) -> str:
+    header = (value or "").strip()
+    return header if header else f"Column_{fallback_index + 1}"
+
+
+def _chat_release_note_sheet_bounds(worksheet: Any) -> Tuple[int, int, int, int, bool]:
+    key = _normalize_sheet_name(worksheet.title)
+    forced_range = RELEASE_NOTES_SHEET_RANGES.get(key)
+    if forced_range:
+        min_col, min_row, max_col, max_row = range_boundaries(f"{forced_range[0]}:{forced_range[1]}")
+        return min_row, max_row, min_col, max_col, False
+
+    max_row = min(worksheet.max_row or 1, CHAT_RELEASE_NOTES_MAX_ROWS_PER_SHEET)
+    max_col = min(worksheet.max_column or 1, CHAT_RELEASE_NOTES_MAX_COLS_PER_SHEET)
+    truncated = (worksheet.max_row or 1) > max_row or (worksheet.max_column or 1) > max_col
+    return 1, max_row, 1, max_col, truncated
+
+
+def _release_note_sheet_rows_for_chat(
+    worksheet: Any,
+    min_row: int,
+    max_row: int,
+    min_col: int,
+    max_col: int,
+) -> List[Dict[str, Any]]:
+    matrix: List[List[str]] = []
+    for row in range(min_row, max_row + 1):
+        rendered_row: List[str] = []
+        for col in range(min_col, max_col + 1):
+            cell = worksheet.cell(row=row, column=col)
+            rendered_row.append(_excel_display_value(cell.value, cell.number_format).strip())
+
+        while rendered_row and rendered_row[-1] == "":
+            rendered_row.pop()
+        matrix.append(rendered_row)
+
+    non_empty_rows = [row for row in matrix if any(value != "" for value in row)]
+    if not non_empty_rows:
+        return []
+
+    header_raw = non_empty_rows[0]
+    max_width = max((len(row) for row in non_empty_rows), default=0)
+    headers = [
+        _sanitize_release_note_header(header_raw[idx] if idx < len(header_raw) else "", idx)
+        for idx in range(max_width)
+    ]
+
+    used_headers: Dict[str, int] = {}
+    unique_headers: List[str] = []
+    for header in headers:
+        count = used_headers.get(header, 0)
+        used_headers[header] = count + 1
+        unique_headers.append(header if count == 0 else f"{header}_{count + 1}")
+
+    records: List[Dict[str, Any]] = []
+    for row in non_empty_rows[1:]:
+        record: Dict[str, Any] = {}
+        for idx, value in enumerate(row):
+            if value == "":
+                continue
+            if idx < len(unique_headers):
+                record[unique_headers[idx]] = value
+        if record:
+            records.append(record)
+
+    if not records:
+        fallback_rows: List[Dict[str, Any]] = []
+        for row_index, row in enumerate(non_empty_rows, start=min_row):
+            fallback_rows.append({
+                "row_number": row_index,
+                "values": row,
+            })
+        return fallback_rows
+
+    return records
+
+
+def _chat_release_note_workbook_context(metadata: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    stored_filename = metadata.get("stored_filename")
+    if not isinstance(stored_filename, str) or not stored_filename:
+        return None
+
+    file_path = RELEASE_NOTES_DIR / stored_filename
+    if not file_path.exists():
+        return None
+
+    try:
+        workbook = openpyxl.load_workbook(
+            file_path,
+            read_only=False,
+            data_only=False,
+            keep_vba=file_path.suffix.lower() == ".xlsm",
+        )
+    except Exception:
+        return None
+
+    try:
+        workbook_context: Dict[str, Any] = {
+            "id": metadata.get("id"),
+            "filename": metadata.get("filename") or stored_filename,
+            "stored_filename": stored_filename,
+            "sheets": [],
+        }
+
+        for worksheet in workbook.worksheets[:CHAT_RELEASE_NOTES_MAX_SHEETS_PER_WORKBOOK]:
+            if (
+                _normalize_filename(file_path.name) == SPECIAL_RELEASE_NOTES_FILENAME
+                and _normalize_sheet_name(worksheet.title) == "tabelle1"
+            ):
+                continue
+
+            min_row, max_row, min_col, max_col, truncated = _chat_release_note_sheet_bounds(worksheet)
+            records = _release_note_sheet_rows_for_chat(worksheet, min_row, max_row, min_col, max_col)
+
+            image_count = len(getattr(worksheet, "_images", []))
+            if (
+                _normalize_filename(file_path.name) == SPECIAL_RELEASE_NOTES_FILENAME
+                and _normalize_sheet_name(worksheet.title) == SPECIAL_RELEASE_NOTES_MODULE_SHEET
+                and (RELEASE_NOTES_DIR / SPECIAL_RELEASE_NOTES_MODULE_IMAGE).exists()
+            ):
+                image_count += 1
+
+            workbook_context["sheets"].append({
+                "name": worksheet.title,
+                "range": {
+                    "min_row": min_row,
+                    "max_row": max_row,
+                    "min_col": min_col,
+                    "max_col": max_col,
+                },
+                "truncated": truncated,
+                "image_count": image_count,
+                "records": records,
+            })
+
+        return workbook_context
+    finally:
+        workbook.close()
+
+
+def _normalize_sheet_name(name: str) -> str:
+    return " ".join((name or "").strip().lower().split())
+
+
+def _sheet_view_bounds(worksheet: Any) -> Tuple[int, int, int, int, bool]:
+    key = _normalize_sheet_name(worksheet.title)
+    forced_range = RELEASE_NOTES_SHEET_RANGES.get(key)
+    if forced_range:
+        min_col, min_row, max_col, max_row = range_boundaries(f"{forced_range[0]}:{forced_range[1]}")
+        return min_row, max_row, min_col, max_col, False
+
+    max_row = min(worksheet.max_row or 1, 500)
+    max_column = min(worksheet.max_column or 1, 100)
+    return 1, max_row, 1, max_column, (worksheet.max_row > max_row or worksheet.max_column > max_column)
+
+
+def _extract_release_note_images(worksheet: Any, min_row: int, max_row: int, min_col: int, max_col: int) -> Dict[Tuple[int, int], List[Dict[str, Any]]]:
+    images_by_anchor: Dict[Tuple[int, int], List[Dict[str, Any]]] = {}
+    for image in getattr(worksheet, "_images", []):
+        row = None
+        column = None
+        row_span = 1
+        col_span = 1
+
+        anchor = getattr(image, "anchor", None)
+        if isinstance(anchor, str):
+            row, column = coordinate_to_tuple(anchor)
+        elif hasattr(anchor, "_from"):
+            row = int(anchor._from.row) + 1
+            column = int(anchor._from.col) + 1
+            if hasattr(anchor, "to") and anchor.to:
+                row_span = max(1, int(anchor.to.row) - int(anchor._from.row))
+                col_span = max(1, int(anchor.to.col) - int(anchor._from.col))
+
+        if row is None or column is None:
+            continue
+        if row < min_row or row > max_row or column < min_col or column > max_col:
+            continue
+
+        try:
+            image_bytes = image._data()
+        except Exception:
+            continue
+
+        file_ext = None
+        path = getattr(image, "path", None)
+        if isinstance(path, str):
+            file_ext = Path(path).suffix.lower()
+        if not file_ext:
+            image_format = getattr(image, "format", None)
+            if isinstance(image_format, str) and image_format:
+                file_ext = f".{image_format.lower()}"
+
+        mime_type = mimetypes.types_map.get(file_ext or "", "image/png")
+        images_by_anchor.setdefault((row, column), []).append(
+            {
+                "src": f"data:{mime_type};base64,{base64.b64encode(image_bytes).decode('ascii')}",
+                "mime_type": mime_type,
+                "row_span": row_span,
+                "col_span": col_span,
+            }
+        )
+
+    return images_by_anchor
+
+
+def _append_special_release_note_image(
+    images_by_anchor: Dict[Tuple[int, int], List[Dict[str, Any]]],
+    file_path: Path,
+    worksheet: Any,
+    min_row: int,
+    max_row: int,
+    min_col: int,
+    max_col: int,
+) -> None:
+    if _normalize_filename(file_path.name) != SPECIAL_RELEASE_NOTES_FILENAME:
+        return
+    if _normalize_sheet_name(worksheet.title) != SPECIAL_RELEASE_NOTES_MODULE_SHEET:
+        return
+
+    image_path = RELEASE_NOTES_DIR / SPECIAL_RELEASE_NOTES_MODULE_IMAGE
+    if not image_path.exists():
+        return
+
+    anchor_row = 1
+    anchor_col = 1
+    if anchor_row < min_row or anchor_row > max_row or anchor_col < min_col or anchor_col > max_col:
+        return
+
+    try:
+        image_bytes = image_path.read_bytes()
+    except OSError:
+        return
+
+    mime_type = mimetypes.types_map.get(image_path.suffix.lower(), "image/png")
+    images_by_anchor.setdefault((anchor_row, anchor_col), []).append(
+        {
+            "src": f"data:{mime_type};base64,{base64.b64encode(image_bytes).decode('ascii')}",
+            "mime_type": mime_type,
+            "row_span": 1,
+            "col_span": 2,
+        }
+    )
+
+
+def _sync_release_note_workbook_metadata() -> None:
+    metadata_by_stored_filename: Dict[str, Dict[str, Any]] = {}
+    for metadata_path in RELEASE_NOTES_DIR.glob("*.json"):
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            stored_filename = metadata.get("stored_filename")
+            if isinstance(stored_filename, str):
+                metadata_by_stored_filename[stored_filename] = metadata
+        except (OSError, json.JSONDecodeError):
+            continue
+
+    for workbook_path in RELEASE_NOTES_DIR.glob("*.xlsx"):
+        if workbook_path.name in metadata_by_stored_filename:
+            continue
+        _create_release_note_metadata_for_existing_file(workbook_path)
+    for workbook_path in RELEASE_NOTES_DIR.glob("*.xlsm"):
+        if workbook_path.name in metadata_by_stored_filename:
+            continue
+        _create_release_note_metadata_for_existing_file(workbook_path)
+
+
+def _create_release_note_metadata_for_existing_file(workbook_path: Path) -> None:
+    try:
+        workbook = openpyxl.load_workbook(
+            workbook_path,
+            read_only=True,
+            data_only=False,
+            keep_vba=workbook_path.suffix.lower() == ".xlsm",
+        )
+        sheet_names = list(workbook.sheetnames)
+        workbook.close()
+        if not sheet_names:
+            return
+    except Exception:
+        return
+
+    stat = workbook_path.stat()
+    release_note_id = str(
+        uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            f"release-note:{workbook_path.name}:{int(stat.st_size)}:{int(stat.st_mtime)}",
+        )
+    )
+    metadata = {
+        "id": release_note_id,
+        "filename": workbook_path.name,
+        "stored_filename": workbook_path.name,
+        "size": int(stat.st_size),
+        "upload_date": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+        "sheets": sheet_names,
+    }
+    metadata_path = RELEASE_NOTES_DIR / f"{release_note_id}.json"
+    try:
+        metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    except OSError:
+        return
+
+
 @app.post("/api/release-notes")
 async def upload_release_notes(file: UploadFile = File(...)):
     original_filename = Path(file.filename or "").name
@@ -2541,6 +2845,7 @@ async def upload_release_notes(file: UploadFile = File(...)):
 
 
 def _list_release_note_workbooks() -> List[Dict[str, Any]]:
+    _sync_release_note_workbook_metadata()
     workbooks = []
     for metadata_path in RELEASE_NOTES_DIR.glob("*.json"):
         try:
@@ -2556,13 +2861,6 @@ def _list_release_note_workbooks() -> List[Dict[str, Any]]:
 @app.get("/api/release-notes")
 def list_release_notes():
     return {"workbooks": _list_release_note_workbooks()}
-
-
-@app.get("/api/release-notes/static")
-def get_static_release_notes():
-    return STATIC_RELEASE_NOTES
-
-
 def _build_excel_sheet_view(file_path: Path, sheet_index: int) -> Dict[str, Any]:
     """Read one worksheet from an .xlsx/.xlsm file into a styled, merge-aware grid.
     Shared by the release-notes classic viewer and the Data Model classic viewer."""
@@ -2582,34 +2880,41 @@ def _build_excel_sheet_view(file_path: Path, sheet_index: int) -> Dict[str, Any]
         if sheet_index < 0 or sheet_index >= len(workbook.worksheets):
             raise HTTPException(404, "Worksheet not found")
         worksheet = workbook.worksheets[sheet_index]
-        max_row = min(worksheet.max_row or 1, 500)
-        max_column = min(worksheet.max_column or 1, 100)
+        min_row, max_row, min_col, max_column, truncated = _sheet_view_bounds(worksheet)
+        images_by_anchor = _extract_release_note_images(worksheet, min_row, max_row, min_col, max_column)
+        _append_special_release_note_image(images_by_anchor, file_path, worksheet, min_row, max_row, min_col, max_column)
 
         covered_cells = set()
         merge_anchors: Dict[Tuple[int, int], Dict[str, int]] = {}
         for merged_range in worksheet.merged_cells.ranges:
-            min_col, min_row, max_col, max_row_merged = merged_range.bounds
-            if min_row > max_row or min_col > max_column:
+            merged_min_col, merged_min_row, merged_max_col, merged_max_row = merged_range.bounds
+            if merged_max_row < min_row or merged_min_row > max_row:
                 continue
-            max_col = min(max_col, max_column)
-            max_row_merged = min(max_row_merged, max_row)
-            merge_anchors[(min_row, min_col)] = {
-                "row_span": max_row_merged - min_row + 1,
-                "col_span": max_col - min_col + 1,
+            if merged_max_col < min_col or merged_min_col > max_column:
+                continue
+            if merged_min_row < min_row or merged_min_col < min_col:
+                continue
+
+            merged_max_col = min(merged_max_col, max_column)
+            merged_max_row = min(merged_max_row, max_row)
+            merge_anchors[(merged_min_row, merged_min_col)] = {
+                "row_span": merged_max_row - merged_min_row + 1,
+                "col_span": merged_max_col - merged_min_col + 1,
             }
-            for row in range(min_row, max_row_merged + 1):
-                for column in range(min_col, max_col + 1):
-                    if (row, column) != (min_row, min_col):
+            for row in range(merged_min_row, merged_max_row + 1):
+                for column in range(merged_min_col, merged_max_col + 1):
+                    if (row, column) != (merged_min_row, merged_min_col):
                         covered_cells.add((row, column))
 
         cells = []
-        for row in range(1, max_row + 1):
-            for column in range(1, max_column + 1):
+        for row in range(min_row, max_row + 1):
+            for column in range(min_col, max_column + 1):
                 if (row, column) in covered_cells:
                     continue
                 cell = worksheet.cell(row=row, column=column)
                 merge = merge_anchors.get((row, column), {})
-                if cell.value is None and not cell.has_style and not merge:
+                images = images_by_anchor.get((row, column), [])
+                if cell.value is None and not cell.has_style and not merge and not images:
                     continue
                 fill_color = _excel_rgb(cell.fill.fgColor) if cell.fill.fill_type else None
                 style = {
@@ -2628,6 +2933,7 @@ def _build_excel_sheet_view(file_path: Path, sheet_index: int) -> Dict[str, Any]
                     "column": column,
                     "display": _excel_display_value(cell.value, cell.number_format),
                     "style": {key: value for key, value in style.items() if value not in (None, False)},
+                    "images": images,
                     **merge,
                 })
 
@@ -2636,17 +2942,19 @@ def _build_excel_sheet_view(file_path: Path, sheet_index: int) -> Dict[str, Any]
                 max(float(worksheet.column_dimensions[openpyxl.utils.get_column_letter(column)].width or 10), 4),
                 60,
             )
-            for column in range(1, max_column + 1)
+            for column in range(min_col, max_column + 1)
         }
         row_heights = {
             str(row): min(max(float(worksheet.row_dimensions[row].height or 20), 15), 120)
-            for row in range(1, max_row + 1)
+            for row in range(min_row, max_row + 1)
         }
         return {
             "name": worksheet.title,
+            "min_row": min_row,
             "max_row": max_row,
+            "min_column": min_col,
             "max_column": max_column,
-            "truncated": worksheet.max_row > max_row or worksheet.max_column > max_column,
+            "truncated": truncated,
             "column_widths": column_widths,
             "row_heights": row_heights,
             "cells": cells,
@@ -2681,13 +2989,33 @@ def delete_release_notes(release_note_id: str):
     metadata = _release_note_metadata(release_note_id)
     workbook_path = RELEASE_NOTES_DIR / metadata["stored_filename"]
     metadata_path = RELEASE_NOTES_DIR / f"{release_note_id}.json"
+
+    def _unlink_with_retry(path: Path, retries: int = 6, delay_seconds: float = 0.2) -> None:
+        last_error: Optional[OSError] = None
+        for attempt in range(retries):
+            try:
+                path.unlink(missing_ok=True)
+                return
+            except OSError as e:
+                last_error = e
+                win_error = getattr(e, "winerror", None)
+                transient_lock = isinstance(e, PermissionError) or win_error in (32, 33)
+                if not transient_lock or attempt == retries - 1:
+                    break
+                time.sleep(delay_seconds * (attempt + 1))
+        if last_error:
+            raise last_error
+
     try:
-        workbook_path.unlink(missing_ok=True)
-        metadata_path.unlink(missing_ok=True)
+        _unlink_with_retry(workbook_path)
+        _unlink_with_retry(metadata_path)
         for temporary_path in RELEASE_NOTES_DIR.glob(f"{release_note_id}.tmp.*"):
-            temporary_path.unlink(missing_ok=True)
+            _unlink_with_retry(temporary_path)
     except OSError as e:
-        raise HTTPException(409, "The workbook is still being downloaded. Wait for the download to finish and try again.") from e
+        raise HTTPException(
+            409,
+            "The workbook is currently in use by another process (for example a download, preview, or file scanner). Close any use and try again.",
+        ) from e
     if workbook_path.exists() or metadata_path.exists():
         raise HTTPException(500, "Release notes workbook could not be removed from backend storage")
     return {"message": "Release notes workbook deleted", "id": release_note_id}

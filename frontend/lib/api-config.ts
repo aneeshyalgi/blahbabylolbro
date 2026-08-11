@@ -56,7 +56,6 @@ export const API_ENDPOINTS = {
 
   // Release notes workbooks
   releaseNotes: `${API_BASE_URL}/api/release-notes`,
-  releaseNotesStatic: `${API_BASE_URL}/api/release-notes/static`,
   releaseNoteSheet: (id: string, sheetIndex: number) =>
     `${API_BASE_URL}/api/release-notes/${id}/sheets/${sheetIndex}`,
   releaseNoteFile: (id: string) => `${API_BASE_URL}/api/release-notes/${id}/file`,
