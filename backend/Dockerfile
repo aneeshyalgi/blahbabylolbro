@@ -30,6 +30,7 @@ ENV APP_DATA_ROOT=/data
 ENV DATASETS_DIR=/data/uploads/datasets
 ENV CODE_DIR=/data/uploads/code
 ENV RESULTS_DIR=/data/results
+ENV RELEASE_NOTES_DIR=/app/uploads/release_notes
 ENV RWA_DATABASE_PATH=/data/rwa_data.db
 
 # Prepare writable data directories for local container runs.
