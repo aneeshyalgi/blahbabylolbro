@@ -28,6 +28,7 @@ interface ResultDataSectionProps {
   datasetId?: string | null;
   selectedCodeId?: string | null;
   selectedClusterId?: string | null;
+  executionTimestamp?: string | null;
   runRequestNonce?: number;
   onRunActionStateChange?: (controls: {
     disabled: boolean;
@@ -60,6 +61,7 @@ export function ResultDataSection({
   datasetId,
   selectedCodeId,
   selectedClusterId,
+  executionTimestamp,
   runRequestNonce = 0,
   onRunActionStateChange,
   resultData: resultDataProp,
@@ -244,6 +246,15 @@ export function ResultDataSection({
     return String(value);
   };
 
+  const formatExecutionTimestamp = (value: string | null | undefined): string | null => {
+    if (!value) return null;
+    try {
+      return new Date(value).toLocaleString();
+    } catch {
+      return value;
+    }
+  };
+
   return (
     <>
       <Card>
@@ -348,6 +359,11 @@ export function ResultDataSection({
               <p className="text-sm text-muted-foreground">
                 <strong>{t("executionSummary")}</strong> {resultData.summary.total_values_computed} {t("valuesComputedAcross")} {Object.keys(resultData.summary.computed_by_column || {}).length} {t("columns")}
               </p>
+              {formatExecutionTimestamp(executionTimestamp) && (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  <strong>Execution timestamp:</strong> {formatExecutionTimestamp(executionTimestamp)}
+                </p>
+              )}
             </div>
             <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
               <Table>

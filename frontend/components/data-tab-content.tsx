@@ -49,6 +49,7 @@ interface DataTabContentProps {
 }
 
 export type DataTabResultData = {
+  execution_id?: string;
   data?: unknown[];
   summary?: { columns?: string[]; computed_by_column?: Record<string, number> };
   computed_cells?: { row: number; column: string; value?: unknown }[];
@@ -140,6 +141,9 @@ export function DataTabContent({ isLoading = false }: DataTabContentProps) {
     ? allExecutions.filter((execution) => execution.cluster_id === selectedClusterId)
     : [];
   const latestVisibleExecutionId = visibleExecutions[0]?.execution_id ?? null;
+  const displayedExecutionTimestamp =
+    visibleExecutions.find((execution) => execution.execution_id === resultData?.execution_id)?.executed_date ??
+    null;
 
   const refetchAllExecutions = () => {
     setLoadingExecutions(true);
@@ -432,6 +436,7 @@ export function DataTabContent({ isLoading = false }: DataTabContentProps) {
         datasetId={selectedDatasetId}
         selectedCodeId={selectedCodeId}
         selectedClusterId={selectedClusterId}
+        executionTimestamp={displayedExecutionTimestamp}
         runRequestNonce={runRequestNonce}
         onRunActionStateChange={setRunControls}
         resultData={resultData}
