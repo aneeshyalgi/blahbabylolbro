@@ -20,16 +20,6 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Select,
@@ -39,7 +29,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import { useToast } from "@/hooks/use-toast";
 
 interface ResultDataSectionProps {
   isLoading?: boolean;
@@ -87,23 +76,7 @@ export function ResultDataSection({
   const [resultDataLocal, setResultDataLocal] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [fullScreenOpen, setFullScreenOpen] = useState(false);
-  const [runConfirmModal, setRunConfirmModal] = useState<{
-    mode: "repeatExecution" | "clusterNameConflict";
-    displayName: string;
-    isSameConfig: boolean;
-    existingCluster: {
-      id: string;
-      name: string;
-      dataset_id: string;
-      code_id: string;
-      dataset_name?: string;
-      code_filename?: string;
-    };
-  } | null>(null);
-  const { toast } = useToast();
   const t = useTranslations("resultData");
-  const tModal = useTranslations("resultDataModal");
-  const tCommon = useTranslations("common");
 
   const resultData = onResultDataChange != null ? resultDataProp : resultDataLocal;
   const setResultData = onResultDataChange ?? setResultDataLocal;
@@ -157,8 +130,7 @@ export function ResultDataSection({
     }
   };
 
-  /** Run code (POST execute) then ensure cluster exists and link this execution to it. */
-  const performRunAndLink = async (clusterIdToLink?: string) => {
+  const performRun = async () => {
     if (!datasetId || !selectedCodeFile) return;
     const response = await fetch(API_ENDPOINTS.execute, {
       method: "POST",
@@ -188,9 +160,19 @@ export function ResultDataSection({
         })
       );
     }
-    try {
-      if (clusterIdToLink) {
-        const linkRes = await fetch(API_ENDPOINTS.clusterLinkExecution(clusterIdToLink), {
+
+    if (selectedClusterId) {
+      try {
+        const updateRes = await fetch(API_ENDPOINTS.clusterById(selectedClusterId), {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code_id: selectedCodeFile }),
+        });
+        if (!updateRes.ok) {
+          console.error("Update cluster code:", await updateRes.text());
+        }
+
+        const linkRes = await fetch(API_ENDPOINTS.clusterLinkExecution(selectedClusterId), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ execution_id: result.execution_id }),
@@ -198,60 +180,12 @@ export function ResultDataSection({
         if (!linkRes.ok) {
           console.error("Link execution to cluster:", await linkRes.text());
         }
-        onRunComplete?.();
-        return;
+      } catch (linkError) {
+        console.error("Cluster execution linkage failed:", linkError);
       }
-
-      const datasetsRes = await fetch(API_ENDPOINTS.datasets);
-      const datasetsData = await datasetsRes.json();
-      const datasets = datasetsData.datasets || [];
-      const dataset = datasets.find((d: { id: string }) => d.id === result.dataset_id);
-      const displayName = (dataset?.user_name || dataset?.filename || "").trim() || "Unnamed";
-
-      const clustersRes = await fetch(API_ENDPOINTS.clusters);
-      const clustersData = await clustersRes.json();
-      const clusters = clustersData.clusters || [];
-      const existingCluster = clusters.find(
-        (c: { name: string }) => (c.name || "").trim().toLowerCase() === displayName.toLowerCase()
-      );
-
-      let clusterId: string;
-      if (existingCluster) {
-        clusterId = existingCluster.id;
-      } else {
-        const today = new Date().toISOString().slice(0, 10);
-        const createRes = await fetch(API_ENDPOINTS.clusters, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name: displayName,
-            reporting_date: today,
-            dataset_id: result.dataset_id,
-            code_id: result.code_id,
-          }),
-        });
-        if (!createRes.ok) return;
-        const createData = await createRes.json();
-        clusterId = createData.cluster_id;
-        toast({
-          title: t("clusterCreated"),
-          description: t("clusterCreatedDesc", { name: displayName }),
-        });
-      }
-
-      const linkRes = await fetch(API_ENDPOINTS.clusterLinkExecution(clusterId), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ execution_id: result.execution_id }),
-      });
-      if (!linkRes.ok) {
-        console.error("Link execution to cluster:", await linkRes.text());
-      }
-      onRunComplete?.();
-    } catch (e) {
-      console.error("Cluster / link execution:", e);
-      onRunComplete?.();
     }
+
+    onRunComplete?.();
   };
 
   const handleRunCode = async () => {
@@ -264,99 +198,7 @@ export function ResultDataSection({
     setError(null);
 
     try {
-      if (selectedClusterId) {
-        const selectedCodeMeta = codeFiles.find((f: { id: string }) => f.id === selectedCodeFile);
-        if (selectedCodeMeta) {
-          try {
-            const clusterRes = await fetch(API_ENDPOINTS.clusterById(selectedClusterId));
-            if (clusterRes.ok) {
-              const clusterData = await clusterRes.json();
-              const clusterExecutions = clusterData.executions || [];
-              const hasSameCodeExecution = clusterExecutions.some(
-                (ex: { code_filename?: string | null; code_version?: string | null }) =>
-                  (ex.code_filename ?? "") === (selectedCodeMeta.filename ?? "") &&
-                  (ex.code_version ?? "") === (selectedCodeMeta.version ?? "")
-              );
-
-              if (hasSameCodeExecution) {
-                setExecuting(false);
-                setRunConfirmModal({
-                  mode: "repeatExecution",
-                  displayName: clusterData.cluster?.name || "Selected cluster",
-                  isSameConfig: true,
-                  existingCluster: {
-                    id: selectedClusterId,
-                    name: clusterData.cluster?.name || "Selected cluster",
-                    dataset_id: clusterData.cluster?.dataset_id || datasetId,
-                    code_id: selectedCodeFile,
-                    dataset_name: clusterData.cluster?.dataset_name,
-                    code_filename: selectedCodeMeta.filename,
-                  },
-                });
-                return;
-              }
-            }
-          } catch {
-            // If we cannot evaluate cluster execution history, proceed without warning.
-          }
-        }
-
-        await performRunAndLink(selectedClusterId);
-        return;
-      }
-
-      const datasetsRes = await fetch(API_ENDPOINTS.datasets);
-      const datasetsData = await datasetsRes.json();
-      const datasets = datasetsData.datasets || [];
-      const dataset = datasets.find((d: { id: string }) => d.id === datasetId);
-      const displayName = (dataset?.user_name || dataset?.filename || "").trim() || "Unnamed";
-
-      const clustersRes = await fetch(API_ENDPOINTS.clusters);
-      const clustersData = await clustersRes.json();
-      const clusters = clustersData.clusters || [];
-      const existingCluster = clusters.find(
-        (c: { name: string }) => (c.name || "").trim().toLowerCase() === displayName.toLowerCase()
-      );
-
-      const sameDataAndCode =
-        existingCluster &&
-        existingCluster.dataset_id === datasetId &&
-        existingCluster.code_id === selectedCodeFile;
-
-      if (existingCluster) {
-        setExecuting(false);
-        setRunConfirmModal({
-          mode: "clusterNameConflict",
-          displayName,
-          isSameConfig: !!sameDataAndCode,
-          existingCluster: {
-            id: existingCluster.id,
-            name: existingCluster.name,
-            dataset_id: existingCluster.dataset_id,
-            code_id: existingCluster.code_id,
-            dataset_name: existingCluster.dataset_name,
-            code_filename: existingCluster.code_filename,
-          },
-        });
-        return;
-      }
-
-      await performRunAndLink();
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
-    } finally {
-      setExecuting(false);
-    }
-  };
-
-  const handleConfirmRunAnyway = async () => {
-    if (!runConfirmModal) return;
-    const clusterIdToLink = runConfirmModal.existingCluster.id;
-    setRunConfirmModal(null);
-    setExecuting(true);
-    setError(null);
-    try {
-      await performRunAndLink(clusterIdToLink);
+      await performRun();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
@@ -425,71 +267,6 @@ export function ResultDataSection({
 
   return (
     <>
-      <AlertDialog open={!!runConfirmModal} onOpenChange={(open) => !open && setRunConfirmModal(null)}>
-        <AlertDialogContent className="max-w-md">
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {runConfirmModal?.mode === "repeatExecution"
-                ? tModal("executionAlreadyExistsTitle")
-                : runConfirmModal?.isSameConfig
-                  ? tModal("clusterAlreadyExists")
-                  : tModal("clusterAlreadyExistsWithName", { name: runConfirmModal?.displayName ?? "" })}
-            </AlertDialogTitle>
-            <AlertDialogDescription asChild>
-              <div className="space-y-3 text-sm">
-                {runConfirmModal?.mode === "repeatExecution" ? (
-                  <>
-                    <p>
-                      {tModal("executionAlreadyExistsDesc", {
-                        name: runConfirmModal?.displayName ?? "",
-                        code: runConfirmModal?.existingCluster.code_filename ?? "",
-                      })}
-                    </p>
-                    <p className="text-muted-foreground">
-                      {tModal("executionAlreadyExistsQuestion")}
-                    </p>
-                  </>
-                ) : runConfirmModal?.isSameConfig ? (
-                  <>
-                    <p>
-                      {tModal("clusterAlreadyExistsSame", { name: runConfirmModal?.displayName ?? "" })}
-                    </p>
-                    <p className="text-muted-foreground">
-                      {tModal("runAgainQuestion")}
-                    </p>
-                  </>
-                ) : (
-                  <>
-                    <p>
-                      {tModal("clusterExistsDifferent")}
-                    </p>
-                    <p>
-                      {tModal("currentClusterUses", {
-                        dataset: runConfirmModal?.existingCluster.dataset_name ?? "—",
-                        code: runConfirmModal?.existingCluster.code_filename ?? "—",
-                      })}
-                    </p>
-                    <p className="text-muted-foreground">
-                      {tModal("runAnywayHint")}
-                    </p>
-                  </>
-                )}
-              </div>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{tCommon("cancel")}</AlertDialogCancel>
-            <AlertDialogAction onClick={handleConfirmRunAnyway}>
-              {runConfirmModal?.mode === "repeatExecution"
-                ? tModal("executionAlreadyExistsProceed")
-                : runConfirmModal?.isSameConfig
-                  ? tModal("yesRunAgain")
-                  : tModal("runAnywayAndAdd")}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
       <Card>
       <CardHeader className="pb-4">
         <div className="flex flex-row flex-wrap items-center justify-between gap-4">

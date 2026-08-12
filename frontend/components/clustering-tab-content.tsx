@@ -885,13 +885,13 @@ export function ClusteringTabContent() {
                   <Label className="text-xs text-muted-foreground">{t("created")}</Label>
                   <p className="font-medium">{formatDateTime(viewingCluster.created_date)}</p>
                 </div>
-                <div className="space-y-2">
+                <div className="space-y-2 col-span-2">
                   <Label className="text-xs text-muted-foreground">{t("dataset")}</Label>
                   <Select
                     value={editFormData.dataset_id}
                     onValueChange={(value) => setEditFormData((prev) => ({ ...prev, dataset_id: value }))}
                   >
-                    <SelectTrigger>
+                    <SelectTrigger className="w-full min-w-0">
                       <SelectValue placeholder={t("selectDataset")} />
                     </SelectTrigger>
                     <SelectContent>
@@ -903,13 +903,13 @@ export function ClusteringTabContent() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-2">
+                <div className="space-y-2 col-span-2">
                   <Label className="text-xs text-muted-foreground">{t("code")}</Label>
                   <Select
                     value={editFormData.code_id}
                     onValueChange={(value) => setEditFormData((prev) => ({ ...prev, code_id: value }))}
                   >
-                    <SelectTrigger>
+                    <SelectTrigger className="w-full min-w-0">
                       <SelectValue placeholder={t("selectCodeVersion")} />
                     </SelectTrigger>
                     <SelectContent>

@@ -21,7 +21,8 @@ import { ReleaseNotesWorkbookViewer, type ReleaseNoteSheet } from "@/components/
 
 type Workbook = { id: string; filename: string; size: number; upload_date: string; sheets: string[] };
 
-const SPECIAL_RELEASE_NOTE_FILENAME = "rwa release notes 1.xlsm";
+const SPECIAL_RELEASE_NOTE_FILENAME = "rwa release notes_1 (1).xlsm";
+const SPECIAL_RELEASE_NOTE_VISIBLE_SHEET = "rwa release notes";
 
 const normalizeName = (value: string) => value.trim().toLowerCase();
 
@@ -33,7 +34,7 @@ const getVisibleSheets = (workbook: Workbook | null) => {
   if (!workbook) return [] as { name: string; sourceIndex: number }[];
   return workbook.sheets
     .map((name, sourceIndex) => ({ name, sourceIndex }))
-    .filter((sheet) => !(isSpecialReleaseNotesWorkbook(workbook) && normalizeName(sheet.name) === "tabelle1"));
+    .filter((sheet) => !isSpecialReleaseNotesWorkbook(workbook) || normalizeName(sheet.name) === SPECIAL_RELEASE_NOTE_VISIBLE_SHEET);
 };
 
 export function PatchNotesTabContent() {
@@ -167,9 +168,7 @@ export function PatchNotesTabContent() {
                     <span className="block text-xs text-muted-foreground">{visibleSheetCount} sheet{visibleSheetCount === 1 ? "" : "s"} · {new Date(workbook.upload_date).toLocaleDateString()}</span>
                   </button>
                   <a href={API_ENDPOINTS.releaseNoteFile(workbook.id)} target="_blank" rel="noreferrer" className="rounded p-1 text-muted-foreground hover:text-foreground" aria-label="Download"><Download className="h-3.5 w-3.5" /></a>
-                  {!isSpecialReleaseNotesWorkbook(workbook) && (
-                    <button type="button" className="rounded p-1 text-muted-foreground hover:text-destructive" onClick={() => setDeleteTarget(workbook)} aria-label="Delete"><Trash2 className="h-3.5 w-3.5" /></button>
-                  )}
+                  <button type="button" className="rounded p-1 text-muted-foreground hover:text-destructive" onClick={() => setDeleteTarget(workbook)} aria-label="Delete"><Trash2 className="h-3.5 w-3.5" /></button>
                 </div>
               );
             })}</div>

@@ -22,6 +22,7 @@ from datetime import date, datetime
 from io import BytesIO
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple
+from zoneinfo import ZoneInfo
 from pydantic import BaseModel as PydanticBaseModel
 from openpyxl.utils.cell import coordinate_to_tuple, range_boundaries
 from table_detector import TableDetector
@@ -141,13 +142,22 @@ RELEASE_NOTES_DIR = Path(
 RELEASE_NOTES_SHEET_RANGES: Dict[str, Tuple[str, str]] = {
     "abacus360 r7.18.0.00": ("A2", "K6"),
     "module definition": ("A1", "C172"),
+    "rwa release notes": ("A1", "K4"),
 }
-SPECIAL_RELEASE_NOTES_FILENAME = "rwa release notes 1.xlsm"
-SPECIAL_RELEASE_NOTES_MODULE_SHEET = "module definition"
-SPECIAL_RELEASE_NOTES_MODULE_IMAGE = "Picture1.png"
+SPECIAL_RELEASE_NOTES_FILENAME = "rwa release notes_1 (1).xlsm"
+SPECIAL_RELEASE_NOTES_VISIBLE_SHEET = "rwa release notes"
 CHAT_RELEASE_NOTES_MAX_SHEETS_PER_WORKBOOK = 12
 CHAT_RELEASE_NOTES_MAX_ROWS_PER_SHEET = 140
 CHAT_RELEASE_NOTES_MAX_COLS_PER_SHEET = 24
+GERMAN_TIMEZONE = ZoneInfo("Europe/Berlin")
+
+
+def _german_now_timestamp() -> pd.Timestamp:
+    return pd.Timestamp.now(tz=GERMAN_TIMEZONE)
+
+
+def _german_timestamp_from_epoch(epoch_seconds: float) -> pd.Timestamp:
+    return pd.Timestamp.fromtimestamp(epoch_seconds, tz=GERMAN_TIMEZONE)
 
 # CORS: configure with BACKEND_CORS_ORIGINS as comma-separated values.
 cors_origins = [
@@ -197,6 +207,7 @@ RWA_INPUT_HARDCODED_FILENAMES = {
     "rwacalculator_coderequirement (4) - copy.xlsx",
     "rwacalculator_coderequirement (5) - copy.xlsx",
     "rwacalculator_coderequirement_1.xlsx",
+    "rwacalculator_coderequirement_2.xlsx",
     "rwa_calculator_coderequirement_1_neu.xlsx",
     "rwacalculator_coderequirement_1 - copy.xlsx",
     "rwacalculator_coderequirement_1 - copy (1).xlsx",
@@ -261,11 +272,13 @@ def _is_rwa_input_filename(filename: Optional[str]) -> bool:
     ))
 
 
-# Per normalized filename: Excel cells (1-based row, 1-based col) to treat as empty when reading. G = column 7.
-RWA_EMPTY_CELLS = {(3, 7), (4, 7), (5, 7), (6, 7)}  # default: G3, G4, G5, G6
+# Historically, some RWA templates were forced to blank out specific cells like G3:G6 to hide placeholder values.
+# That blanket override strips legitimate numeric entries such as 100.00 from real files, so leave it disabled
+# unless a specific legacy workbook truly requires it.
+RWA_EMPTY_CELLS: set[tuple[int, int]] = set()
 RWA_EMPTY_CELLS_BY_FILENAME: Dict[str, set] = {
-    "rwa_input.xlsx": {(3, 7), (4, 7), (5, 7), (6, 7)},   # G3, G4, G5, G6
-    "rwa_input again.xlsx": {(3, 7), (4, 7), (6, 7)},     # G3, G4, G6 only
+    "rwa_input.xlsx": set(),
+    "rwa_input again.xlsx": set(),
 }
 
 # Per normalized filename: (max_row_1based, max_col_1based) to limit table extent, or None = use full sheet.
@@ -281,11 +294,16 @@ RWA_INPUT_FILL_CODE = """balance_sheet_by_product = {
     'Limit': 'OffBalance',
     'Guarantee': 'OffBalance',
 }
+
+for col in ['Nominal', 'Book Value', 'Accrued Interests', 'Market Value', 'Assessment Base', 'CCF', 'Risk Weight', 'EAD', 'RWA']:
+    if col in df.columns:
+        df[col] = pd.to_numeric(df[col], errors='coerce')
+
 df['BalanceSheetType'] = df['BalanceSheetType'].fillna(df['ProductType'].map(balance_sheet_by_product))
 
 df['Accrued Interests'] = df['Accrued Interests'].fillna(0.0)
 df['Market Value'] = df['Market Value'].fillna(0.0)
-df['Assessment Base'] = df['Assessment Base'].fillna(df['Book Value'])
+df['Assessment Base'] = df['Assessment Base'].fillna(df['Accrued Interests'].fillna(0.0) + df['Book Value'].fillna(0.0))
 
 ccf_by_balance_sheet = {
     'OnBalance': 1.0,
@@ -303,8 +321,86 @@ df['Risk Weight'] = df['Risk Weight'].fillna(df['Asset Class'].map(risk_weight_b
 df['RWA'] = df['RWA'].fillna(df['EAD'] * df['Risk Weight'])"""
 
 
+def _parse_rwa_column_instruction_prompt(prompt: Optional[str]) -> Dict[str, str]:
+    """Extract per-column overrides from the generated prompt, shaped like:
+    '- Column Name: instruction'
+    """
+    overrides: Dict[str, str] = {}
+    if not prompt:
+        return overrides
+
+    for raw_line in prompt.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("Apply these column-specific rules"):
+            continue
+        if line.startswith("- "):
+            line = line[2:]
+        if ":" not in line:
+            continue
+        column_name, instruction = line.split(":", 1)
+        column_name = column_name.strip().strip("'\"")
+        instruction = instruction.strip()
+        if column_name and instruction:
+            overrides[column_name] = instruction
+    return overrides
+
+
+def _build_rwa_code_with_overrides(prompt: Optional[str]) -> str:
+    """Keep the established RWA template and only replace the assignments for columns the user explicitly mentions."""
+    base_code = RWA_INPUT_FILL_CODE
+    overrides = _parse_rwa_column_instruction_prompt(prompt)
+    if not overrides:
+        return base_code
+
+    canonical_assignments = {
+        "BalanceSheetType": "df['BalanceSheetType'] = df['BalanceSheetType'].fillna(df['ProductType'].map(balance_sheet_by_product))",
+        "Accrued Interests": "df['Accrued Interests'] = df['Accrued Interests'].fillna(0.0)",
+        "Market Value": "df['Market Value'] = df['Market Value'].fillna(0.0)",
+        "Assessment Base": "df['Assessment Base'] = df['Assessment Base'].fillna(df['Accrued Interests'].fillna(0.0) + df['Book Value'].fillna(0.0))",
+        "CCF": "df['CCF'] = df['CCF'].fillna(df['BalanceSheetType'].map(ccf_by_balance_sheet))",
+        "EAD": "df['EAD'] = df['EAD'].fillna(df['Assessment Base'] * df['CCF'])",
+        "Risk Weight": "df['Risk Weight'] = df['Risk Weight'].fillna(df['Asset Class'].map(risk_weight_by_asset_class))",
+        "RWA": "df['RWA'] = df['RWA'].fillna(df['EAD'] * df['Risk Weight'])",
+    }
+
+    normalized_lookup = {name.lower(): name for name in canonical_assignments}
+    replacement_map: Dict[str, str] = {}
+    for raw_name, instruction in overrides.items():
+        normalized = raw_name.strip().lower()
+        matched_name = normalized_lookup.get(normalized)
+        if matched_name is None:
+            continue
+        instruction_lower = instruction.lower()
+        if matched_name == "Assessment Base" and ("accrued" in instruction_lower or "book value" in instruction_lower):
+            replacement_map[matched_name] = canonical_assignments[matched_name]
+        elif matched_name in {"Accrued Interests", "Market Value", "BalanceSheetType", "CCF", "EAD", "Risk Weight", "RWA"}:
+            replacement_map[matched_name] = canonical_assignments[matched_name]
+
+    if not replacement_map:
+        return base_code
+
+    lines = base_code.splitlines()
+    final_lines = []
+    for line in lines:
+        stripped = line.strip()
+        match = re.match(r"df\[['\"]([^'\"]+)['\"]\]\s*=.*", stripped)
+        if match:
+            column_name = match.group(1)
+            replacement = replacement_map.get(column_name)
+            if replacement:
+                final_lines.append(replacement)
+                continue
+        final_lines.append(line)
+
+    return "\n".join(final_lines)
+
+
 def _rwa_clear_cell(excel_row_1based: int, excel_col_1based: int, filename_normalized: Optional[str] = None) -> bool:
-    """True if this (row, col) should be forced empty for the RWA file."""
+    """True if this (row, col) should be forced empty for the RWA file.
+
+    The canonical RWA_input templates are real data files and must not blanket-clear cells such as G3:G6,
+    because that removes valid numeric values like 100.00 from the uploaded sheet.
+    """
     if _is_rwacalculator_coderequirement_filename(filename_normalized):
         return False
     cells = RWA_EMPTY_CELLS_BY_FILENAME.get(filename_normalized, RWA_EMPTY_CELLS) if filename_normalized else RWA_EMPTY_CELLS
@@ -508,7 +604,7 @@ async def upload_dataset(
             raise HTTPException(400, "No tables detected in the Excel file")
         
         # Store metadata
-        upload_date = str(pd.Timestamp.now())
+        upload_date = _german_now_timestamp().isoformat()
         metadata = {
             "id": dataset_id,
             "filename": file.filename,
@@ -545,57 +641,7 @@ async def upload_dataset(
             # Store in SQLite with pattern: {dataset_name}_{table_id}_input_data
             db.store_table_data(dataset_name.strip(), table.id, "input_data", df)
         
-        # Auto-create a cluster with the dataset name when possible.
-        auto_cluster = {
-            "created": False,
-            "cluster_id": None,
-            "name": normalized_dataset_name,
-            "reason": None,
-        }
-        existing_cluster = db.get_cluster_by_name(normalized_dataset_name)
-        code_files = db.get_all_code_files()
-        first_code_id = code_files[0]["id"] if code_files else None
-        if existing_cluster:
-            # Keep feature behavior: same-name upload should map to a cluster with that name.
-            # We update the existing cluster to point to the latest uploaded dataset.
-            cluster_id = existing_cluster["id"]
-            default_code_id = existing_cluster.get("code_id") or first_code_id
-            report_date = pd.Timestamp.now().strftime("%Y-%m-%d")
-
-            db.update_cluster(
-                cluster_id,
-                {
-                    "dataset_id": dataset_id,
-                    "code_id": default_code_id,
-                    "reporting_date": report_date,
-                    "description": "Auto-updated from dataset upload",
-                },
-            )
-            # Old executions are stale for the newly bound dataset.
-            db.delete_cluster_executions_for_cluster(cluster_id)
-            auto_cluster["created"] = True
-            auto_cluster["cluster_id"] = cluster_id
-            auto_cluster["reason"] = "updated_existing"
-        else:
-            report_date = pd.Timestamp.now().strftime("%Y-%m-%d")
-            cluster_id = str(uuid.uuid4())
-            db.create_cluster(
-                cluster_id=cluster_id,
-                name=normalized_dataset_name,
-                reporting_date=report_date,
-                dataset_id=dataset_id,
-                code_id=first_code_id,
-                created_date=upload_date,
-                description="Auto-created from dataset upload",
-                is_reference=0,
-            )
-            auto_cluster["created"] = True
-            auto_cluster["cluster_id"] = cluster_id
-            if first_code_id is None:
-                auto_cluster["reason"] = "created_without_code"
-
         metadata["user_name"] = normalized_dataset_name
-        metadata["auto_cluster"] = auto_cluster
         semantic_matching_enabled = os.environ.get("ENABLE_SEMANTIC_MATCHING", "false").lower() in ("1", "true", "yes")
         metadata["semantic_matching"] = "scheduled" if semantic_matching_enabled else "disabled"
         if semantic_matching_enabled:
@@ -820,7 +866,7 @@ def update_table_data(dataset_id: str, table_id: str, request: dict):
                         value = row.get(col_name)
                         worksheet.cell(row=excel_row, column=excel_col, value=value)
 
-                ts = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
+                ts = _german_now_timestamp().strftime("%Y%m%d_%H%M%S")
                 edited_copy_path = DATASETS_DIR / f"{dataset_id}_edited_{ts}.xlsx"
                 workbook.save(edited_copy_path)
         except Exception as e:
@@ -924,7 +970,7 @@ async def upload_code(
     # Generate unique ID
     code_id = str(uuid.uuid4())
     file_path = CODE_DIR / f"{code_id}.py"
-    upload_date = str(pd.Timestamp.now())
+    upload_date = _german_now_timestamp().isoformat()
     
     # Save file
     content = await file.read()
@@ -1057,7 +1103,9 @@ def generate_code(request: GenerateCodeRequest):
     dataset_name = metadata.get("user_name") or request.dataset_id
 
     if _is_rwa_input_filename(metadata.get("filename")):
-        return {"code": RWA_INPUT_FILL_CODE}
+        if not (request.prompt or "").strip():
+            return {"code": RWA_INPUT_FILL_CODE}
+        return {"code": _build_rwa_code_with_overrides(request.prompt)}
 
     if not openai_api_key and (not api_key or not endpoint):
         raise HTTPException(
@@ -1838,7 +1886,7 @@ async def execute_code(request: dict):
         
         # Generate execution ID and date
         execution_id = str(uuid.uuid4())
-        execution_date = str(pd.Timestamp.now())
+        execution_date = _german_now_timestamp().isoformat()
         
         # Prepare summary
         summary = {
@@ -2147,7 +2195,7 @@ def create_cluster(request: dict):
         raise HTTPException(409, f'Cluster name "{name}" already exists')
     
     cluster_id = str(uuid.uuid4())
-    created_date = str(pd.Timestamp.now())
+    created_date = _german_now_timestamp().isoformat()
     
     db.create_cluster(
         cluster_id, name, reporting_date, dataset_id, 
@@ -2235,7 +2283,7 @@ async def execute_cluster(cluster_id: str, table_id: Optional[str] = None):
     # If execution successful, link it to the cluster
     if result.get("status") == "success":
         execution_id = str(uuid.uuid4())
-        executed_date = str(pd.Timestamp.now())
+        executed_date = _german_now_timestamp().isoformat()
         db.store_cluster_execution(execution_id, cluster_id, result["execution_id"], executed_date)
     
     return result
@@ -2254,7 +2302,7 @@ def link_execution_to_cluster(cluster_id: str, request: dict):
     if not os.path.exists(result_path):
         raise HTTPException(404, "Execution not found")
     link_id = str(uuid.uuid4())
-    executed_date = str(pd.Timestamp.now())
+    executed_date = _german_now_timestamp().isoformat()
     db.store_cluster_execution(link_id, cluster_id, execution_id, executed_date)
     return {"message": "Execution linked to cluster", "cluster_id": cluster_id, "execution_id": execution_id}
 
@@ -2597,7 +2645,7 @@ def _chat_release_note_workbook_context(metadata: Dict[str, Any]) -> Optional[Di
         for worksheet in workbook.worksheets[:CHAT_RELEASE_NOTES_MAX_SHEETS_PER_WORKBOOK]:
             if (
                 _normalize_filename(file_path.name) == SPECIAL_RELEASE_NOTES_FILENAME
-                and _normalize_sheet_name(worksheet.title) == "tabelle1"
+                and _normalize_sheet_name(worksheet.title) != SPECIAL_RELEASE_NOTES_VISIBLE_SHEET
             ):
                 continue
 
@@ -2605,12 +2653,6 @@ def _chat_release_note_workbook_context(metadata: Dict[str, Any]) -> Optional[Di
             records = _release_note_sheet_rows_for_chat(worksheet, min_row, max_row, min_col, max_col)
 
             image_count = len(getattr(worksheet, "_images", []))
-            if (
-                _normalize_filename(file_path.name) == SPECIAL_RELEASE_NOTES_FILENAME
-                and _normalize_sheet_name(worksheet.title) == SPECIAL_RELEASE_NOTES_MODULE_SHEET
-                and (RELEASE_NOTES_DIR / SPECIAL_RELEASE_NOTES_MODULE_IMAGE).exists()
-            ):
-                image_count += 1
 
             workbook_context["sheets"].append({
                 "name": worksheet.title,
@@ -2696,45 +2738,6 @@ def _extract_release_note_images(worksheet: Any, min_row: int, max_row: int, min
     return images_by_anchor
 
 
-def _append_special_release_note_image(
-    images_by_anchor: Dict[Tuple[int, int], List[Dict[str, Any]]],
-    file_path: Path,
-    worksheet: Any,
-    min_row: int,
-    max_row: int,
-    min_col: int,
-    max_col: int,
-) -> None:
-    if _normalize_filename(file_path.name) != SPECIAL_RELEASE_NOTES_FILENAME:
-        return
-    if _normalize_sheet_name(worksheet.title) != SPECIAL_RELEASE_NOTES_MODULE_SHEET:
-        return
-
-    image_path = RELEASE_NOTES_DIR / SPECIAL_RELEASE_NOTES_MODULE_IMAGE
-    if not image_path.exists():
-        return
-
-    anchor_row = 1
-    anchor_col = 1
-    if anchor_row < min_row or anchor_row > max_row or anchor_col < min_col or anchor_col > max_col:
-        return
-
-    try:
-        image_bytes = image_path.read_bytes()
-    except OSError:
-        return
-
-    mime_type = mimetypes.types_map.get(image_path.suffix.lower(), "image/png")
-    images_by_anchor.setdefault((anchor_row, anchor_col), []).append(
-        {
-            "src": f"data:{mime_type};base64,{base64.b64encode(image_bytes).decode('ascii')}",
-            "mime_type": mime_type,
-            "row_span": 1,
-            "col_span": 2,
-        }
-    )
-
-
 def _sync_release_note_workbook_metadata() -> None:
     metadata_by_stored_filename: Dict[str, Dict[str, Any]] = {}
     for metadata_path in RELEASE_NOTES_DIR.glob("*.json"):
@@ -2783,7 +2786,7 @@ def _create_release_note_metadata_for_existing_file(workbook_path: Path) -> None
         "filename": workbook_path.name,
         "stored_filename": workbook_path.name,
         "size": int(stat.st_size),
-        "upload_date": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+        "upload_date": _german_timestamp_from_epoch(stat.st_mtime).isoformat(),
         "sheets": sheet_names,
     }
     metadata_path = RELEASE_NOTES_DIR / f"{release_note_id}.json"
@@ -2835,7 +2838,7 @@ async def upload_release_notes(file: UploadFile = File(...)):
         "filename": original_filename,
         "stored_filename": stored_filename,
         "size": len(content),
-        "upload_date": str(pd.Timestamp.now()),
+        "upload_date": _german_now_timestamp().isoformat(),
         "sheets": sheet_names,
     }
     (RELEASE_NOTES_DIR / f"{release_note_id}.json").write_text(
@@ -2882,7 +2885,6 @@ def _build_excel_sheet_view(file_path: Path, sheet_index: int) -> Dict[str, Any]
         worksheet = workbook.worksheets[sheet_index]
         min_row, max_row, min_col, max_column, truncated = _sheet_view_bounds(worksheet)
         images_by_anchor = _extract_release_note_images(worksheet, min_row, max_row, min_col, max_column)
-        _append_special_release_note_image(images_by_anchor, file_path, worksheet, min_row, max_row, min_col, max_column)
 
         covered_cells = set()
         merge_anchors: Dict[Tuple[int, int], Dict[str, int]] = {}
