@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useTranslations } from "next-intl";
-import { Maximize2, RefreshCw, Trash2, X } from "lucide-react";
+import { CalendarDays, Database, FileCode2, Maximize2, Play, RefreshCw, Trash2, X } from "lucide-react";
 import { ResultDataSection } from "@/components/result-data-section";
 import { API_ENDPOINTS } from "@/lib/api-config";
 import { Button } from "@/components/ui/button";
@@ -60,6 +60,9 @@ interface ClusterOption {
   name: string;
   reporting_date: string;
   dataset_id: string;
+  dataset_name?: string | null;
+  code_id: string | null;
+  code_filename?: string | null;
 }
 
 interface ClusterExecutionRow {
@@ -91,8 +94,19 @@ export function DataTabContent({ isLoading = false }: DataTabContentProps) {
   const [executionModalOpen, setExecutionModalOpen] = useState(false);
   const [executionToDelete, setExecutionToDelete] = useState<ClusterExecutionRow | null>(null);
   const [deletingExecution, setDeletingExecution] = useState(false);
+  const [runRequestNonce, setRunRequestNonce] = useState(0);
+  const [runControls, setRunControls] = useState<{
+    disabled: boolean;
+    executing: boolean;
+    label: string;
+  }>({
+    disabled: true,
+    executing: false,
+    label: "",
+  });
   const { toast } = useToast();
   const t = useTranslations("data");
+  const tResult = useTranslations("resultData");
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -121,6 +135,11 @@ export function DataTabContent({ isLoading = false }: DataTabContentProps) {
 
   const selectedCluster = clusters.find((c) => c.id === selectedClusterId) ?? null;
   const selectedDatasetId = selectedCluster?.dataset_id ?? null;
+  const selectedCodeId = selectedCluster?.code_id ?? null;
+  const visibleExecutions = selectedClusterId
+    ? allExecutions.filter((execution) => execution.cluster_id === selectedClusterId)
+    : [];
+  const latestVisibleExecutionId = visibleExecutions[0]?.execution_id ?? null;
 
   const refetchAllExecutions = () => {
     setLoadingExecutions(true);
@@ -134,6 +153,48 @@ export function DataTabContent({ isLoading = false }: DataTabContentProps) {
   useEffect(() => {
     refetchAllExecutions();
   }, []);
+
+  useEffect(() => {
+    if (!selectedClusterId) {
+      setResultData(null);
+      return;
+    }
+
+    if (!latestVisibleExecutionId) {
+      setResultData(null);
+      return;
+    }
+
+    const currentExecutionId = (resultData as { execution_id?: string } | null)?.execution_id ?? null;
+    if (currentExecutionId === latestVisibleExecutionId) {
+      return;
+    }
+
+    let cancelled = false;
+
+    fetch(API_ENDPOINTS.resultById(latestVisibleExecutionId))
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error("Failed to load latest execution result");
+        }
+        return response.json();
+      })
+      .then((data) => {
+        if (!cancelled) {
+          setResultData(data as DataTabResultData);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          console.error("Error loading latest cluster execution result:", error);
+          setResultData(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedClusterId, latestVisibleExecutionId]);
 
   const handleViewExecutionData = async (executionId: string) => {
     setExecutionModalOpen(true);
@@ -200,37 +261,80 @@ export function DataTabContent({ isLoading = false }: DataTabContentProps) {
         <p className="text-sm text-muted-foreground">
           {t("runViewResultsDesc")}
         </p>
-        <div className="flex flex-wrap items-end gap-4 pt-2">
-          <div className="space-y-2 min-w-[280px]">
-            <Label>{t("clusterSelectionLabel")}</Label>
-            <Select
-              value={selectedClusterId ?? "__none__"}
-              onValueChange={(v) => setSelectedClusterId(v === "__none__" ? null : v)}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder={t("selectClusterForRun")} />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__none__">{t("selectClusterForRun")}</SelectItem>
-                {clusters.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>
-                    {c.name}{c.reporting_date ? ` (${new Date(c.reporting_date).toLocaleDateString()})` : ""}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+        <div className="pt-2">
+          <div className="min-w-[420px] rounded-xl border border-border/70 bg-gradient-to-br from-muted/70 via-card to-muted/30 px-4 py-3 shadow-sm">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="w-[320px] space-y-2">
+                  <Label className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                    {t("clusterSelectionLabel")}
+                  </Label>
+                  <div className="flex items-center gap-2">
+                    <Select
+                      value={selectedClusterId ?? "__none__"}
+                      onValueChange={(v) => setSelectedClusterId(v === "__none__" ? null : v)}
+                    >
+                      <SelectTrigger className="h-11 w-[320px] bg-background/85 text-sm font-medium">
+                        <SelectValue placeholder={t("selectClusterForRun")} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none__">{t("selectClusterForRun")}</SelectItem>
+                        {clusters.map((c) => (
+                          <SelectItem key={c.id} value={c.id}>
+                            {c.name}{c.reporting_date ? ` (${new Date(c.reporting_date).toLocaleDateString()})` : ""}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Button
+                      size="sm"
+                      onClick={() => setRunRequestNonce((current) => current + 1)}
+                      disabled={runControls.disabled}
+                      className="h-11 min-w-[136px] shrink-0 px-4"
+                    >
+                      {runControls.executing ? (
+                        <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <Play className="mr-2 h-4 w-4" />
+                      )}
+                      {runControls.label || tResult("runCode")}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+              {selectedCluster?.reporting_date && (
+                <div className="mt-8 inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/80 px-3 py-1 text-xs text-muted-foreground">
+                  <CalendarDays className="h-3.5 w-3.5" />
+                  <span>{new Date(selectedCluster.reporting_date).toLocaleDateString()}</span>
+                </div>
+              )}
+            </div>
+
+            {selectedCluster && (
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                <div className="rounded-lg border border-border/60 bg-background/75 px-3 py-2">
+                  <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    <Database className="h-3.5 w-3.5" />
+                    <span>{t("dataset")}</span>
+                  </div>
+                  <p className="mt-1 truncate text-sm font-medium text-foreground">
+                    {selectedCluster.dataset_name || "—"}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-border/60 bg-background/75 px-3 py-2">
+                  <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    <FileCode2 className="h-3.5 w-3.5" />
+                    <span>{t("code")}</span>
+                  </div>
+                  <p className="mt-1 truncate text-sm font-medium text-foreground">
+                    {selectedCluster.code_filename || "—"}
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
-      <ResultDataSection
-        isLoading={isLoading}
-        datasetId={selectedDatasetId}
-        selectedClusterId={selectedClusterId}
-        resultData={resultData}
-        onResultDataChange={(data) => setResultData(data as DataTabResultData)}
-        onRunComplete={refetchAllExecutions}
-      />
-
       <Card>
         <CardHeader>
           <CardTitle className="text-base font-semibold">{t("allExecutions")}</CardTitle>
@@ -241,7 +345,7 @@ export function DataTabContent({ isLoading = false }: DataTabContentProps) {
         <CardContent>
           {loadingExecutions ? (
             <p className="text-sm text-muted-foreground">{t("loading")}</p>
-          ) : allExecutions.length === 0 ? (
+          ) : visibleExecutions.length === 0 ? (
             <p className="text-sm text-muted-foreground">{t("noExecutionsYet")}</p>
           ) : (
             <div className="max-h-[400px] overflow-y-auto rounded-md border border-border">
@@ -258,7 +362,7 @@ export function DataTabContent({ isLoading = false }: DataTabContentProps) {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {allExecutions.map((ex) => (
+                  {visibleExecutions.map((ex) => (
                     <TableRow key={ex.id}>
                       <TableCell className="font-medium">{ex.cluster_name ?? "—"}</TableCell>
                       <TableCell>{ex.cluster_reporting_date ? new Date(ex.cluster_reporting_date).toLocaleDateString() : "—"}</TableCell>
@@ -322,6 +426,18 @@ export function DataTabContent({ isLoading = false }: DataTabContentProps) {
           )}
         </CardContent>
       </Card>
+
+      <ResultDataSection
+        isLoading={isLoading}
+        datasetId={selectedDatasetId}
+        selectedCodeId={selectedCodeId}
+        selectedClusterId={selectedClusterId}
+        runRequestNonce={runRequestNonce}
+        onRunActionStateChange={setRunControls}
+        resultData={resultData}
+        onResultDataChange={(data) => setResultData(data as DataTabResultData)}
+        onRunComplete={refetchAllExecutions}
+      />
 
       {/* Execution data modal (same as Clusters tab View data) */}
       {executionModalOpen && (

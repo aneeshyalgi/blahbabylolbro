@@ -2,7 +2,8 @@
 
 import React, { useState, useEffect } from "react";
 import { useTranslations } from "next-intl";
-import { GitCompare, RefreshCw, Maximize2, TrendingUp, TrendingDown, Minus, X } from "lucide-react";
+import { Download, GitCompare, RefreshCw, Maximize2, TrendingUp, TrendingDown, Minus, X } from "lucide-react";
+import * as XLSX from "xlsx";
 import { Button } from "@/components/ui/button";
 import { API_ENDPOINTS } from "@/lib/api-config";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -74,6 +75,7 @@ export function CompareClustersTabContent() {
       return localStorage.getItem("selectedB") ?? "";
     });
   const [comparisonData, setComparisonData] = useState<any>(null);
+  const [deviationFilter, setDeviationFilter] = useState<string>("all");
   const [loading, setLoading] = useState(true);
   const [comparing, setComparing] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -323,7 +325,7 @@ export function CompareClustersTabContent() {
   };
 
   const getDeviationType = (value_a: any, value_b: any, diff: any): string => {
-    if (!value_a && !value_b) return "Missing in both clusters";
+    if (!value_a && !value_b) return "Not applicable";
     if (!value_a) return "Value only exists in compare cluster";
     if (!value_b) return "Value only exists in base cluster";
     if (diff != null && diff > 0) return "Amount variance positive";
@@ -374,6 +376,172 @@ export function CompareClustersTabContent() {
     } catch {
       return dateString;
     }
+  };
+
+  const handleExportRootcauseExcel = () => {
+    if (!comparisonData || filteredComparisonData.length === 0) {
+      toast({
+        title: "Nothing to export",
+        description: "There is no filtered Rootcause data available to export.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const rows = filteredComparisonData.flatMap((rowComparison: any) =>
+      (rowComparison.columns || []).map((colData: any) => ({
+        key_column: comparisonData.key_column,
+        key_value: rowComparison.key,
+        match_status: rowComparison.match_status,
+        column_name: colData.column_name,
+        cluster_a: clusterAData?.name || "Cluster A",
+        value_a: colData.value_a,
+        cluster_b: clusterBData?.name || "Cluster B",
+        value_b: colData.value_b,
+        deviation_type: getDeviationType(colData.value_a, colData.value_b, colData.difference),
+        difference_a_minus_b: colData.difference,
+      }))
+    );
+
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Rootcause");
+
+    const safeBase = (clusterAData?.name || "cluster-a").replace(/[^a-z0-9]+/gi, "-");
+    const safeCompare = (clusterBData?.name || "cluster-b").replace(/[^a-z0-9]+/gi, "-");
+    const timestamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, "-");
+    const filename = `rootcause-${safeBase}-vs-${safeCompare}-${timestamp}.xlsx`;
+
+    XLSX.writeFileXLSX(workbook, filename);
+    toast({
+      title: "Exported",
+      description: "Rootcause table downloaded as Excel.",
+    });
+  };
+
+  const filteredComparisonData = comparisonData
+    ? comparisonData.comparison_data
+        .map((rowComparison: any) => ({
+          ...rowComparison,
+          columns: (rowComparison.columns || []).filter((colData: any) => {
+            if (deviationFilter === "all") return true;
+            return getDeviationType(colData.value_a, colData.value_b, colData.difference) === deviationFilter;
+          }),
+        }))
+        .filter((rowComparison: any) => (rowComparison.columns || []).length > 0)
+    : [];
+
+  const availableDeviationTypes = comparisonData
+    ? Array.from(
+        new Set(
+          comparisonData.comparison_data.flatMap((rowComparison: any) =>
+            (rowComparison.columns || []).map((colData: any) =>
+              getDeviationType(colData.value_a, colData.value_b, colData.difference)
+            )
+          )
+        )
+      )
+    : [];
+
+  const rawComparisonRowsBase = rawA && rawB
+    ? Array.from(
+        {
+          length: Math.max(rawA.total_rows ?? rawA.data?.length ?? 0, rawB.total_rows ?? rawB.data?.length ?? 0),
+        },
+        (_, rowIdx) => {
+          const rowA = rawA.data?.[rowIdx];
+          const rowB = rawB.data?.[rowIdx];
+          const emptyA = isAllNull(rowA);
+          const emptyB = isAllNull(rowB);
+          if (emptyA && emptyB) return null;
+
+          const allColumnNames = Array.from(
+            new Set([
+              ...(rawA.columns ?? []).map((c: { name: string }) => c.name),
+              ...(rawB.columns ?? []).map((c: { name: string }) => c.name),
+            ])
+          );
+
+          const columns = allColumnNames
+            .map((colName) => {
+              const valueA = rowA?.[colName];
+              const valueB = rowB?.[colName];
+              return {
+                column_name: colName,
+                value_a: valueA,
+                value_b: valueB,
+                deviation_type: getDeviationType(valueA, valueB, null),
+              };
+            });
+
+          if (columns.length === 0) return null;
+
+          return {
+            row_index: rowIdx,
+            only_in_a: !!rowA && !rowB,
+            only_in_b: !!rowB && !rowA,
+            columns,
+          };
+        }
+      ).filter(Boolean)
+    : [];
+
+  const rawComparisonRows = rawComparisonRowsBase
+    .map((row: any) => ({
+      ...row,
+      columns: (row.columns || []).filter((col: any) => deviationFilter === "all" || col.deviation_type === deviationFilter),
+    }))
+    .filter((row: any) => (row.columns || []).length > 0);
+
+  const availableRawDeviationTypes = rawA && rawB
+    ? Array.from(
+        new Set(
+          rawComparisonRowsBase.flatMap((row: any) => (row?.columns || []).map((col: any) => col.deviation_type))
+        )
+      )
+    : [];
+
+  const handleExportInputComparisonExcel = () => {
+    if (!rawComparisonRows.length) {
+      toast({
+        title: "Nothing to export",
+        description: "There is no filtered input comparison data available to export.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const rows = rawComparisonRows.flatMap((row: any) =>
+      (row.columns || []).map((col: any) => ({
+        row_number: row.row_index + 1,
+        row_scope: row.only_in_a
+          ? `Row only in ${clusterAData?.name || "Cluster A"}`
+          : row.only_in_b
+            ? `Row only in ${clusterBData?.name || "Cluster B"}`
+            : "Matched row index",
+        column_name: col.column_name,
+        cluster_a: clusterAData?.name || "Cluster A",
+        value_a: col.value_a,
+        cluster_b: clusterBData?.name || "Cluster B",
+        value_b: col.value_b,
+        deviation_type: col.deviation_type,
+      }))
+    );
+
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Input Compare");
+
+    const safeBase = (clusterAData?.name || "cluster-a").replace(/[^a-z0-9]+/gi, "-");
+    const safeCompare = (clusterBData?.name || "cluster-b").replace(/[^a-z0-9]+/gi, "-");
+    const timestamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, "-");
+    const filename = `input-compare-${safeBase}-vs-${safeCompare}-${timestamp}.xlsx`;
+
+    XLSX.writeFileXLSX(workbook, filename);
+    toast({
+      title: "Exported",
+      description: "Input comparison table downloaded as Excel.",
+    });
   };
 
   const renderComparisonTable = () => {
@@ -461,6 +629,31 @@ export function CompareClustersTabContent() {
           </p>
         </div>
 
+        <div className="flex flex-wrap items-end justify-between gap-3 rounded-lg border border-border bg-card p-3">
+          <div className="min-w-[240px] space-y-2">
+            <Label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Deviation type filter
+            </Label>
+            <Select value={deviationFilter} onValueChange={setDeviationFilter}>
+              <SelectTrigger>
+                <SelectValue placeholder="All deviation types" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All deviation types</SelectItem>
+                {availableDeviationTypes.map((type) => (
+                  <SelectItem key={type} value={type}>
+                    {type}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <Button variant="outline" onClick={handleExportRootcauseExcel} disabled={filteredComparisonData.length === 0}>
+            <Download className="mr-2 h-4 w-4" />
+            Export to Excel
+          </Button>
+        </div>
+
         <div className="rounded-lg border border-border overflow-hidden">
           <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
             <Table>
@@ -474,7 +667,7 @@ export function CompareClustersTabContent() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {comparisonData.comparison_data.map((rowComparison: any, idx: number) => {
+                {filteredComparisonData.map((rowComparison: any, idx: number) => {
                   const key = rowComparison.key;
                   const matchStatus = rowComparison.match_status;
                   const isUnmatched = matchStatus !== "matched";
@@ -580,12 +773,6 @@ export function CompareClustersTabContent() {
       );
     }
 
-    const maxRows = Math.max(rawA.total_rows ?? rawA.data?.length ?? 0, rawB.total_rows ?? rawB.data?.length ?? 0);
-    const dataA = rawA.data ?? [];
-    const dataB = rawB.data ?? [];
-    const columnsA = rawA.columns ?? [];
-    const columnsB = rawB.columns ?? [];
-
     return (
       <div className="space-y-4">
         <div className="grid grid-cols-2 gap-4 p-4 bg-muted rounded-lg">
@@ -611,6 +798,31 @@ export function CompareClustersTabContent() {
           </p>
         </div>
 
+        <div className="flex flex-wrap items-end justify-between gap-3 rounded-lg border border-border bg-card p-3">
+          <div className="min-w-[240px] space-y-2">
+            <Label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Deviation type filter
+            </Label>
+            <Select value={deviationFilter} onValueChange={setDeviationFilter}>
+              <SelectTrigger>
+                <SelectValue placeholder="All deviation types" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All deviation types</SelectItem>
+                {availableRawDeviationTypes.map((type) => (
+                  <SelectItem key={type} value={type}>
+                    {type}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <Button variant="outline" onClick={handleExportInputComparisonExcel} disabled={rawComparisonRows.length === 0}>
+            <Download className="mr-2 h-4 w-4" />
+            Export to Excel
+          </Button>
+        </div>
+
         <div className="rounded-lg border border-border overflow-hidden">
           <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
             <Table>
@@ -623,27 +835,15 @@ export function CompareClustersTabContent() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {Array.from({ length: maxRows }, (_, rowIdx) => {
-                  const rowA = dataA[rowIdx];
-                  const rowB = dataB[rowIdx];
-                  const onlyInA = !!rowA && !rowB;
-                  const onlyInB = !!rowB && !rowA;
+                {rawComparisonRows.map((row: any) => {
+                  const onlyInA = row.only_in_a;
+                  const onlyInB = row.only_in_b;
                   const rowBgClass = onlyInA
                     ? "bg-orange-50 dark:bg-orange-950/20"
                     : onlyInB
                     ? "bg-blue-50 dark:bg-blue-950/20"
                     : "";
-
-                  const emptyA = isAllNull(rowA);
-                  const emptyB = isAllNull(rowB);
-                  if (emptyA && emptyB) return null;
-
-                  const allColumnNames = Array.from(
-                    new Set([
-                      ...columnsA.map((c: { name: string }) => c.name),
-                      ...columnsB.map((c: { name: string }) => c.name),
-                    ])
-                  );
+                  const rowIdx = row.row_index;
 
                   return (
                     <React.Fragment key={rowIdx}>
@@ -670,20 +870,18 @@ export function CompareClustersTabContent() {
                         </TableCell>
                       </TableRow>
 
-                      {allColumnNames.map((colName) => {
-                        const valueA = rowA?.[colName];
-                        const valueB = rowB?.[colName];
+                      {row.columns.map((col: any) => {
                         return (
-                          <TableRow key={`${rowIdx}-${colName}`} className={rowBgClass}>
-                            <TableCell className="font-medium text-sm pl-8">{colName}</TableCell>
+                          <TableRow key={`${rowIdx}-${col.column_name}`} className={rowBgClass}>
+                            <TableCell className="font-medium text-sm pl-8">{col.column_name}</TableCell>
                             <TableCell className="text-right font-mono text-sm">
-                              {formatValue(valueA)}
+                              {formatValue(col.value_a)}
                             </TableCell>
                             <TableCell className="text-right font-mono text-sm">
-                              {formatValue(valueB)}
+                              {formatValue(col.value_b)}
                             </TableCell>
                             <TableCell className="text-right font-mono text-sm">
-                              {getDeviationType(valueA, valueB, null)}
+                              {col.deviation_type}
                             </TableCell>
                           </TableRow>
                         );

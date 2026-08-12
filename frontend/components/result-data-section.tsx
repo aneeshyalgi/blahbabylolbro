@@ -21,32 +21,26 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 
 interface ResultDataSectionProps {
   isLoading?: boolean;
   datasetId?: string | null;
+  selectedCodeId?: string | null;
   selectedClusterId?: string | null;
+  runRequestNonce?: number;
+  onRunActionStateChange?: (controls: {
+    disabled: boolean;
+    executing: boolean;
+    label: string;
+  }) => void;
   resultData?: unknown;
   onResultDataChange?: (data: unknown) => void;
   /** Called after a run completes and execution is linked to a cluster (so parent can refresh execution lists). */
   onRunComplete?: () => void;
 }
 
-const STORAGE_CODE_ID = "dataflow_results_code_id";
 const STORAGE_LAST_EXECUTION = "dataflow_results_last_execution";
-
-function getStoredCodeId(): string {
-  if (typeof window === "undefined") return "";
-  return localStorage.getItem(STORAGE_CODE_ID) ?? "";
-}
 
 function getStoredLastExecution(): { execution_id: string; dataset_id: string; code_id: string } | null {
   if (typeof window === "undefined") return null;
@@ -64,14 +58,14 @@ function getStoredLastExecution(): { execution_id: string; dataset_id: string; c
 export function ResultDataSection({
   isLoading = false,
   datasetId,
+  selectedCodeId,
   selectedClusterId,
+  runRequestNonce = 0,
+  onRunActionStateChange,
   resultData: resultDataProp,
   onResultDataChange,
   onRunComplete,
 }: ResultDataSectionProps) {
-  // Initialize empty to avoid hydration mismatch (localStorage only on client)
-  const [selectedCodeFile, setSelectedCodeFile] = useState<string>("");
-  const [codeFiles, setCodeFiles] = useState<any[]>([]);
   const [executing, setExecuting] = useState(false);
   const [resultDataLocal, setResultDataLocal] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
@@ -80,31 +74,22 @@ export function ResultDataSection({
 
   const resultData = onResultDataChange != null ? resultDataProp : resultDataLocal;
   const setResultData = onResultDataChange ?? setResultDataLocal;
-
-  useEffect(() => {
-    fetchCodeFiles();
-  }, []);
-
-  // Persist selected code file when it changes
-  useEffect(() => {
-    if (typeof window === "undefined" || !selectedCodeFile) return;
-    localStorage.setItem(STORAGE_CODE_ID, selectedCodeFile);
-  }, [selectedCodeFile]);
+  const runDisabled = executing || !datasetId || !selectedCodeId;
 
   // Clear results when dataset changes
   useEffect(() => {
     if (onResultDataChange) onResultDataChange(null);
     else setResultDataLocal(null);
     setError(null);
-  }, [datasetId]);
+  }, [datasetId, selectedCodeId]);
 
   // Restore last result when dataset + code match stored execution (e.g. after tab switch or refresh)
   useEffect(() => {
-    if (!datasetId || !selectedCodeFile || !setResultData) return;
+    if (!datasetId || !selectedCodeId || !setResultData) return;
     const currentEmpty = resultData == null || !(resultData as { data?: unknown[] })?.data?.length;
     if (!currentEmpty) return;
     const last = getStoredLastExecution();
-    if (!last || last.dataset_id !== datasetId || last.code_id !== selectedCodeFile) return;
+    if (!last || last.dataset_id !== datasetId || last.code_id !== selectedCodeId) return;
     let cancelled = false;
     fetch(API_ENDPOINTS.resultById(last.execution_id))
       .then((res) => (res.ok ? res.json() : null))
@@ -113,31 +98,16 @@ export function ResultDataSection({
       })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [datasetId, selectedCodeFile, resultData]);
-
-  const fetchCodeFiles = async () => {
-    try {
-      const response = await fetch(API_ENDPOINTS.code);
-      const data = await response.json();
-      if (data.code_files && data.code_files.length > 0) {
-        setCodeFiles(data.code_files);
-        const saved = getStoredCodeId();
-        const found = data.code_files.find((f: { id: string }) => f.id === saved);
-        setSelectedCodeFile(found ? found.id : data.code_files[0].id);
-      }
-    } catch (error) {
-      console.error('Error fetching code files:', error);
-    }
-  };
+  }, [datasetId, selectedCodeId, resultData, setResultData]);
 
   const performRun = async () => {
-    if (!datasetId || !selectedCodeFile) return;
+    if (!datasetId || !selectedCodeId) return;
     const response = await fetch(API_ENDPOINTS.execute, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         dataset_id: datasetId,
-        code_id: selectedCodeFile,
+        code_id: selectedCodeId,
       }),
     });
     const result = await response.json();
@@ -163,15 +133,6 @@ export function ResultDataSection({
 
     if (selectedClusterId) {
       try {
-        const updateRes = await fetch(API_ENDPOINTS.clusterById(selectedClusterId), {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ code_id: selectedCodeFile }),
-        });
-        if (!updateRes.ok) {
-          console.error("Update cluster code:", await updateRes.text());
-        }
-
         const linkRes = await fetch(API_ENDPOINTS.clusterLinkExecution(selectedClusterId), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -189,8 +150,13 @@ export function ResultDataSection({
   };
 
   const handleRunCode = async () => {
-    if (!datasetId || !selectedCodeFile) {
+    if (!selectedClusterId) {
       alert(t("selectDatasetAndCode"));
+      return;
+    }
+
+    if (!datasetId || !selectedCodeId) {
+      setError("The selected cluster is missing its dataset or code file.");
       return;
     }
 
@@ -205,6 +171,19 @@ export function ResultDataSection({
       setExecuting(false);
     }
   };
+
+  useEffect(() => {
+    onRunActionStateChange?.({
+      disabled: runDisabled,
+      executing,
+      label: executing ? t("executing") : t("runCode"),
+    });
+  }, [onRunActionStateChange, runDisabled, executing, t]);
+
+  useEffect(() => {
+    if (runRequestNonce <= 0) return;
+    void handleRunCode()
+  }, [runRequestNonce]);
 
   const handleExportExcel = async () => {
     if (!resultData || !resultData.execution_id) {
@@ -277,40 +256,30 @@ export function ResultDataSection({
             </p>
           </div>
           <div className="flex flex-row flex-wrap items-center gap-2">
-            <Select value={selectedCodeFile} onValueChange={setSelectedCodeFile}>
-              <SelectTrigger className="w-[200px]">
-                <SelectValue placeholder={t("selectCodeFile")} />
-              </SelectTrigger>
-              <SelectContent>
-                {codeFiles.map((file) => (
-                  <SelectItem key={file.id} value={file.id}>
-                    {file.filename}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
             <div className="flex gap-2">
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button 
-                    size="sm"
-                    onClick={handleRunCode}
-                    disabled={executing || !datasetId || !selectedCodeFile}
-                  >
-                    {executing ? (
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    ) : (
-                      <Play className="mr-2 h-4 w-4" />
-                    )}
-                    {executing ? t("executing") : t("runCode")}
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>{t("executeTooltip")}</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+            {!onRunActionStateChange && (
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button 
+                      size="sm"
+                      onClick={handleRunCode}
+                      disabled={runDisabled}
+                    >
+                      {executing ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <Play className="mr-2 h-4 w-4" />
+                      )}
+                      {executing ? t("executing") : t("runCode")}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>{t("executeTooltip")}</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>

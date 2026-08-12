@@ -21,7 +21,7 @@ export const TAB_LABELS: Record<string, string> = {
   data: "Results",
   clustering: "Clusters",
   "content-lineage": "Content Lineage",
-  "compare-clusters": "Rootcause",
+  "compare-clusters": "Compare",
   "semantic-lineage": "Semantic Lineage",
   regulations: "Regulations",
   "release-notes": "Release notes",

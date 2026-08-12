@@ -26,7 +26,7 @@ const tabLabels: Record<string, string> = {
   data: "Results",
   code: "Code",
   clustering: "Clustering",
-  "compare-clusters": "Rootcause",
+  "compare-clusters": "Compare",
   regulations: "Regulations",
   "data-model": "Data Model",
   "data-modal": "Data Model",
