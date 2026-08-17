@@ -44,6 +44,7 @@ export const API_ENDPOINTS = {
   clusterLinkExecution: (id: string) => `${API_BASE_URL}/api/clusters/${id}/link-execution`,
   clusterExecutionDelete: (id: string) => `${API_BASE_URL}/api/clusters/executions/${id}`,
   clustersCompare: `${API_BASE_URL}/api/clusters/compare`,
+  rootCauseAnalyze: `${API_BASE_URL}/api/rootcause/analyze`,
   
   // Lineage
   contentLineage: `${API_BASE_URL}/api/content-lineage`,

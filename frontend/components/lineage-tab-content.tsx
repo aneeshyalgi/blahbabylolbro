@@ -364,7 +364,7 @@ export function LineageTabContent({ variant = "content" }: LineageTabContentProp
 
       {hasResult && datasetId && resultData && (
         <div className="space-y-6">
-          <Card>
+          {variant !== "technical" && <Card>
             <CardHeader className="pb-4">
               <div className="flex flex-row items-center justify-between gap-4">
                 <div>
@@ -488,9 +488,9 @@ export function LineageTabContent({ variant = "content" }: LineageTabContentProp
                 </div>
               </div>
             </CardContent>
-          </Card>
+          </Card>}
 
-          {resultTableFullScreen && resultData?.data?.length && (
+          {variant !== "technical" && resultTableFullScreen && resultData?.data?.length && (
             <div className="fixed inset-0 z-50 bg-background/95 backdrop-blur-sm flex items-center justify-center p-4 md:p-8 overflow-y-auto">
               <div className="w-full max-w-7xl flex flex-col gap-4 my-auto">
                 <div className="flex items-center justify-between gap-4 sticky top-0 bg-background/95 backdrop-blur-sm pb-4 z-10">

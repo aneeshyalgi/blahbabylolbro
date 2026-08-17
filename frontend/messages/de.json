@@ -18,6 +18,7 @@
     "clustering": "Cluster",
     "contentLineage": "Inhalts-Herkunft",
     "compareClusters": "Compare",
+    "rootCause": "RootCause",
     "semanticLineage": "Semantische Herkunft",
     "regulations": "Vorschriften",
     "releaseNotes": "Versionshinweise"

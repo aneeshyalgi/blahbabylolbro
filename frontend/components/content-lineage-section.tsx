@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useEffect } from "react";
 import { GitBranch, Loader2, LayoutGrid, FileDown, Maximize, X } from "lucide-react";
+import * as XLSX from "xlsx";
 import { Button } from "@/components/ui/button";
 import { API_ENDPOINTS } from "@/lib/api-config";
 import {
@@ -130,7 +131,6 @@ export function ContentLineageSection({
   const [generating, setGenerating] = useState(false);
   const [columnFilter, setColumnFilter] = useState<string>("all");
   const [valueFilter, setValueFilter] = useState("");
-  const [groupByColumn, setGroupByColumn] = useState<string>("");
   const [layoutType, setLayoutType] = useState<"dagre" | "cola" | "circle">("dagre");
   const [fullScreenOpen, setFullScreenOpen] = useState(false);
   const { toast } = useToast();
@@ -257,25 +257,8 @@ export function ContentLineageSection({
     }
   };
 
-  /** Expand lineage with groupKey when "Group by" is set (reference: Deal column with Loan_1, Security_3, etc.) */
-  const rowsWithGroup = useMemo(() => {
-    if (!groupByColumn || groupByColumn === "all" || !resultRows.length) {
-      return lineageRows.map((r) => ({ ...r, groupKey: undefined }));
-    }
-    const distinctGroups = Array.from(
-      new Set(resultRows.map((row) => String(row[groupByColumn] ?? "")).filter(Boolean))
-    ).sort();
-    const expanded: ContentLineageRow[] = [];
-    for (const gv of distinctGroups) {
-      for (const r of lineageRows) {
-        expanded.push({ ...r, groupKey: gv });
-      }
-    }
-    return expanded;
-  }, [lineageRows, groupByColumn, resultRows]);
-
   const filteredRows = useMemo(() => {
-    let list = rowsWithGroup;
+    let list = lineageRows;
     if (columnFilter !== "all") {
       list = list.filter(
         (r) => r.input === columnFilter || r.output === columnFilter
@@ -290,16 +273,38 @@ export function ContentLineageSection({
           r.functionLabel.toLowerCase().includes(q)
       );
     }
-    if (list.some((r) => r.groupKey != null)) {
-      list = [...list].sort((a, b) => (a.groupKey ?? "").localeCompare(b.groupKey ?? ""));
-    }
     return list;
-  }, [rowsWithGroup, columnFilter, valueFilter]);
+  }, [lineageRows, columnFilter, valueFilter]);
 
   const lineageGraphData = useMemo(
     () => buildLineageGraphData(filteredRows),
     [filteredRows]
   );
+
+  const exportLineageToExcel = () => {
+    if (!filteredRows.length) {
+      toast({
+        title: "Nothing to export",
+        description: "No technical lineage rows match the current filters.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const rows = filteredRows.map((row) => ({
+      Input: row.input,
+      Output: row.output,
+      Function: row.functionLabel,
+    }));
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Technical Lineage");
+    XLSX.writeFileXLSX(workbook, "technical-lineage.xlsx");
+    toast({
+      title: "Exported",
+      description: "Technical lineage downloaded as Excel.",
+    });
+  };
 
   return (
     <Card>
@@ -387,6 +392,16 @@ export function ContentLineageSection({
                       type="button"
                       variant="outline"
                       size="sm"
+                      onClick={exportLineageToExcel}
+                      disabled={!filteredRows.length}
+                    >
+                      <FileDown className="mr-2 h-4 w-4" />
+                      Export to Excel
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
                       onClick={() => {
                         if (!lineageGraphData?.transformNodes?.length || !lineageGraphData?.transformEdges) return;
                         const graph = pipelineToDrawIoGraph(
@@ -435,22 +450,6 @@ export function ContentLineageSection({
             )}
             <div className="flex flex-row flex-wrap items-end gap-3">
               <div className="space-y-2">
-                <Label className="text-xs text-muted-foreground">Group by</Label>
-                <Select value={groupByColumn || "all"} onValueChange={(v) => setGroupByColumn(v === "all" ? "" : v)}>
-                  <SelectTrigger className="w-[200px]">
-                    <SelectValue placeholder="None" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">None</SelectItem>
-                    {outputColumns.map((col) => (
-                      <SelectItem key={col} value={col}>
-                        {col}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
                 <Label className="text-xs text-muted-foreground">Filter by column</Label>
                 <Select value={columnFilter} onValueChange={setColumnFilter}>
                   <SelectTrigger className="w-[200px]">
@@ -479,10 +478,7 @@ export function ContentLineageSection({
             <div className="mb-4 p-3 bg-muted/50 rounded-lg">
               <p className="text-sm text-muted-foreground">
                 <strong>Lineage table:</strong> {filteredRows.length} mapping{filteredRows.length !== 1 ? "s" : ""}
-                {groupByColumn && (
-                  <span> grouped by {groupByColumn}</span>
-                )}
-                {filteredRows.length !== lineageRows.length && !groupByColumn && (
+                {filteredRows.length !== lineageRows.length && (
                   <span> (filtered from {lineageRows.length})</span>
                 )}
               </p>
@@ -503,12 +499,7 @@ export function ContentLineageSection({
                 <Table>
                   <TableHeader className="sticky top-0 bg-muted/80 backdrop-blur-sm z-10">
                     <TableRow className="border-b border-border hover:bg-transparent">
-                      {groupByColumn ? (
-                        <TableHead className="w-[140px] font-semibold text-foreground">
-                          {groupByColumn}
-                        </TableHead>
-                      ) : null}
-                      <TableHead className={`font-semibold text-foreground ${groupByColumn ? "w-[25%]" : "w-[35%]"}`}>
+                      <TableHead className="font-semibold text-foreground w-[35%]">
                         Input
                       </TableHead>
                       <TableHead className="font-semibold text-foreground w-[25%]">
@@ -522,40 +513,19 @@ export function ContentLineageSection({
                   <TableBody>
                     {filteredRows.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={groupByColumn ? 4 : 3} className="text-center text-muted-foreground py-10 text-sm">
+                        <TableCell colSpan={3} className="text-center text-muted-foreground py-10 text-sm">
                           No rows match the current filters.
                         </TableCell>
                       </TableRow>
                     ) : (
                       (() => {
-                        const hasGroup = filteredRows.some((r) => r.groupKey != null);
-                        let lastGroup: string | undefined;
-                        return filteredRows.flatMap((row, idx) => {
-                          const elements = [];
-                          if (hasGroup && row.groupKey !== lastGroup) {
-                            if (lastGroup !== undefined) {
-                              elements.push(
-                                <TableRow key={`blank-${lastGroup}`} className="bg-muted/20 hover:bg-muted/20">
-                                  <TableCell colSpan={4} className="py-2 border-b border-border/50" />
-                                </TableRow>
-                              );
-                            }
-                            lastGroup = row.groupKey;
-                          }
-                          elements.push(
-                            <TableRow key={hasGroup ? `${row.groupKey}-${idx}` : idx} className="border-b border-border/50">
-                              {hasGroup && (
-                                <TableCell className="text-sm py-2.5 px-3 align-middle w-[140px] font-medium bg-muted/10">
-                                  {row.groupKey}
-                                </TableCell>
-                              )}
-                              <TableCell className="text-sm py-2.5 px-3 align-middle">{row.input}</TableCell>
-                              <TableCell className="text-sm py-2.5 px-3 align-middle">{row.output}</TableCell>
-                              <TableCell className="text-sm py-2.5 px-3 font-medium text-foreground">{row.functionLabel}</TableCell>
-                            </TableRow>
-                          );
-                          return elements;
-                        });
+                        return filteredRows.map((row, idx) => (
+                          <TableRow key={idx} className="border-b border-border/50">
+                            <TableCell className="text-sm py-2.5 px-3 align-middle">{row.input}</TableCell>
+                            <TableCell className="text-sm py-2.5 px-3 align-middle">{row.output}</TableCell>
+                            <TableCell className="text-sm py-2.5 px-3 font-medium text-foreground">{row.functionLabel}</TableCell>
+                          </TableRow>
+                        ));
                       })()
                     )}
                   </TableBody>
@@ -596,15 +566,11 @@ export function ContentLineageSection({
               <div className="space-y-2">
                 <p className="text-sm text-muted-foreground">
                   <strong>Lineage table:</strong> {filteredRows.length} mapping{filteredRows.length !== 1 ? "s" : ""}
-                  {groupByColumn && <span> grouped by {groupByColumn}</span>}
                 </p>
                 <div className="overflow-x-auto max-h-[60vh] overflow-y-auto rounded border border-border">
                   <Table>
                     <TableHeader className="sticky top-0 bg-muted/80 backdrop-blur-sm z-10">
                       <TableRow className="border-b border-border hover:bg-transparent">
-                        {groupByColumn ? (
-                          <TableHead className="w-[140px] font-semibold text-foreground">{groupByColumn}</TableHead>
-                        ) : null}
                         <TableHead className="font-semibold text-foreground">Input</TableHead>
                         <TableHead className="font-semibold text-foreground">Output</TableHead>
                         <TableHead className="font-semibold text-foreground">Function</TableHead>
@@ -613,9 +579,6 @@ export function ContentLineageSection({
                     <TableBody>
                       {filteredRows.map((row, idx) => (
                         <TableRow key={idx} className="border-b border-border/50">
-                          {groupByColumn && (
-                            <TableCell className="text-sm py-2.5 px-3 font-medium bg-muted/10">{row.groupKey}</TableCell>
-                          )}
                           <TableCell className="text-sm py-2.5 px-3">{row.input}</TableCell>
                           <TableCell className="text-sm py-2.5 px-3">{row.output}</TableCell>
                           <TableCell className="text-sm py-2.5 px-3 font-medium text-foreground">{row.functionLabel}</TableCell>

@@ -8,6 +8,7 @@ import { DataModalTabContent } from "@/components/data-modal-tab-content";
 import { CodeTabContent } from "@/components/code-tab-content";
 import { ClusteringTabContent } from "@/components/clustering-tab-content";
 import { CompareClustersTabContent } from "@/components/compare-clusters-tab-content";
+import { RootCauseTabContent } from "@/components/root-cause-tab-content";
 import { LineageTabContent } from "@/components/lineage-tab-content";
 import { RegulationsTabContent } from "@/components/regulations-tab-content";
 import { PatchNotesTabContent } from "@/components/release-notes-tab-content";
@@ -19,6 +20,7 @@ const VALID_TAB_IDS = new Set([
   "code", "data-modal", "data", "clustering",
   "content-lineage", "technical-lineage", "semantic-lineage",
   "compare-clusters", "regulations", "release-notes",
+  "root-cause",
 ]);
 
 const tabLabels: Record<string, string> = {
@@ -27,6 +29,7 @@ const tabLabels: Record<string, string> = {
   code: "Code",
   clustering: "Clustering",
   "compare-clusters": "Compare",
+  "root-cause": "RootCause",
   regulations: "Regulations",
   "data-model": "Data Model",
   "data-modal": "Data Model",
@@ -67,6 +70,8 @@ export default function HomePage() {
         return <ClusteringTabContent />;
       case "compare-clusters":
         return <CompareClustersTabContent />;
+      case "root-cause":
+        return <RootCauseTabContent />;
       case "content-lineage":
         return <LineageTabContent variant="content" />;
       case "technical-lineage":

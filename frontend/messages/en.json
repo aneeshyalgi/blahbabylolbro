@@ -18,6 +18,7 @@
     "clustering": "Clusters",
     "contentLineage": "Content Lineage",
     "compareClusters": "Compare",
+    "rootCause": "RootCause",
     "semanticLineage": "Semantic Lineage",
     "regulations": "Regulations",
     "releaseNotes": "Release notes"

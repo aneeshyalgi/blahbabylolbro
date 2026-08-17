@@ -76,6 +76,7 @@ export function CompareClustersTabContent() {
     });
   const [comparisonData, setComparisonData] = useState<any>(null);
   const [deviationFilter, setDeviationFilter] = useState<string>("all");
+  const [positionFilter, setPositionFilter] = useState<string>("all");
   const [loading, setLoading] = useState(true);
   const [comparing, setComparing] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -302,6 +303,7 @@ export function CompareClustersTabContent() {
         setComparisonData(null);
       } else {
         setComparisonData(data);
+        setPositionFilter("all");
       }
     } catch (error) {
       console.error("Error comparing clusters:", error);
@@ -400,6 +402,7 @@ export function CompareClustersTabContent() {
         value_b: colData.value_b,
         deviation_type: getDeviationType(colData.value_a, colData.value_b, colData.difference),
         difference_a_minus_b: colData.difference,
+        difference_b_minus_a: colData.difference == null ? null : -colData.difference,
       }))
     );
 
@@ -421,6 +424,15 @@ export function CompareClustersTabContent() {
 
   const filteredComparisonData = comparisonData
     ? comparisonData.comparison_data
+        .filter((rowComparison: any) => {
+          if (positionFilter === "all") return true;
+          if (comparisonData.key_column?.trim().toLowerCase() === "position") {
+            return String(rowComparison.key) === positionFilter;
+          }
+          return (rowComparison.columns || [])
+            .filter((column: any) => column.column_name?.trim().toLowerCase() === "position")
+            .some((column: any) => [column.value_a, column.value_b].some((value) => String(value) === positionFilter));
+        })
         .map((rowComparison: any) => ({
           ...rowComparison,
           columns: (rowComparison.columns || []).filter((colData: any) => {
@@ -442,6 +454,9 @@ export function CompareClustersTabContent() {
         )
       )
     : [];
+
+  const positionColumnName = (columns: { name: string }[] | undefined) =>
+    columns?.find((column) => column.name.trim().toLowerCase() === "position")?.name;
 
   const rawComparisonRowsBase = rawA && rawB
     ? Array.from(
@@ -486,7 +501,33 @@ export function CompareClustersTabContent() {
       ).filter(Boolean)
     : [];
 
+  const availablePositions = Array.from(
+    new Set([
+      ...(comparisonData?.key_column?.trim().toLowerCase() === "position"
+        ? (comparisonData.comparison_data || []).map((row: any) => row.key)
+        : (comparisonData?.comparison_data || []).flatMap((row: any) =>
+            (row.columns || [])
+              .filter((column: any) => column.column_name?.trim().toLowerCase() === "position")
+              .flatMap((column: any) => [column.value_a, column.value_b])
+          )),
+      ...rawComparisonRowsBase.flatMap((row: any) =>
+        (row?.columns || [])
+          .filter((column: any) => column.column_name?.trim().toLowerCase() === "position")
+          .flatMap((column: any) => [column.value_a, column.value_b])
+      ),
+    ])
+  )
+    .filter((position): position is string | number => position !== null && position !== undefined && position !== "")
+    .map(String)
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+
   const rawComparisonRows = rawComparisonRowsBase
+    .filter((row: any) => {
+      if (positionFilter === "all") return true;
+      const positionColumn = positionColumnName(rawA?.columns) || positionColumnName(rawB?.columns);
+      const position = row.columns?.find((column: any) => column.column_name === positionColumn);
+      return [position?.value_a, position?.value_b].some((value) => String(value) === positionFilter);
+    })
     .map((row: any) => ({
       ...row,
       columns: (row.columns || []).filter((col: any) => deviationFilter === "all" || col.deviation_type === deviationFilter),
@@ -648,6 +689,24 @@ export function CompareClustersTabContent() {
               </SelectContent>
             </Select>
           </div>
+          <div className="min-w-[240px] space-y-2">
+            <Label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Position filter
+            </Label>
+            <Select value={positionFilter} onValueChange={setPositionFilter}>
+              <SelectTrigger>
+                <SelectValue placeholder="All positions" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All positions</SelectItem>
+                {availablePositions.map((position) => (
+                  <SelectItem key={position} value={position}>
+                    {position}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
           <Button variant="outline" onClick={handleExportRootcauseExcel} disabled={filteredComparisonData.length === 0}>
             <Download className="mr-2 h-4 w-4" />
             Export to Excel
@@ -664,6 +723,7 @@ export function CompareClustersTabContent() {
                   <TableHead className="text-right font-semibold text-foreground">{t("clusterB")}</TableHead>
                   <TableHead className="text-right font-semibold text-foreground">Deviation type</TableHead>
                   <TableHead className="text-right font-semibold text-foreground">Difference (A - B)</TableHead>
+                  <TableHead className="text-right font-semibold text-foreground">Difference (B - A)</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -679,7 +739,7 @@ export function CompareClustersTabContent() {
                     <React.Fragment key={key}>
                       {idx % 10 === 0 && (
                         <TableRow className="bg-muted/30 border-b border-border/50 hover:bg-muted/40">
-                          <TableCell colSpan={5} className="font-semibold text-sm py-2.5 px-3">
+                          <TableCell colSpan={6} className="font-semibold text-sm py-2.5 px-3">
                             {comparisonData.key_column} Group (starting at {key})
                           </TableCell>
                         </TableRow>
@@ -687,7 +747,7 @@ export function CompareClustersTabContent() {
                       
                       {/* Key row header */}
                       <TableRow className={`${rowBgClass} border-t-2 border-border/50`}>
-                        <TableCell colSpan={5} className="font-semibold text-sm py-2.5 px-3">
+                        <TableCell colSpan={6} className="font-semibold text-sm py-2.5 px-3">
                           <div className="flex items-center justify-between">
                             <span>{comparisonData.key_column}: {key}</span>
                             {isUnmatched && (
@@ -703,6 +763,7 @@ export function CompareClustersTabContent() {
                       
                       {rowComparison.columns.map((colData: any) => {
                         const diff = colData.difference;
+                        const reverseDiff = diff == null ? null : -diff;
 
                         return (
                           <TableRow key={`${key}-${colData.column_name}`} className={`${rowBgClass} border-b border-border/50`}>
@@ -722,6 +783,12 @@ export function CompareClustersTabContent() {
                               <div className="flex items-center justify-end gap-1">
                                 {getDifferenceIcon(diff)}
                                 {formatDifference(diff)}
+                              </div>
+                            </TableCell>
+                            <TableCell className={`text-right text-sm py-2.5 px-3 font-semibold font-mono ${getDifferenceColor(reverseDiff)}`}>
+                              <div className="flex items-center justify-end gap-1">
+                                {getDifferenceIcon(reverseDiff)}
+                                {formatDifference(reverseDiff)}
                               </div>
                             </TableCell>
                           </TableRow>
@@ -812,6 +879,24 @@ export function CompareClustersTabContent() {
                 {availableRawDeviationTypes.map((type) => (
                   <SelectItem key={type} value={type}>
                     {type}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="min-w-[240px] space-y-2">
+            <Label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Position filter
+            </Label>
+            <Select value={positionFilter} onValueChange={setPositionFilter}>
+              <SelectTrigger>
+                <SelectValue placeholder="All positions" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All positions</SelectItem>
+                {availablePositions.map((position) => (
+                  <SelectItem key={position} value={position}>
+                    {position}
                   </SelectItem>
                 ))}
               </SelectContent>

@@ -2075,6 +2075,13 @@ class ContentLineageRequest(PydanticBaseModel):
     output_columns: Optional[List[str]] = None
 
 
+class RootCauseRequest(PydanticBaseModel):
+    execution_id_a: str
+    execution_id_b: str
+    output_column: str = "RWA"
+    position: Optional[str] = None
+
+
 @app.post("/api/content-lineage")
 def build_content_lineage(request: ContentLineageRequest):
     """
@@ -2104,6 +2111,402 @@ def build_content_lineage(request: ContentLineageRequest):
 
     rows = _analyze_code_content_lineage(code_str, input_columns, output_columns)
     return {"rows": rows}
+
+
+def _rootcause_result(execution_id: str) -> Dict[str, Any]:
+    result_path = RESULTS_DIR / f"{execution_id}.json"
+    if not result_path.exists():
+        raise HTTPException(404, f"Execution {execution_id} not found")
+    try:
+        return json.loads(result_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HTTPException(500, f"Execution {execution_id} is invalid") from exc
+
+
+def _rootcause_json_safe(value: Any) -> Any:
+    """Convert pandas/NumPy values and non-finite numbers to JSON-safe values."""
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, (datetime, date, pd.Timestamp)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {str(key): _rootcause_json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_rootcause_json_safe(item) for item in value]
+    if isinstance(value, np.generic):
+        return _rootcause_json_safe(value.item())
+    if isinstance(value, float):
+        return value if np.isfinite(value) else None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    return value
+
+
+def _rootcause_input_rows(dataset_id: str) -> List[Dict[str, Any]]:
+    metadata = db.get_dataset_metadata(dataset_id)
+    if not metadata or not metadata.get("tables"):
+        return []
+    table = metadata["tables"][0]
+    frame = db.get_table_data(metadata.get("user_name", ""), table.get("id"), "input_data")
+    if frame is None or frame.empty:
+        return []
+    records = frame.replace([float("inf"), float("-inf")], np.nan).to_dict(orient="records")
+    return _rootcause_json_safe(records)
+
+
+def _rootcause_position_map(rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    position_column = next(
+        (column for column in (rows[0].keys() if rows else []) if str(column).strip().lower() == "position"),
+        None,
+    )
+    if not position_column:
+        return {str(index): row for index, row in enumerate(rows)}
+    return {
+        str(row.get(position_column)): row
+        for row in rows
+        if row.get(position_column) is not None
+    }
+
+
+def _rootcause_release_note_matches(dependency_names: List[str]) -> List[Dict[str, Any]]:
+    terms = {term.strip().lower() for term in dependency_names if term and len(term.strip()) > 2}
+    if not terms:
+        return []
+    matches: List[Dict[str, Any]] = []
+    for workbook in _list_release_note_workbooks()[:12]:
+        context = _chat_release_note_workbook_context(workbook)
+        if not context:
+            continue
+        for sheet in context.get("sheets", []):
+            for record in sheet.get("records", []):
+                text = json.dumps(record, default=str).lower()
+                matched_terms = sorted(term for term in terms if term in text)
+                if matched_terms:
+                    matches.append({
+                        "workbook": context.get("filename"),
+                        "sheet": sheet.get("name"),
+                        "matched_fields": matched_terms,
+                        "record": record,
+                    })
+                    if len(matches) >= 60:
+                        return matches
+    return matches
+
+
+def _rootcause_dependencies(dataset_id: str, code_id: str, output_column: str) -> List[str]:
+    metadata = db.get_dataset_metadata(dataset_id) or {}
+    columns = [column.get("name") for column in (metadata.get("tables") or [{}])[0].get("columns", [])]
+    code_path = CODE_DIR / f"{code_id}.py"
+    if not code_path.exists():
+        return []
+    lineage = _analyze_code_content_lineage(code_path.read_text(encoding="utf-8"), columns, [output_column])
+    dependencies = {
+        row["input"]
+        for row in lineage
+        if row.get("input") not in (None, "—", output_column)
+        and row.get("output") != row.get("input")
+    }
+    changed = True
+    while changed:
+        changed = False
+        for row in _analyze_code_content_lineage(code_path.read_text(encoding="utf-8"), columns):
+            if (
+                row.get("output") in dependencies
+                and row.get("input") not in (None, "—", row.get("output"))
+                and row.get("input") not in dependencies
+            ):
+                dependencies.add(row["input"])
+                changed = True
+    return sorted(dependencies)
+
+
+def _rootcause_lineage_steps(
+    dataset_ids_and_code_ids: List[Tuple[str, str]],
+    output_column: str,
+) -> List[Dict[str, Any]]:
+    """Build source-to-output lineage steps from the uploaded code AST."""
+    graph: Dict[str, set] = {}
+    for dataset_id, code_id in dataset_ids_and_code_ids:
+        metadata = db.get_dataset_metadata(dataset_id) or {}
+        columns = [
+            column.get("name")
+            for column in (metadata.get("tables") or [{}])[0].get("columns", [])
+            if column.get("name")
+        ]
+        code_path = CODE_DIR / f"{code_id}.py"
+        if not code_path.exists():
+            continue
+        for row in _analyze_code_content_lineage(code_path.read_text(encoding="utf-8"), columns):
+            output = row.get("output")
+            input_field = row.get("input")
+            if output and input_field not in (None, "—") and output != input_field:
+                graph.setdefault(output, set()).add(input_field)
+
+    ordered: List[str] = []
+    visited = set()
+
+    def visit(field: str) -> None:
+        if field in visited:
+            return
+        visited.add(field)
+        for parent in sorted(graph.get(field, set())):
+            visit(parent)
+        ordered.append(field)
+
+    visit(output_column)
+    return [
+        {
+            "field": field,
+            "parents": sorted(graph.get(field, set())),
+            "lineage": ", ".join(sorted(graph.get(field, set()))),
+        }
+        for field in ordered
+    ]
+
+
+def _rootcause_llm(prompt: str) -> Dict[str, Any]:
+    api_key = os.environ.get("OPENAI_API_KEY")
+    azure_key = os.environ.get("AZURE_OPENAI_API_KEY")
+    endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
+    if not api_key and not (azure_key and endpoint):
+        raise HTTPException(503, "OpenAI is not configured")
+    messages = [
+        {
+            "role": "system",
+            "content": "You are a financial data root-cause analyst. Use only supplied evidence and separate verified facts from hypotheses. Return valid JSON only with keys: explanation (string), root_cause (string), confidence (number 0-100), evidence (array of strings), changed_fields (array of strings), release_note_links (array of strings), next_checks (array of strings), rows (array). The root_cause and explanation fields must be detailed, specific, and substantially longer than a one-sentence summary: write 2-4 paragraphs covering the affected positions, exact A and B values and deviations, the relevant dependency chain, which source fields actually changed, how those changes propagate to the output, and whether release notes support or merely resemble the observed change. Explicitly state when the evidence is insufficient. Return exactly one rows item for every selected deviation position. Each rows item must have: position (string), output (string), lineage (string), input (string), release_note (string), explanation (string), confidence (number 0-100). Each row explanation must be specific to that position and include its deviation and evidence-based reasoning. Use an empty string when no evidence exists; never invent a release-note identifier. The confidence is evidence confidence, not certainty.",
+        },
+        {"role": "user", "content": prompt},
+    ]
+    try:
+        if api_key:
+            from openai import OpenAI
+            client = OpenAI(api_key=api_key, timeout=60.0, max_retries=1)
+            response = client.chat.completions.create(
+                model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+                messages=messages,
+                temperature=0.1,
+                max_tokens=2400,
+                response_format={"type": "json_object"},
+            )
+        else:
+            from openai import AzureOpenAI
+            client = AzureOpenAI(
+                api_key=azure_key,
+                api_version=os.environ.get("AZURE_OPENAI_API_VERSION", "2024-10-21"),
+                azure_endpoint=endpoint.rstrip("/"),
+            )
+            response = client.chat.completions.create(
+                model=os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o"),
+                messages=messages,
+                temperature=0.1,
+                max_tokens=2400,
+                response_format={"type": "json_object"},
+            )
+        content = (response.choices[0].message.content or "{}").strip()
+        parsed = json.loads(content)
+        parsed["confidence"] = max(0, min(100, float(parsed.get("confidence", 0))))
+        if not isinstance(parsed.get("rows"), list):
+            parsed["rows"] = []
+        return parsed
+    except HTTPException:
+        raise
+    except Exception as exc:
+        traceback.print_exc()
+        raise HTTPException(502, f"Root-cause analysis failed: {exc}") from exc
+
+
+@app.post("/api/rootcause/analyze")
+def analyze_root_cause(request: RootCauseRequest):
+    result_a = _rootcause_result(request.execution_id_a)
+    result_b = _rootcause_result(request.execution_id_b)
+    comparison = compare_clusters({
+        "execution_id_a": request.execution_id_a,
+        "execution_id_b": request.execution_id_b,
+    })
+    output_column = request.output_column.strip()
+    rows = comparison.get("comparison_data", [])
+    selected_rows = [
+        row for row in rows
+        if request.position is None or str(row.get("key")) == request.position
+    ]
+    if output_column:
+        selected_rows = [
+            {**row, "columns": [column for column in row.get("columns", []) if column.get("column_name") == output_column]}
+            for row in selected_rows
+        ]
+        selected_rows = [row for row in selected_rows if row["columns"]]
+
+    dependencies = sorted(set(
+        _rootcause_dependencies(result_a.get("dataset_id", ""), result_a.get("code_id", ""), output_column)
+        + _rootcause_dependencies(result_b.get("dataset_id", ""), result_b.get("code_id", ""), output_column)
+    ))
+    lineage_steps = _rootcause_lineage_steps([
+        (result_a.get("dataset_id", ""), result_a.get("code_id", "")),
+        (result_b.get("dataset_id", ""), result_b.get("code_id", "")),
+    ], output_column)
+    input_a = _rootcause_position_map(_rootcause_input_rows(result_a.get("dataset_id", "")))
+    input_b = _rootcause_position_map(_rootcause_input_rows(result_b.get("dataset_id", "")))
+    result_data_a = _rootcause_position_map(result_a.get("data") or [])
+    result_data_b = _rootcause_position_map(result_b.get("data") or [])
+    position_keys = [str(row.get("key")) for row in selected_rows]
+    changed_sources = []
+    lineage_evidence = []
+    for position_key in position_keys:
+        input_row_a = input_a.get(position_key, {})
+        input_row_b = input_b.get(position_key, {})
+        result_row_a = result_data_a.get(position_key, {})
+        result_row_b = result_data_b.get(position_key, {})
+        for step in lineage_steps:
+            field = step["field"]
+            is_derived_field = bool(step["parents"]) or field == output_column
+            value_a = (result_row_a if is_derived_field else input_row_a).get(field)
+            value_b = (result_row_b if is_derived_field else input_row_b).get(field)
+            if value_a != value_b:
+                lineage_evidence.append({
+                    "position": position_key,
+                    "field": field,
+                    "lineage": step["lineage"],
+                    "value_a": value_a,
+                    "value_b": value_b,
+                })
+            if field in dependencies and value_a != value_b:
+                changed_sources.append({
+                    "position": position_key,
+                    "field": field,
+                    "value_a": value_a,
+                    "value_b": value_b,
+                })
+    release_notes = _rootcause_release_note_matches(dependencies + [output_column])
+    evidence = {
+        "output_column": output_column,
+        "positions": position_keys,
+        "deviations": selected_rows,
+        "dependencies": dependencies,
+        "lineage_steps": lineage_steps,
+        "lineage_evidence": lineage_evidence,
+        "changed_source_fields": changed_sources,
+        "release_notes": release_notes,
+        "execution_a": {"id": request.execution_id_a, "cluster": result_a.get("dataset_id")},
+        "execution_b": {"id": request.execution_id_b, "cluster": result_b.get("dataset_id")},
+    }
+    evidence = _rootcause_json_safe(evidence)
+    prompt = "Analyze this structured root-cause evidence. Explain each selected deviation, identify the ultimate changed source field when evidence supports it, and map release notes only when relevant. Do not claim a release note caused a change merely because it mentions a field.\n\n" + json.dumps(evidence, default=str, ensure_ascii=True)
+    analysis = _rootcause_llm(prompt)
+    analysis_rows = analysis.get("rows") or []
+    rows_by_position = {
+        str(row.get("position")): row
+        for row in analysis_rows
+        if isinstance(row, dict) and row.get("position") is not None
+    }
+    normalized_rows = []
+    detail_rows = []
+    for selected_row in selected_rows:
+        position_key = str(selected_row.get("key"))
+        output_value = next(
+            (column for column in selected_row.get("columns", []) if column.get("column_name") == output_column),
+            {},
+        )
+        source_fields = [
+            item for item in changed_sources
+            if str(item.get("position")) == position_key
+        ]
+        changed_field_names = {
+            item.get("field")
+            for item in lineage_evidence
+            if str(item.get("position")) == position_key
+        }
+        lineage_by_field = {step["field"]: step for step in lineage_steps}
+        relevant_fields = {output_column}
+
+        def include_changed_branch(field: str) -> None:
+            step = lineage_by_field.get(field)
+            if not step:
+                return
+            for parent in step["parents"]:
+                if parent in changed_field_names:
+                    relevant_fields.add(parent)
+                    include_changed_branch(parent)
+
+        include_changed_branch(output_column)
+        position_lineage = " -> ".join(
+            step["field"]
+            for step in lineage_steps
+            if step["field"] in relevant_fields
+        )
+        source_fields = [
+            item for item in source_fields
+            if not lineage_by_field.get(item.get("field"), {}).get("parents")
+        ]
+        release_note = next(
+            (
+                item.get("workbook") or item.get("sheet") or ""
+                for item in release_notes
+                if any(
+                    field.get("field", "").lower() in item.get("matched_fields", [])
+                    for field in source_fields
+                )
+            ),
+            "",
+        )
+        llm_row = rows_by_position.get(position_key, {})
+        normalized_rows.append({
+            "position": position_key,
+            "output": output_column,
+            "value_a": output_value.get("value_a"),
+            "value_b": output_value.get("value_b"),
+            "difference": output_value.get("difference"),
+            "lineage": position_lineage,
+            "input": ", ".join(item.get("field", "") for item in source_fields),
+            "release_note": release_note,
+            "explanation": llm_row.get("explanation") or analysis.get("explanation", ""),
+            "confidence": max(0, min(100, float(llm_row.get("confidence", analysis.get("confidence", 0)) or 0))),
+        })
+        for step in lineage_steps:
+            field = step["field"]
+            if field not in relevant_fields:
+                continue
+            is_derived_field = bool(step["parents"]) or field == output_column
+            value_a = (result_data_a.get(position_key, {}) if is_derived_field else input_a.get(position_key, {})).get(field)
+            value_b = (result_data_b.get(position_key, {}) if is_derived_field else input_b.get(position_key, {})).get(field)
+            difference = None
+            if isinstance(value_a, (int, float)) and isinstance(value_b, (int, float)):
+                difference = value_a - value_b
+            detail_release_note = next(
+                (
+                    item.get("workbook") or item.get("sheet") or ""
+                    for item in release_notes
+                    if field.lower() in item.get("matched_fields", [])
+                    or any(parent.lower() in item.get("matched_fields", []) for parent in step["parents"])
+                ),
+                "",
+            )
+            detail_rows.append({
+                "position": position_key,
+                "output": field,
+                "value_a": value_a,
+                "value_b": value_b,
+                "difference": difference,
+                "lineage": step["lineage"],
+                "input": ", ".join(step["parents"]),
+                "release_note": detail_release_note,
+                "explanation": llm_row.get("explanation") or analysis.get("explanation", ""),
+                "confidence": max(0, min(100, float(llm_row.get("confidence", analysis.get("confidence", 0)) or 0))),
+            })
+    analysis["rows"] = normalized_rows
+    analysis["detail_rows"] = detail_rows
+    return _rootcause_json_safe({
+        "status": "success",
+        "stages": {
+            "dependencies": dependencies,
+            "changed_source_fields": changed_sources,
+            "release_notes": release_notes,
+            "deviations": selected_rows,
+        },
+        "analysis": analysis,
+    })
 
 
 @app.get("/api/results/{execution_id}")
