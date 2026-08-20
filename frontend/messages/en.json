@@ -12,16 +12,16 @@
   },
   "tabs": {
     "code": "Code",
-    "dataModal": "Data Model",
+    "dataModal": "Data",
     "technicalLineage": "Technical Lineage",
     "data": "Results",
-    "clustering": "Clusters",
+    "clustering": "Cluster",
     "contentLineage": "Content Lineage",
     "compareClusters": "Compare",
-    "rootCause": "RootCause",
+    "rootCause": "Root Cause",
     "semanticLineage": "Semantic Lineage",
-    "regulations": "Regulations",
-    "releaseNotes": "Release notes"
+    "regulations": "Regulation",
+    "releaseNotes": "Release Notes"
   },
   "reorderDialog": {
     "title": "Reorder tabs",

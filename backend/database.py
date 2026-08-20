@@ -227,9 +227,10 @@ def get_table_data(dataset_name: str, table_id: str, data_type: str) -> pd.DataF
     safe_name = dataset_name.replace(" ", "_").replace("-", "_")
     safe_table_id = table_id.replace(" ", "_").replace("-", "_")
     table_name = f"{safe_name}_{safe_table_id}_{data_type}"
+    quoted_table_name = '"' + table_name.replace('"', '""') + '"'
     
     try:
-        df = pd.read_sql_query(f"SELECT * FROM {table_name}", conn)
+        df = pd.read_sql_query(f"SELECT * FROM {quoted_table_name}", conn)
     except Exception as e:
         print(f"Error reading table {table_name}: {e}")
         df = pd.DataFrame()

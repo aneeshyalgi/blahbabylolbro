@@ -57,9 +57,10 @@ export function TabOrderProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const setTabOrder = useCallback((order: string[]) => {
-    setTabOrderState(order);
+    const visibleOrder = order.filter((id) => DEFAULT_TAB_ORDER.includes(id as typeof DEFAULT_TAB_ORDER[number]));
+    setTabOrderState(visibleOrder);
     if (typeof window !== "undefined") {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(order));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(visibleOrder));
     }
   }, []);
 

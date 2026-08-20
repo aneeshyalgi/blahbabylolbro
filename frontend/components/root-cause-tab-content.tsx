@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { AlertCircle, CheckCircle2, GitBranch, Sparkles } from "lucide-react";
+import { AlertCircle, CheckCircle2, CircleX, Eye, GitBranch, Sparkles } from "lucide-react";
 import { API_ENDPOINTS } from "@/lib/api-config";
 import { useClusterSelection } from "@/context/cluster-selection-context";
 import { Button } from "@/components/ui/button";
@@ -12,9 +12,28 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 type Cluster = { id: string; name: string; dataset_version?: string; code_version?: string };
 type Execution = { execution_id: string; executed_date: string; code_filename?: string | null };
+type RootCauseTableRow = {
+  position: string;
+  output: string;
+  value_a?: unknown;
+  value_b?: unknown;
+  difference?: number | null;
+  lineage: string;
+  input: string;
+  release_note: string;
+  explanation: string;
+  confidence: number;
+};
 type RootCauseResult = {
   comparison_direction?: string;
   stages: {
@@ -31,30 +50,8 @@ type RootCauseResult = {
     changed_fields?: string[];
     release_note_links?: string[];
     next_checks?: string[];
-    rows?: {
-      position: string;
-      output: string;
-      value_a?: unknown;
-      value_b?: unknown;
-      difference?: number | null;
-      lineage: string;
-      input: string;
-      release_note: string;
-      explanation: string;
-      confidence: number;
-    }[];
-    detail_rows?: {
-      position: string;
-      output: string;
-      value_a?: unknown;
-      value_b?: unknown;
-      difference?: number | null;
-      lineage: string;
-      input: string;
-      release_note: string;
-      explanation: string;
-      confidence: number;
-    }[];
+    rows?: RootCauseTableRow[];
+    detail_rows?: RootCauseTableRow[];
   };
 };
 
@@ -65,6 +62,15 @@ const displayDifference = (value: number | null | undefined) => {
   const formatted = Number(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   return Number(value) > 0 ? `+${formatted}` : formatted;
 };
+const formatExplanation = (value: string | undefined) => {
+  if (!value) return "No explanation returned.";
+  return value
+    .replace(/\s*\n\s*/g, "\n")
+    .replace(/([.!?])\s+(?=[A-Z0-9"'])/g, "$1\n");
+};
+const expectationStatus = (releaseNote: string) => releaseNote
+  ? { label: "Expected", icon: CheckCircle2, className: "text-emerald-500 dark:text-emerald-400" }
+  : { label: "Not expected", icon: CircleX, className: "text-muted-foreground" };
 const differenceClassName = (value: number | null | undefined) => {
   if (value === null || value === undefined || Number.isNaN(Number(value)) || Number(value) === 0) {
     return "text-muted-foreground";
@@ -111,6 +117,7 @@ export function RootCauseTabContent() {
   const [executionsB, setExecutionsB] = useState<Execution[]>([]);
   const [executionA, setExecutionA] = useState("");
   const [executionB, setExecutionB] = useState("");
+  const [selectedRow, setSelectedRow] = useState<RootCauseTableRow | null>(null);
   const [outputColumn, setOutputColumn] = useState("RWA");
   const [position, setPosition] = useState("all");
   const [positions, setPositions] = useState<string[]>([]);
@@ -300,29 +307,51 @@ export function RootCauseTabContent() {
             </div>
           </CardHeader>
           {resultView === "summary" && <CardContent>
-            <div className="overflow-x-auto rounded-md border border-border">
-              <Table>
+            <div className="w-full overflow-hidden rounded-md border border-border [&_[data-slot=table-container]]:overflow-x-hidden">
+              <Table className="w-full table-fixed">
                 <TableHeader className="bg-muted/80">
                   <TableRow>
-                    <TableHead>Deviation</TableHead>
-                    <TableHead>Output (B - A)</TableHead>
-                    <TableHead>Lineage</TableHead>
-                    <TableHead>Input</TableHead>
-                    <TableHead>Release Note</TableHead>
-                    <TableHead className="min-w-[360px]">Explanation</TableHead>
-                    <TableHead className="text-right">Score</TableHead>
+                    <TableHead className="w-[9%] whitespace-normal break-words">Deviation</TableHead>
+                    <TableHead className="w-[9%] whitespace-normal break-words">Output (B - A)</TableHead>
+                    <TableHead className="w-[14%] whitespace-normal break-words">Lineage</TableHead>
+                    <TableHead className="w-[12%] whitespace-normal break-words">Input</TableHead>
+                    <TableHead className="w-[8%] whitespace-normal break-words">Release Note</TableHead>
+                    <TableHead className="w-[9%] whitespace-normal break-words">Expectation Status</TableHead>
+                    <TableHead className="w-[28%] whitespace-normal break-words">Explanation</TableHead>
+                    <TableHead className="w-[5%] whitespace-normal break-words text-right">Score</TableHead>
+                    <TableHead className="w-[6%] whitespace-normal break-words text-center">View</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {displayedRows.map((row) => (
                     <TableRow key={`${row.position}-${row.output}`}>
-                      <TableCell className="whitespace-nowrap font-medium">{row.position}</TableCell>
-                      <TableCell className="whitespace-nowrap">{row.output}<div className={`text-xs ${differenceClassName(row.difference)}`}>{displayDifference(row.difference)}</div></TableCell>
-                      <TableCell className="min-w-[180px]">{displayLineage(row.lineage, row.input, row.output) || "-"}</TableCell>
-                      <TableCell className="min-w-[150px]">{row.input || "-"}</TableCell>
-                      <TableCell className="whitespace-nowrap">{row.release_note || "-"}</TableCell>
-                      <TableCell className="min-w-[360px] text-sm leading-5">{row.explanation || "No explanation returned."}</TableCell>
-                      <TableCell className="text-right font-semibold">{Math.round(row.confidence)}%</TableCell>
+                      <TableCell className="min-w-0 whitespace-normal break-words align-top font-medium">{row.position}</TableCell>
+                      <TableCell className="min-w-0 whitespace-normal break-words align-top">{row.output}<div className={`text-xs ${differenceClassName(row.difference)}`}>{displayDifference(row.difference)}</div></TableCell>
+                      <TableCell className="min-w-0 whitespace-normal break-words align-top">{displayLineage(row.lineage, row.input, row.output) || "-"}</TableCell>
+                      <TableCell className="min-w-0 whitespace-normal break-words align-top">{row.input || "-"}</TableCell>
+                      <TableCell className="min-w-0 whitespace-normal break-words align-top">{row.release_note || "-"}</TableCell>
+                      <TableCell className="min-w-0 whitespace-normal break-words align-top">
+                        {(() => {
+                          const status = expectationStatus(row.release_note);
+                          const StatusIcon = status.icon;
+                          return <span className={`inline-flex items-center gap-1.5 text-xs font-semibold ${status.className}`} title={status.label}><StatusIcon className="h-4 w-4" aria-hidden="true" /><span className="sr-only">{status.label}</span></span>;
+                        })()}
+                      </TableCell>
+                      <TableCell className="min-w-0 whitespace-pre-line break-words align-top text-sm leading-5">{formatExplanation(row.explanation)}</TableCell>
+                      <TableCell className="min-w-0 whitespace-normal break-words align-top text-right font-semibold">{Math.round(row.confidence)}%</TableCell>
+                      <TableCell className="align-top text-center">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          className="text-muted-foreground hover:bg-[#f5c400]/10 hover:text-[#f5c400]"
+                          title={`View details for ${row.position} ${row.output}`}
+                          aria-label={`View details for ${row.position} ${row.output}`}
+                          onClick={() => setSelectedRow(row)}
+                        >
+                          <Eye className="h-4 w-4" />
+                        </Button>
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -332,17 +361,19 @@ export function RootCauseTabContent() {
           </CardContent>}
           {resultView === "lineage" && <CardContent>
               <p className="mb-4 text-sm text-muted-foreground">Detailed dependency rows for the positions shown above.</p>
-              <div className="overflow-x-auto rounded-md border border-border">
-                <Table>
+              <div className="w-full overflow-hidden rounded-md border border-border [&_[data-slot=table-container]]:overflow-x-hidden">
+                <Table className="w-full table-fixed">
                   <TableHeader className="bg-muted/80">
                     <TableRow>
-                      <TableHead>Deviation</TableHead>
-                      <TableHead>Output (B - A)</TableHead>
-                      <TableHead>Lineage</TableHead>
-                      <TableHead>Input</TableHead>
-                      <TableHead>Release Note</TableHead>
-                      <TableHead className="min-w-[360px]">Explanation</TableHead>
-                      <TableHead className="text-right">Score</TableHead>
+                      <TableHead className="w-[9%] whitespace-normal break-words">Deviation</TableHead>
+                      <TableHead className="w-[9%] whitespace-normal break-words">Output (B - A)</TableHead>
+                      <TableHead className="w-[14%] whitespace-normal break-words">Lineage</TableHead>
+                      <TableHead className="w-[12%] whitespace-normal break-words">Input</TableHead>
+                      <TableHead className="w-[8%] whitespace-normal break-words">Release Note</TableHead>
+                      <TableHead className="w-[9%] whitespace-normal break-words">Expectation Status</TableHead>
+                      <TableHead className="w-[28%] whitespace-normal break-words">Explanation</TableHead>
+                      <TableHead className="w-[5%] whitespace-normal break-words text-right">Score</TableHead>
+                      <TableHead className="w-[6%] whitespace-normal break-words text-center">View</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -350,13 +381,33 @@ export function RootCauseTabContent() {
                       .filter((row) => showUnchanged || changedRows.some((summary) => summary.position === row.position))
                       .map((row, index) => (
                         <TableRow key={`${row.position}-${row.output}-${index}`}>
-                          <TableCell className="whitespace-nowrap font-medium">{row.position}</TableCell>
-                          <TableCell className="whitespace-nowrap">{row.output}<div className={`text-xs ${differenceClassName(row.difference)}`}>{displayDifference(row.difference)}</div></TableCell>
-                          <TableCell>{displayLineage(row.lineage, row.input, row.output) || "-"}</TableCell>
-                          <TableCell>{row.input || "-"}</TableCell>
-                          <TableCell className="whitespace-nowrap">{row.release_note || "-"}</TableCell>
-                          <TableCell className="min-w-[360px] text-sm leading-5">{row.explanation || "No explanation returned."}</TableCell>
-                          <TableCell className="text-right font-semibold">{Math.round(row.confidence)}%</TableCell>
+                          <TableCell className="min-w-0 whitespace-normal break-words align-top font-medium">{row.position}</TableCell>
+                          <TableCell className="min-w-0 whitespace-normal break-words align-top">{row.output}<div className={`text-xs ${differenceClassName(row.difference)}`}>{displayDifference(row.difference)}</div></TableCell>
+                          <TableCell className="min-w-0 whitespace-normal break-words align-top">{displayLineage(row.lineage, row.input, row.output) || "-"}</TableCell>
+                          <TableCell className="min-w-0 whitespace-normal break-words align-top">{row.input || "-"}</TableCell>
+                          <TableCell className="min-w-0 whitespace-normal break-words align-top">{row.release_note || "-"}</TableCell>
+                          <TableCell className="min-w-0 whitespace-normal break-words align-top">
+                            {(() => {
+                              const status = expectationStatus(row.release_note);
+                              const StatusIcon = status.icon;
+                              return <span className={`inline-flex items-center gap-1.5 text-xs font-semibold ${status.className}`} title={status.label}><StatusIcon className="h-4 w-4" aria-hidden="true" /><span className="sr-only">{status.label}</span></span>;
+                            })()}
+                          </TableCell>
+                          <TableCell className="min-w-0 whitespace-pre-line break-words align-top text-sm leading-5">{formatExplanation(row.explanation)}</TableCell>
+                          <TableCell className="min-w-0 whitespace-normal break-words align-top text-right font-semibold">{Math.round(row.confidence)}%</TableCell>
+                          <TableCell className="align-top text-center">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-sm"
+                              className="text-muted-foreground hover:bg-[#f5c400]/10 hover:text-[#f5c400]"
+                              title={`View details for ${row.position} ${row.output}`}
+                              aria-label={`View details for ${row.position} ${row.output}`}
+                              onClick={() => setSelectedRow(row)}
+                            >
+                              <Eye className="h-4 w-4" />
+                            </Button>
+                          </TableCell>
                         </TableRow>
                       ))}
                   </TableBody>
@@ -364,6 +415,43 @@ export function RootCauseTabContent() {
               </div>
             </CardContent>}
         </Card>
+        <Dialog open={selectedRow !== null} onOpenChange={(open) => !open && setSelectedRow(null)}>
+          <DialogContent className="max-h-[85vh] overflow-y-auto border-[#303845] bg-[#0f141c] text-[#f2f4f7] sm:max-w-2xl">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-[#f2f4f7]">
+                <Eye className="h-4 w-4 text-[#f5c400]" />
+                {selectedRow ? `${selectedRow.position} · ${selectedRow.output}` : "Row details"}
+              </DialogTitle>
+              <DialogDescription className="text-[#8c96a8]">
+                Complete structured root-cause data for this table row.
+              </DialogDescription>
+            </DialogHeader>
+            {selectedRow && (
+              <div className="space-y-4 text-sm">
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <div className="rounded-sm border border-[#252a33] bg-[#080b10] p-3"><p className="text-xs text-[#8c96a8]">Value A</p><p className="mt-1 font-mono text-[#f2f4f7]">{displayValue(selectedRow.value_a)}</p></div>
+                  <div className="rounded-sm border border-[#252a33] bg-[#080b10] p-3"><p className="text-xs text-[#8c96a8]">Value B</p><p className="mt-1 font-mono text-[#f2f4f7]">{displayValue(selectedRow.value_b)}</p></div>
+                  <div className="rounded-sm border border-[#252a33] bg-[#080b10] p-3"><p className="text-xs text-[#8c96a8]">Difference (B - A)</p><p className={`mt-1 font-mono ${differenceClassName(selectedRow.difference)}`}>{displayDifference(selectedRow.difference)}</p></div>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div><p className="text-xs font-semibold uppercase tracking-wide text-[#8c96a8]">Lineage</p><p className="mt-1 break-words text-[#f2f4f7]">{selectedRow.lineage || "-"}</p></div>
+                  <div><p className="text-xs font-semibold uppercase tracking-wide text-[#8c96a8]">Input</p><p className="mt-1 break-words text-[#f2f4f7]">{selectedRow.input || "-"}</p></div>
+                  <div><p className="text-xs font-semibold uppercase tracking-wide text-[#8c96a8]">Release note</p><p className="mt-1 break-words text-[#f5c400]">{selectedRow.release_note || "-"}</p></div>
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-[#8c96a8]">Expectation status</p>
+                    {(() => {
+                      const status = expectationStatus(selectedRow.release_note);
+                      const StatusIcon = status.icon;
+                      return <p className={`mt-1 inline-flex items-center gap-1.5 font-semibold ${status.className}`}><StatusIcon className="h-4 w-4" aria-hidden="true" />{status.label}</p>;
+                    })()}
+                  </div>
+                  <div><p className="text-xs font-semibold uppercase tracking-wide text-[#8c96a8]">Confidence</p><p className="mt-1 text-[#f2f4f7]">{Math.round(selectedRow.confidence)}%</p></div>
+                </div>
+                <div className="border-t border-[#252a33] pt-4"><p className="text-xs font-semibold uppercase tracking-wide text-[#8c96a8]">Explanation</p><p className="mt-2 whitespace-pre-line break-words leading-6 text-[#f2f4f7]">{formatExplanation(selectedRow.explanation)}</p></div>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
         <div className="grid gap-6 lg:grid-cols-2">
           <Card><CardHeader><CardTitle className="text-base">Root cause summary</CardTitle></CardHeader><CardContent><p className="whitespace-pre-line text-sm leading-6">{result.analysis.root_cause || result.analysis.explanation || "No root cause identified."}</p></CardContent></Card>
           <Card><CardHeader><CardTitle className="text-base">Evidence and next checks</CardTitle></CardHeader><CardContent className="space-y-3">{(result.analysis.evidence || []).map((item) => <div key={item} className="flex gap-2 text-sm"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-green-600" />{item}</div>)}{(result.analysis.next_checks || []).map((item) => <div key={item} className="flex gap-2 text-sm"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />{item}</div>)}</CardContent></Card>

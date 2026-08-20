@@ -70,7 +70,6 @@ export default function LoginPage() {
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               className="h-11 w-full rounded-sm border border-[#303845] bg-[#080b10] px-3 text-sm text-[#f2f4f7] placeholder:text-[#687386] outline-none transition-colors focus:border-[#f5c400] focus:ring-2 focus:ring-[#f5c400]/20"
-              placeholder="admin"
             />
           </div>
 
@@ -86,7 +85,6 @@ export default function LoginPage() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               className="h-11 w-full rounded-sm border border-[#303845] bg-[#080b10] px-3 text-sm text-[#f2f4f7] placeholder:text-[#687386] outline-none transition-colors focus:border-[#f5c400] focus:ring-2 focus:ring-[#f5c400]/20"
-              placeholder="••••••••"
             />
           </div>
 

@@ -189,6 +189,7 @@ RELEASE_NOTES_DIR.mkdir(parents=True, exist_ok=True)
 RWA_INPUT_HARDCODED_FILENAMES = {
     "rwa_input.xlsx",
     "rwa_input again.xlsx",
+    "rwa_input again (1).xlsx",
     "regcalculator_coderequirement.xlsx",
     "rwacalculator_coderequirement - copy.xlsx",
     "rwacalculator_coderequirement - copy (1).xlsx",
@@ -490,18 +491,20 @@ def _build_rwa_input_tables(file_path: str, data_only_workbook: openpyxl.Workboo
         col_name = str(header_value).strip() if header_value is not None else f"Column {col + 1}"
         if not col_name:
             col_name = f"Column {col + 1}"
+        sample_values = []
         values = []
         null_count = 0
         for row in range(data_start_row, end_row + 1):
             cell = ws.cell(row=row + 1, column=col + 1)  # 0-based row -> Excel 1-based
             excel_row, excel_col = row + 1, col + 1
             val = None if _rwa_clear_cell(excel_row, excel_col, filename_normalized) else cell.value
+            sample_values.append(val)
             if val is None or (isinstance(val, str) and not val.strip()):
                 null_count += 1
             else:
                 values.append(val)
         data_type = _infer_column_type(values)
-        sample_values = values[:5]
+        sample_values = sample_values[:5]
         total_data_rows = end_row - data_start_row + 1
         columns.append(ColumnInfo(
             name=col_name,

@@ -2,31 +2,30 @@
  * Default tab order and labels. Used by TabNavigation and ReorderTabsDialog.
  */
 export const DEFAULT_TAB_ORDER = [
-  "code",
   "data-modal",
-  "data",
-  "technical-lineage",
+  "code",
   "clustering",
-  "content-lineage",
+  "data",
   "compare-clusters",
-  "root-cause",
-  "semantic-lineage",
-  "regulations",
+  "technical-lineage",
+  "content-lineage",
   "release-notes",
+  "regulations",
+  "root-cause",
 ] as const;
 
 export const TAB_LABELS: Record<string, string> = {
   code: "Code",
-  "data-modal": "Data Model",
+  "data-modal": "Data",
   "technical-lineage": "Technical Lineage",
   data: "Results",
-  clustering: "Clusters",
+  clustering: "Cluster",
   "content-lineage": "Content Lineage",
   "compare-clusters": "Compare",
-  "root-cause": "RootCause",
+  "root-cause": "Root Cause",
   "semantic-lineage": "Semantic Lineage",
-  regulations: "Regulations",
-  "release-notes": "Release notes",
+  regulations: "Regulation",
+  "release-notes": "Release Notes",
 };
 
 export function getTabLabel(id: string): string {
