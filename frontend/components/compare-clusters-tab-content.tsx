@@ -401,8 +401,7 @@ export function CompareClustersTabContent() {
         cluster_b: clusterBData?.name || "Cluster B",
         value_b: colData.value_b,
         deviation_type: getDeviationType(colData.value_a, colData.value_b, colData.difference),
-        difference_a_minus_b: colData.difference,
-        difference_b_minus_a: colData.difference == null ? null : -colData.difference,
+        difference_b_minus_a: colData.difference,
       }))
     );
 
@@ -722,7 +721,6 @@ export function CompareClustersTabContent() {
                   <TableHead className="text-right font-semibold text-foreground">{t("clusterA")}</TableHead>
                   <TableHead className="text-right font-semibold text-foreground">{t("clusterB")}</TableHead>
                   <TableHead className="text-right font-semibold text-foreground">Deviation type</TableHead>
-                  <TableHead className="text-right font-semibold text-foreground">Difference (A - B)</TableHead>
                   <TableHead className="text-right font-semibold text-foreground">Difference (B - A)</TableHead>
                 </TableRow>
               </TableHeader>
@@ -739,7 +737,7 @@ export function CompareClustersTabContent() {
                     <React.Fragment key={key}>
                       {idx % 10 === 0 && (
                         <TableRow className="bg-muted/30 border-b border-border/50 hover:bg-muted/40">
-                          <TableCell colSpan={6} className="font-semibold text-sm py-2.5 px-3">
+                          <TableCell colSpan={5} className="font-semibold text-sm py-2.5 px-3">
                             {comparisonData.key_column} Group (starting at {key})
                           </TableCell>
                         </TableRow>
@@ -747,7 +745,7 @@ export function CompareClustersTabContent() {
                       
                       {/* Key row header */}
                       <TableRow className={`${rowBgClass} border-t-2 border-border/50`}>
-                        <TableCell colSpan={6} className="font-semibold text-sm py-2.5 px-3">
+                        <TableCell colSpan={5} className="font-semibold text-sm py-2.5 px-3">
                           <div className="flex items-center justify-between">
                             <span>{comparisonData.key_column}: {key}</span>
                             {isUnmatched && (
@@ -763,7 +761,6 @@ export function CompareClustersTabContent() {
                       
                       {rowComparison.columns.map((colData: any) => {
                         const diff = colData.difference;
-                        const reverseDiff = diff == null ? null : -diff;
 
                         return (
                           <TableRow key={`${key}-${colData.column_name}`} className={`${rowBgClass} border-b border-border/50`}>
@@ -785,12 +782,6 @@ export function CompareClustersTabContent() {
                                 {formatDifference(diff)}
                               </div>
                             </TableCell>
-                            <TableCell className={`text-right text-sm py-2.5 px-3 font-semibold font-mono ${getDifferenceColor(reverseDiff)}`}>
-                              <div className="flex items-center justify-end gap-1">
-                                {getDifferenceIcon(reverseDiff)}
-                                {formatDifference(reverseDiff)}
-                              </div>
-                            </TableCell>
                           </TableRow>
                         );
                       })}
@@ -805,11 +796,11 @@ export function CompareClustersTabContent() {
         <div className="mt-4 flex items-center gap-4 text-xs text-muted-foreground">
           <div className="flex items-center gap-2">
             <TrendingUp className="h-3 w-3 text-green-600" />
-            <span>Positive difference (A &gt; B)</span>
+            <span>Positive difference (B &gt; A)</span>
           </div>
           <div className="flex items-center gap-2">
             <TrendingDown className="h-3 w-3 text-red-600" />
-            <span>Negative difference (A &lt; B)</span>
+            <span>Negative difference (B &lt; A)</span>
           </div>
           <div className="flex items-center gap-2">
             <Minus className="h-3 w-3" />

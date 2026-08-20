@@ -50,52 +50,31 @@ function sanitizeNodeId(s: string): string {
   return s.replace(/\s+/g, "_").replace(/[^a-zA-Z0-9_-]/g, "_") || "unknown";
 }
 
-/** One transform node per function label; multiple inputs/outputs per function. */
+/** Render the technical lineage as a field dependency graph. Functions remain in the table. */
 function buildLineageGraphData(rows: ContentLineageRow[]): LineageGraphData | null {
   if (rows.length === 0) return null;
-  const inputLabels = Array.from(new Set(rows.map((r) => r.input)));
-  const outputLabels = Array.from(new Set(rows.map((r) => r.output)));
-  const functionLabels = Array.from(new Set(rows.map((r) => r.functionLabel)));
+  const inputLabels = Array.from(new Set(rows.map((r) => r.input).filter((label) => label && label !== "—")));
+  const outputLabels = Array.from(new Set(rows.map((r) => r.output).filter(Boolean)));
+  const fieldLabels = Array.from(new Set([...inputLabels, ...outputLabels]));
   const transformNodes = [
-    ...inputLabels.map((l) => ({
-      id: "in_" + sanitizeNodeId(l),
+    ...fieldLabels.map((label) => ({
+      id: "field_" + sanitizeNodeId(label),
       type: "dataset" as const,
-      label: l,
-      operation: "input",
-      params: {},
-    })),
-    ...functionLabels.map((label, i) => ({
-      id: "t_" + sanitizeNodeId(label) + "_" + i,
-      type: "transform" as const,
       label,
-      operation: "mapping",
-      params: {},
-    })),
-    ...outputLabels.map((l) => ({
-      id: "out_" + sanitizeNodeId(l),
-      type: "dataset" as const,
-      label: l,
-      operation: "output",
+      operation: outputLabels.includes(label) ? "derived" : "input",
       params: {},
     })),
   ];
-  const funcToId = new Map<string, string>();
-  functionLabels.forEach((label, i) => {
-    funcToId.set(label, "t_" + sanitizeNodeId(label) + "_" + i);
-  });
   const edgeSet = new Set<string>();
   const transformEdges: { from: string; to: string; note?: string }[] = [];
   rows.forEach((r) => {
-    const fromIn = "in_" + sanitizeNodeId(r.input);
-    const toOut = "out_" + sanitizeNodeId(r.output);
-    const tId = funcToId.get(r.functionLabel)!;
-    if (!edgeSet.has(fromIn + "->" + tId)) {
-      edgeSet.add(fromIn + "->" + tId);
-      transformEdges.push({ from: fromIn, to: tId, note: "in" });
-    }
-    if (!edgeSet.has(tId + "->" + toOut)) {
-      edgeSet.add(tId + "->" + toOut);
-      transformEdges.push({ from: tId, to: toOut, note: "writes" });
+    if (!r.input || r.input === "—" || !r.output || r.input === r.output) return;
+    const from = "field_" + sanitizeNodeId(r.input);
+    const to = "field_" + sanitizeNodeId(r.output);
+    const edgeId = from + "->" + to;
+    if (!edgeSet.has(edgeId)) {
+      edgeSet.add(edgeId);
+      transformEdges.push({ from, to });
     }
   });
   return {
@@ -105,6 +84,60 @@ function buildLineageGraphData(rows: ContentLineageRow[]): LineageGraphData | nu
     transformNodes,
     transformEdges,
   };
+}
+
+/** Preserve the original Input -> Function -> Output visualization for comparison. */
+function buildOriginalLineageGraphData(rows: ContentLineageRow[]): LineageGraphData | null {
+  if (rows.length === 0) return null;
+  const inputLabels = Array.from(new Set(rows.map((row) => row.input)));
+  const outputLabels = Array.from(new Set(rows.map((row) => row.output)));
+  const functionLabels = Array.from(new Set(rows.map((row) => row.functionLabel)));
+  const transformNodes = [
+    ...inputLabels.map((label) => ({
+      id: "original_in_" + sanitizeNodeId(label),
+      type: "dataset" as const,
+      label,
+      operation: "input",
+      params: {},
+    })),
+    ...functionLabels.map((label, index) => ({
+      id: "original_transform_" + sanitizeNodeId(label) + "_" + index,
+      type: "transform" as const,
+      label,
+      operation: "mapping",
+      params: {},
+    })),
+    ...outputLabels.map((label) => ({
+      id: "original_out_" + sanitizeNodeId(label),
+      type: "dataset" as const,
+      label,
+      operation: "output",
+      params: {},
+    })),
+  ];
+  const functionIds = new Map(functionLabels.map((label, index) => [
+    label,
+    "original_transform_" + sanitizeNodeId(label) + "_" + index,
+  ]));
+  const edgeSet = new Set<string>();
+  const transformEdges: { from: string; to: string; note?: string }[] = [];
+  rows.forEach((row) => {
+    const functionId = functionIds.get(row.functionLabel);
+    if (!functionId) return;
+    const inputId = "original_in_" + sanitizeNodeId(row.input);
+    const outputId = "original_out_" + sanitizeNodeId(row.output);
+    const inputEdge = inputId + "->" + functionId;
+    const outputEdge = functionId + "->" + outputId;
+    if (!edgeSet.has(inputEdge)) {
+      edgeSet.add(inputEdge);
+      transformEdges.push({ from: inputId, to: functionId, note: "in" });
+    }
+    if (!edgeSet.has(outputEdge)) {
+      edgeSet.add(outputEdge);
+      transformEdges.push({ from: functionId, to: outputId, note: "writes" });
+    }
+  });
+  return { tables: [], nodes: [], edges: [], transformNodes, transformEdges };
 }
 
 const TECHNICAL_LINEAGE_STORAGE_KEY = "dataflow_technical_lineage";
@@ -132,6 +165,7 @@ export function ContentLineageSection({
   const [columnFilter, setColumnFilter] = useState<string>("all");
   const [valueFilter, setValueFilter] = useState("");
   const [layoutType, setLayoutType] = useState<"dagre" | "cola" | "circle">("dagre");
+  const [graphMode, setGraphMode] = useState<"dependencies" | "original">("dependencies");
   const [fullScreenOpen, setFullScreenOpen] = useState(false);
   const { toast } = useToast();
 
@@ -277,8 +311,10 @@ export function ContentLineageSection({
   }, [lineageRows, columnFilter, valueFilter]);
 
   const lineageGraphData = useMemo(
-    () => buildLineageGraphData(filteredRows),
-    [filteredRows]
+    () => graphMode === "original"
+      ? buildOriginalLineageGraphData(filteredRows)
+      : buildLineageGraphData(filteredRows),
+    [filteredRows, graphMode]
   );
 
   const exportLineageToExcel = () => {
@@ -316,7 +352,7 @@ export function ContentLineageSection({
               Technical Lineage
             </CardTitle>
             <p className="mt-1 text-sm text-muted-foreground">
-              After running code, generate a lineage table: Input → Output and the function responsible.
+              After running code, generate the field-dependency graph and the functions that derive each output.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -382,12 +418,20 @@ export function ContentLineageSection({
           </div>
         ) : (
           <div className="space-y-6">
-            {/* Lineage graph: Input → Function → Output (same style as Technical Lineage Visual Pipeline) */}
+            {/* Field dependency graph; function details remain in the table below. */}
             {lineageGraphData && lineageGraphData.transformNodes && lineageGraphData.transformNodes.length > 0 && (
               <div className="space-y-3">
                 <div className="flex items-center justify-between flex-wrap gap-2">
                   <Label className="text-sm font-medium">Lineage graph</Label>
                   <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setGraphMode((mode) => mode === "dependencies" ? "original" : "dependencies")}
+                    >
+                      {graphMode === "dependencies" ? "Show original graph" : "Show dependency graph"}
+                    </Button>
                     <Button
                       type="button"
                       variant="outline"
@@ -438,7 +482,10 @@ export function ContentLineageSection({
                   </div>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Input (blue) → Function (orange) → Output (blue). Filters below apply to both graph and table.
+                  {graphMode === "dependencies"
+                    ? "Field dependencies are shown as arrows. Function details remain in the table below."
+                    : "Original view: Input → Function → Output."
+                  } Filters apply to both graph and table.
                 </p>
                 <LineageGraph
                   data={lineageGraphData}

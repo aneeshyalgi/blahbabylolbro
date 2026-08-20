@@ -111,7 +111,7 @@ function generateGraphElements(
     return elements;
   }
 
-  // Pipeline view (dataset → transform → output)
+  // Technical lineage view: direct field dependencies.
   if (hasPipeline && viewMode !== "column" && data?.transformNodes && data?.transformEdges) {
     for (const node of data.transformNodes) {
       const nodeType = node.type ?? (node.operation === "dataset" || node.operation === "output" ? "dataset" : "transform");

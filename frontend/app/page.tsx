@@ -88,12 +88,16 @@ export default function HomePage() {
   };
 
   return (
-    <div className="min-h-screen bg-background">
-      <AppHeader />
+    <div className="flex min-h-screen bg-background">
       <TabNavigation activeTab={activeTab} onTabChange={handleTabChange} />
-      <main className="p-6 overflow-x-auto">
-        <div className="mx-auto max-w-[1600px] min-w-[1200px]">{renderTabContent()}</div>
-      </main>
+
+      <div className="flex min-w-0 flex-1 flex-col ml-72">
+        <AppHeader title={tabLabels[activeTab] || activeTab} />
+        <main className="flex-1 overflow-auto p-6">
+          <div className="mx-auto max-w-[1600px] min-w-[1000px]">{renderTabContent()}</div>
+        </main>
+      </div>
+
       <DataAssistant />
     </div>
   );

@@ -33,8 +33,8 @@ export default function RootLayout({
       <body className="antialiased" style={{ fontFamily: "'Inter', sans-serif" }}>
         <ThemeProvider
           attribute="class"
-          defaultTheme="system"
-          enableSystem
+          defaultTheme="dark"
+          enableSystem={false}
           disableTransitionOnChange={false}
         >
           <LocaleProvider>

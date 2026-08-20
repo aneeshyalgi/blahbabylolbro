@@ -2171,6 +2171,58 @@ def _rootcause_position_map(rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, A
     }
 
 
+def _extract_jira_id_from_record(record: Dict[str, Any]) -> str:
+    """Return the Jira ID from the release note record when the column is named like Jira ID."""
+    if not isinstance(record, dict):
+        return ""
+
+    jira_column_names = {"jira id", "jira_id", "jiraid", "jira"}
+    for key in record.keys():
+        if key and isinstance(key, str):
+            key_lower = key.strip().lower().replace(" ", "")
+            if key_lower in jira_column_names or key_lower == "jiraid":
+                value = record.get(key)
+                if value is not None and str(value).strip():
+                    return str(value).strip()
+    return ""
+
+
+def _extract_release_note_solution_description(record: Dict[str, Any]) -> str:
+    """Return the release-note solution text from common column-name variants."""
+    if not isinstance(record, dict):
+        return ""
+    preferred_keys = (
+        "solution description",
+        "solution_description",
+        "solutiondescription",
+        "solution",
+    )
+    for key, value in record.items():
+        normalized_key = str(key).strip().lower().replace(" ", "").replace("-", "_")
+        if normalized_key in preferred_keys or normalized_key.endswith("solutiondescription"):
+            if value is not None and str(value).strip():
+                return str(value).strip()
+    return ""
+
+
+def _rootcause_normalize_release_note_text(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", str(value).lower()).strip()
+
+
+def _rootcause_position_terms(position_key: str) -> set:
+    terms = set()
+    for token in _rootcause_normalize_release_note_text(position_key).split():
+        if not token.isdigit() and len(token) > 2:
+            terms.add(token)
+            if token.endswith("y"):
+                terms.add(f"{token[:-1]}ies")
+            elif token.endswith("s"):
+                terms.add(token[:-1])
+            else:
+                terms.add(f"{token}s")
+    return terms
+
+
 def _rootcause_release_note_matches(dependency_names: List[str]) -> List[Dict[str, Any]]:
     terms = {term.strip().lower() for term in dependency_names if term and len(term.strip()) > 2}
     if not terms:
@@ -2182,18 +2234,222 @@ def _rootcause_release_note_matches(dependency_names: List[str]) -> List[Dict[st
             continue
         for sheet in context.get("sheets", []):
             for record in sheet.get("records", []):
-                text = json.dumps(record, default=str).lower()
-                matched_terms = sorted(term for term in terms if term in text)
+                text = _rootcause_normalize_release_note_text(json.dumps(record, default=str))
+                matched_terms = sorted(
+                    matched_term
+                    for term in terms
+                    if (normalized_term := _rootcause_normalize_release_note_text(term))
+                    and normalized_term in text
+                    for matched_term in {term, normalized_term}
+                )
                 if matched_terms:
+                    jira_id = _extract_jira_id_from_record(record)
+                    solution_description = _extract_release_note_solution_description(record)
                     matches.append({
                         "workbook": context.get("filename"),
                         "sheet": sheet.get("name"),
                         "matched_fields": matched_terms,
+                        "jira_id": jira_id,
+                        "solution_description": solution_description,
                         "record": record,
                     })
                     if len(matches) >= 60:
                         return matches
     return matches
+
+
+def _rootcause_position_release_notes(
+    release_notes: List[Dict[str, Any]],
+    position_key: str,
+    changed_fields: List[str],
+) -> List[Dict[str, Any]]:
+    position_terms = _rootcause_position_terms(position_key)
+    changed_terms = {
+        _rootcause_normalize_release_note_text(field)
+        for field in changed_fields
+        if field
+    }
+    candidates = []
+    for note in release_notes:
+        note_text = _rootcause_normalize_release_note_text(json.dumps(note.get("record", {}), default=str))
+        position_matches = sorted(term for term in position_terms if term in note_text)
+        field_matches = sorted(
+            field
+            for field in changed_terms
+            if field and field in note_text
+        )
+        if not position_matches or not field_matches:
+            continue
+        candidates.append({
+            **note,
+            "position_matches": position_matches,
+            "changed_field_matches": field_matches,
+            "relevance_score": len(position_matches) * 4 + len(field_matches) * 3,
+        })
+    return sorted(candidates, key=lambda note: note["relevance_score"], reverse=True)
+
+
+def _rootcause_value_text(value: Any) -> str:
+    if value is None:
+        return "not available"
+    if isinstance(value, (float, np.floating)) and np.isnan(value):
+        return "not available"
+    text = str(value).strip()
+    if not text:
+        return "not available"
+    placeholder = re.sub(r"[\s€$£¥,.-]", "", text)
+    if not placeholder:
+        return "not available"
+    return text
+
+
+def _rootcause_values_equal(value_a: Any, value_b: Any) -> bool:
+    text_a = _rootcause_value_text(value_a)
+    text_b = _rootcause_value_text(value_b)
+    if text_a == "not available" and text_b == "not available":
+        return True
+    try:
+        return float(text_a.replace(",", "")) == float(text_b.replace(",", ""))
+    except (ValueError, TypeError):
+        return text_a.strip().casefold() == text_b.strip().casefold()
+
+
+def _rootcause_fallback_row_explanation(
+    position_key: str,
+    output_column: str,
+    output_value: Dict[str, Any],
+    lineage_evidence: List[Dict[str, Any]],
+    position_release_notes: List[Dict[str, Any]],
+) -> str:
+    value_a = output_value.get("value_a")
+    value_b = output_value.get("value_b")
+    difference = output_value.get("difference")
+    changed_fields = [
+        item for item in lineage_evidence
+        if str(item.get("position")) == position_key
+        and not _rootcause_values_equal(item.get("value_a"), item.get("value_b"))
+    ]
+    field_summary = ", ".join(
+        f"{item.get('field')} changed from {_rootcause_value_text(item.get('value_a'))} to {_rootcause_value_text(item.get('value_b'))}"
+        for item in changed_fields
+    ) or "No changed lineage field was identified beyond the output."
+    note = position_release_notes[0] if position_release_notes else None
+    if note:
+        jira_id = note.get("jira_id") or "the matched release note"
+        solution = note.get("solution_description")
+        if solution:
+            note_statement = (
+                f"Release note {jira_id} describes this solution: {solution} "
+                "This supports the related lineage change, but does not independently prove changes in other fields."
+            )
+        else:
+            note_statement = f"Release note {jira_id} is position-relevant, but its solution description is unavailable."
+    else:
+        note_statement = "No position-specific release note was identified for the changed lineage."
+    return (
+        f"The {output_column} value for {position_key} changed from "
+        f"{_rootcause_value_text(value_a)} to {_rootcause_value_text(value_b)}, "
+        f"a B - A difference of {_rootcause_value_text(difference)}. "
+        f"Execution lineage shows that {field_summary}. {note_statement}"
+    )
+
+
+def _rootcause_row_explanation_is_valid(
+    explanation: Any,
+    position_key: str,
+    position_keys: List[str],
+    output_value: Dict[str, Any],
+) -> bool:
+    if not isinstance(explanation, str) or not explanation.strip():
+        return False
+    explanation_lower = explanation.lower()
+    if position_key.lower() not in explanation_lower:
+        return False
+    for other_position in position_keys:
+        if other_position != position_key and other_position.lower() in explanation_lower:
+            return False
+    return all(
+        str(value).lower() in explanation_lower
+        for value in (output_value.get("value_a"), output_value.get("value_b"))
+        if value is not None
+    )
+
+
+def _rootcause_detail_explanation(
+    position_key: str,
+    field: str,
+    value_a: Any,
+    value_b: Any,
+    difference: Any,
+    parents: List[str],
+    output_column: str,
+    output_value: Dict[str, Any],
+    lineage_evidence: List[Dict[str, Any]],
+    matched_release_note: Optional[Dict[str, Any]],
+) -> str:
+    field_changed = not _rootcause_values_equal(value_a, value_b)
+    if isinstance(value_a, (int, float)) and isinstance(value_b, (int, float)):
+        change_text = (
+            f"changed from {_rootcause_value_text(value_a)} to {_rootcause_value_text(value_b)}, "
+            f"a B - A difference of {_rootcause_value_text(difference)}"
+        )
+    elif field_changed:
+        change_text = f"changed from {_rootcause_value_text(value_a)} to {_rootcause_value_text(value_b)}"
+    else:
+        change_text = "did not change between the two executions"
+
+    related_changes = [
+        item for item in lineage_evidence
+        if str(item.get("position")) == position_key
+        and item.get("field") != field
+        and not _rootcause_values_equal(item.get("value_a"), item.get("value_b"))
+    ]
+    related_text = ""
+    if field.lower().replace("_", " ") == "risk weight":
+        asset_change = next(
+            (item for item in related_changes if str(item.get("field", "")).lower().replace("_", " ") == "asset class"),
+            None,
+        )
+        if asset_change:
+            related_text = (
+                f" The Asset Class changed from {_rootcause_value_text(asset_change.get('value_a'))} "
+                f"to {_rootcause_value_text(asset_change.get('value_b'))}, which is consistent with this Risk Weight change."
+            )
+    elif parents:
+        changed_parents = [
+            item for item in related_changes
+            if item.get("field") in parents
+        ]
+        if changed_parents:
+            related_text = " Its changed parent fields were " + ", ".join(
+                str(item.get("field")) for item in changed_parents
+            ) + "."
+
+    note_text = " No release note directly documents this field change."
+    if matched_release_note:
+        jira_id = matched_release_note.get("jira_id") or "the matched release note"
+        solution = matched_release_note.get("solution_description")
+        matched_fields = {
+            _rootcause_normalize_release_note_text(value)
+            for value in matched_release_note.get("matched_fields", [])
+        }
+        normalized_field = _rootcause_normalize_release_note_text(field)
+        if normalized_field in matched_fields:
+            relationship = "directly supports"
+        else:
+            relationship = "provides inherited context for"
+        note_text = f" Release note {jira_id} {relationship} this field."
+        if solution:
+            note_text += f" Its solution description states: {solution}"
+
+    propagation_text = ""
+    if field != output_column:
+        propagation_text = (
+            f" This field is part of the lineage feeding {output_column}, whose value changed from "
+            f"{_rootcause_value_text(output_value.get('value_a'))} to "
+            f"{_rootcause_value_text(output_value.get('value_b'))}."
+        )
+    return f"For {position_key}, {field} {change_text}.{related_text}{propagation_text}{note_text}"
 
 
 def _rootcause_dependencies(dataset_id: str, code_id: str, output_column: str) -> List[str]:
@@ -2276,7 +2532,11 @@ def _rootcause_llm(prompt: str) -> Dict[str, Any]:
     messages = [
         {
             "role": "system",
-            "content": "You are a financial data root-cause analyst. Use only supplied evidence and separate verified facts from hypotheses. Return valid JSON only with keys: explanation (string), root_cause (string), confidence (number 0-100), evidence (array of strings), changed_fields (array of strings), release_note_links (array of strings), next_checks (array of strings), rows (array). The root_cause and explanation fields must be detailed, specific, and substantially longer than a one-sentence summary: write 2-4 paragraphs covering the affected positions, exact A and B values and deviations, the relevant dependency chain, which source fields actually changed, how those changes propagate to the output, and whether release notes support or merely resemble the observed change. Explicitly state when the evidence is insufficient. Return exactly one rows item for every selected deviation position. Each rows item must have: position (string), output (string), lineage (string), input (string), release_note (string), explanation (string), confidence (number 0-100). Each row explanation must be specific to that position and include its deviation and evidence-based reasoning. Use an empty string when no evidence exists; never invent a release-note identifier. The confidence is evidence confidence, not certainty.",
+            "content": "You are a financial data root-cause analyst. Use only supplied evidence and separate verified facts from hypotheses. The comparison direction is always B - A: execution_b minus execution_a. Treat value_a as the baseline value, value_b as the compared value, and every numeric difference as value_b - value_a. Never describe or calculate the deviation as A - B. Release notes are structured evidence: when a release note is relevant to a changed dependency, use its matched Jira ID and solution_description in the explanation and root_cause, paraphrasing the solution description naturally and explaining how it does or does not account for the observed B - A change. Do not merely mention the Jira ID, copy the solution description without connecting it to the lineage, or claim causation from a field-name match alone. If no relevant release note has a solution description, say that the solution detail is unavailable; if the release note only resembles the change, label it as supporting context rather than a verified cause. Return valid JSON only with keys: explanation (string), root_cause (string), confidence (number 0-100), evidence (array of strings), changed_fields (array of strings), release_note_links (array of strings), next_checks (array of strings), rows (array). The root_cause and explanation fields must be detailed, specific, and substantially longer than a one-sentence summary: write 2-4 paragraphs covering the affected positions, exact A and B values and B - A deviations, the relevant dependency chain, which source fields actually changed, how those changes propagate to the output, and whether release notes support or merely resemble the observed change. Explicitly state when the evidence is insufficient. Return exactly one rows item for every selected deviation position. Each rows item must have: position (string), output (string), lineage (string), input (string), release_note (string), explanation (string), confidence (number 0-100). Each row explanation must be specific to that position, include its B - A deviation and evidence-based reasoning, and incorporate the relevant Jira ID and solution description when supported by the evidence. Use an empty string when no evidence exists; never invent a release-note identifier. The confidence is evidence confidence, not certainty.",
+        },
+        {
+            "role": "system",
+            "content": "For each row, separate execution facts from release-note support. State the exact output movement and B - A difference, then name the changed lineage fields observed in the executions. Only use the position-specific release-note candidates supplied in the evidence. Include the candidate Jira ID and naturally paraphrase its solution description only when its position context, matched field, problem description, and solution description align. A note about assessment-base calculation supports only that assessment-base part; it does not prove Asset Class, Risk Weight, EAD, or other changes unless the note explicitly says so. Label each note as supporting, partially supporting, or not supporting the explanation. Never claim a release note caused a change based only on a field-name or Jira match.",
         },
         {"role": "user", "content": prompt},
     ]
@@ -2380,6 +2640,60 @@ def analyze_root_cause(request: RootCauseRequest):
                     "value_b": value_b,
                 })
     release_notes = _rootcause_release_note_matches(dependencies + [output_column])
+    changed_fields_by_position = {
+        position_key: sorted({
+            str(item.get("field"))
+            for item in lineage_evidence
+            if str(item.get("position")) == position_key and item.get("field")
+        })
+        for position_key in position_keys
+    }
+    position_release_notes = {
+        position_key: _rootcause_position_release_notes(
+            release_notes,
+            position_key,
+            changed_fields_by_position.get(position_key, []),
+        )
+        for position_key in position_keys
+    }
+    position_evidence = {
+        position_key: {
+            "output": output_column,
+            "value_a": next(
+                (
+                    column.get("value_a")
+                    for row in selected_rows
+                    if str(row.get("key")) == position_key
+                    for column in row.get("columns", [])
+                    if column.get("column_name") == output_column
+                ),
+                None,
+            ),
+            "value_b": next(
+                (
+                    column.get("value_b")
+                    for row in selected_rows
+                    if str(row.get("key")) == position_key
+                    for column in row.get("columns", [])
+                    if column.get("column_name") == output_column
+                ),
+                None,
+            ),
+            "difference_b_minus_a": next(
+                (
+                    column.get("difference")
+                    for row in selected_rows
+                    if str(row.get("key")) == position_key
+                    for column in row.get("columns", [])
+                    if column.get("column_name") == output_column
+                ),
+                None,
+            ),
+            "changed_fields": changed_fields_by_position.get(position_key, []),
+            "release_notes": position_release_notes.get(position_key, []),
+        }
+        for position_key in position_keys
+    }
     evidence = {
         "output_column": output_column,
         "positions": position_keys,
@@ -2389,11 +2703,25 @@ def analyze_root_cause(request: RootCauseRequest):
         "lineage_evidence": lineage_evidence,
         "changed_source_fields": changed_sources,
         "release_notes": release_notes,
-        "execution_a": {"id": request.execution_id_a, "cluster": result_a.get("dataset_id")},
-        "execution_b": {"id": request.execution_id_b, "cluster": result_b.get("dataset_id")},
+        "changed_fields_by_position": changed_fields_by_position,
+        "position_release_notes": position_release_notes,
+        "position_evidence": position_evidence,
+        "release_note_context": [
+            {
+                "jira_id": note.get("jira_id", ""),
+                "solution_description": note.get("solution_description", ""),
+                "matched_fields": note.get("matched_fields", []),
+                "workbook": note.get("workbook", ""),
+                "sheet": note.get("sheet", ""),
+            }
+            for note in release_notes
+        ],
+        "comparison_direction": "B - A (execution_b minus execution_a)",
+        "execution_a": {"id": request.execution_id_a, "cluster": result_a.get("dataset_id"), "label": "Base (subtracted from B)"},
+        "execution_b": {"id": request.execution_id_b, "cluster": result_b.get("dataset_id"), "label": "Compared (subtracted A from this)"},
     }
     evidence = _rootcause_json_safe(evidence)
-    prompt = "Analyze this structured root-cause evidence. Explain each selected deviation, identify the ultimate changed source field when evidence supports it, and map release notes only when relevant. Do not claim a release note caused a change merely because it mentions a field.\n\n" + json.dumps(evidence, default=str, ensure_ascii=True)
+    prompt = "Analyze this structured root-cause evidence. All differences are calculated as B - A (execution_b minus execution_a). Explain each selected deviation, identify the ultimate changed source field when evidence supports it, and map release notes only when relevant. Use position_release_notes for each position as the authoritative candidate list. Never copy a Jira ID or solution description from another position. A release note is supporting evidence only when its position context, changed-field matches, problem description, and solution description align with the observed lineage; a generic RWA or Jira-ID match alone is not sufficient. If the candidate list is empty, state that no position-specific release note was identified. When a candidate is relevant, include its Jira ID and explain how its solution description supports, contradicts, or only partially relates to the B - A deviation. When interpreting values and differences: value_a is from execution_a (base), value_b is from execution_b (compared), and the reported difference should reflect (value_b - value_a).\n\n" + json.dumps(evidence, default=str, ensure_ascii=True)
     analysis = _rootcause_llm(prompt)
     analysis_rows = analysis.get("rows") or []
     rows_by_position = {
@@ -2440,28 +2768,39 @@ def analyze_root_cause(request: RootCauseRequest):
             item for item in source_fields
             if not lineage_by_field.get(item.get("field"), {}).get("parents")
         ]
-        release_note = next(
-            (
-                item.get("workbook") or item.get("sheet") or ""
-                for item in release_notes
-                if any(
-                    field.get("field", "").lower() in item.get("matched_fields", [])
-                    for field in source_fields
-                )
-            ),
-            "",
-        )
+        # Find matching release note and extract Jira ID
+        matched_release_note = (position_release_notes.get(position_key) or [None])[0]
+        if matched_release_note:
+            jira_id = _extract_jira_id_from_record(matched_release_note.get("record", {}))
+            release_note = jira_id or (matched_release_note.get("workbook") or matched_release_note.get("sheet") or "")
+        else:
+            release_note = ""
         llm_row = rows_by_position.get(position_key, {})
+        summary_diff = output_value.get("difference")
+        llm_explanation = llm_row.get("explanation")
+        if not _rootcause_row_explanation_is_valid(
+            llm_explanation,
+            position_key,
+            position_keys,
+            output_value,
+        ):
+            llm_explanation = _rootcause_fallback_row_explanation(
+                position_key,
+                output_column,
+                output_value,
+                lineage_evidence,
+                position_release_notes.get(position_key, []),
+            )
         normalized_rows.append({
             "position": position_key,
             "output": output_column,
             "value_a": output_value.get("value_a"),
             "value_b": output_value.get("value_b"),
-            "difference": output_value.get("difference"),
+            "difference": summary_diff,
             "lineage": position_lineage,
             "input": ", ".join(item.get("field", "") for item in source_fields),
             "release_note": release_note,
-            "explanation": llm_row.get("explanation") or analysis.get("explanation", ""),
+            "explanation": llm_explanation,
             "confidence": max(0, min(100, float(llm_row.get("confidence", analysis.get("confidence", 0)) or 0))),
         })
         for step in lineage_steps:
@@ -2473,15 +2812,42 @@ def analyze_root_cause(request: RootCauseRequest):
             value_b = (result_data_b.get(position_key, {}) if is_derived_field else input_b.get(position_key, {})).get(field)
             difference = None
             if isinstance(value_a, (int, float)) and isinstance(value_b, (int, float)):
-                difference = value_a - value_b
-            detail_release_note = next(
+                difference = value_b - value_a
+            # Find matching release note and extract Jira ID for detail row
+            matched_detail_release_note = next(
                 (
-                    item.get("workbook") or item.get("sheet") or ""
-                    for item in release_notes
-                    if field.lower() in item.get("matched_fields", [])
-                    or any(parent.lower() in item.get("matched_fields", []) for parent in step["parents"])
+                    item
+                    for item in position_release_notes.get(position_key, [])
+                    if _rootcause_normalize_release_note_text(field) in {
+                        _rootcause_normalize_release_note_text(value)
+                        for value in item.get("matched_fields", [])
+                    }
+                    or any(
+                        _rootcause_normalize_release_note_text(parent) in {
+                            _rootcause_normalize_release_note_text(value)
+                            for value in item.get("matched_fields", [])
+                        }
+                        for parent in step["parents"]
+                    )
                 ),
-                "",
+                None,
+            )
+            if matched_detail_release_note:
+                detail_jira_id = _extract_jira_id_from_record(matched_detail_release_note.get("record", {}))
+                detail_release_note = detail_jira_id or (matched_detail_release_note.get("workbook") or matched_detail_release_note.get("sheet") or "")
+            else:
+                detail_release_note = ""
+            detail_explanation = _rootcause_detail_explanation(
+                position_key,
+                field,
+                value_a,
+                value_b,
+                difference,
+                step["parents"],
+                output_column,
+                output_value,
+                lineage_evidence,
+                matched_detail_release_note,
             )
             detail_rows.append({
                 "position": position_key,
@@ -2492,14 +2858,16 @@ def analyze_root_cause(request: RootCauseRequest):
                 "lineage": step["lineage"],
                 "input": ", ".join(step["parents"]),
                 "release_note": detail_release_note,
-                "explanation": llm_row.get("explanation") or analysis.get("explanation", ""),
+                "explanation": detail_explanation,
                 "confidence": max(0, min(100, float(llm_row.get("confidence", analysis.get("confidence", 0)) or 0))),
             })
     analysis["rows"] = normalized_rows
     analysis["detail_rows"] = detail_rows
     return _rootcause_json_safe({
         "status": "success",
+        "comparison_direction": "B - A (execution_b minus execution_a)",
         "stages": {
+            "comparison_direction": "B - A (execution_b minus execution_a)",
             "dependencies": dependencies,
             "changed_source_fields": changed_sources,
             "release_notes": release_notes,
@@ -2836,13 +3204,13 @@ def compare_clusters(request: dict):
             value_a = row_a.get(col)
             value_b = row_b.get(col)
             
-            # Calculate difference for numeric values
+            # Calculate difference for numeric values (B - A)
             difference = None
             if value_a is not None and value_b is not None:
                 try:
                     num_a = float(value_a) if not isinstance(value_a, (int, float)) else value_a
                     num_b = float(value_b) if not isinstance(value_b, (int, float)) else value_b
-                    difference = num_a - num_b
+                    difference = num_b - num_a
                 except (ValueError, TypeError):
                     difference = None
             

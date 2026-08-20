@@ -89,7 +89,7 @@ export function DataAssistant() {
         >
           <header className="flex items-center justify-between border-b px-4 py-3">
             <div className="flex items-center gap-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-md bg-primary text-primary-foreground">
+              <div className="flex h-9 w-9 items-center justify-center rounded-md bg-[#FFD700] text-black shadow-md">
                 <Bot className="h-5 w-5" />
               </div>
               <div>
@@ -112,7 +112,7 @@ export function DataAssistant() {
                   <div
                     className={
                       message.role === "user"
-                        ? "max-w-[85%] rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground"
+                        ? "max-w-[85%] rounded-md bg-[#FFD700] text-black px-3 py-2 text-sm font-semibold shadow-md"
                         : "max-w-[90%] text-sm leading-6 text-foreground"
                     }
                   >

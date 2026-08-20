@@ -30,7 +30,11 @@ const LOCALE_LABELS: Record<Locale, string> = {
   es: "Español",
 };
 
-export function AppHeader() {
+interface AppHeaderProps {
+  title?: string;
+}
+
+export function AppHeader({ title }: AppHeaderProps) {
   const t = useTranslations("header");
   const tLang = useTranslations("language");
   const { locale, setLocale } = useLocale();
@@ -70,22 +74,8 @@ export function AppHeader() {
     <>
       <header className="border-b border-border bg-card px-4 sm:px-6 py-4">
         <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3 min-w-0">
-            <Image
-              src="/EY_logo.png"
-              alt="EY Logo"
-              width={36}
-              height={36}
-              className="object-contain shrink-0"
-            />
-            <div className="min-w-0">
-              <h1 className="text-lg font-semibold text-foreground truncate">
-                {t("title")}
-              </h1>
-              <p className="text-xs text-muted-foreground">
-                {t("subtitle")}
-              </p>
-            </div>
+          <div className="min-w-0">
+            <h1 className="truncate text-lg font-semibold text-foreground">RegData Xplainer (RDX)</h1>
           </div>
           <div className="flex items-center gap-1 shrink-0">
             <TooltipProvider>

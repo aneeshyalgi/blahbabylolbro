@@ -16,10 +16,11 @@ import { useToast } from "@/hooks/use-toast";
 type Cluster = { id: string; name: string; dataset_version?: string; code_version?: string };
 type Execution = { execution_id: string; executed_date: string; code_filename?: string | null };
 type RootCauseResult = {
+  comparison_direction?: string;
   stages: {
     dependencies: string[];
     changed_source_fields: { position: string; field: string; value_a: unknown; value_b: unknown }[];
-    release_notes: { workbook?: string; sheet?: string; matched_fields?: string[]; record?: Record<string, unknown> }[];
+    release_notes: { workbook?: string; sheet?: string; matched_fields?: string[]; jira_id?: string; solution_description?: string; record?: Record<string, unknown> }[];
     deviations: { key: string; columns: { column_name: string; value_a: unknown; value_b: unknown; difference?: number | null }[] }[];
   };
   analysis: {
@@ -249,7 +250,7 @@ export function RootCauseTabContent() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2"><GitBranch className="h-5 w-5" /> RootCause analysis</CardTitle>
-          <p className="text-sm text-muted-foreground">Explain a result deviation using execution data, technical lineage, changed source fields, and release notes.</p>
+          <p className="text-sm text-muted-foreground">Explain a result deviation using execution data, technical lineage, changed source fields, and release notes. All deviations are calculated as B - A.</p>
         </CardHeader>
         <CardContent className="grid gap-4 md:grid-cols-2">
           <div className="space-y-2"><Label>Cluster A (Base)</Label><Select value={clusterAId} onValueChange={setClusterAId}><SelectTrigger><SelectValue placeholder="Select base cluster" /></SelectTrigger><SelectContent>{clusters.map((cluster) => <SelectItem key={cluster.id} value={cluster.id}>{cluster.name}</SelectItem>)}</SelectContent></Select></div>
@@ -304,7 +305,7 @@ export function RootCauseTabContent() {
                 <TableHeader className="bg-muted/80">
                   <TableRow>
                     <TableHead>Deviation</TableHead>
-                    <TableHead>Output</TableHead>
+                    <TableHead>Output (B - A)</TableHead>
                     <TableHead>Lineage</TableHead>
                     <TableHead>Input</TableHead>
                     <TableHead>Release Note</TableHead>
@@ -336,7 +337,7 @@ export function RootCauseTabContent() {
                   <TableHeader className="bg-muted/80">
                     <TableRow>
                       <TableHead>Deviation</TableHead>
-                      <TableHead>Output</TableHead>
+                      <TableHead>Output (B - A)</TableHead>
                       <TableHead>Lineage</TableHead>
                       <TableHead>Input</TableHead>
                       <TableHead>Release Note</TableHead>
