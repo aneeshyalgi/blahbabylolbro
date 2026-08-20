@@ -93,7 +93,7 @@ export default function HomePage() {
 
       <div className="flex min-w-0 flex-1 flex-col ml-72">
         <AppHeader title={tabLabels[activeTab] || activeTab} />
-        <main className="flex-1 overflow-auto p-6">
+        <main className="flex-1 overflow-auto bg-[#0d1117] p-5 sm:p-6">
           <div className="mx-auto max-w-[1600px] min-w-[1000px]">{renderTabContent()}</div>
         </main>
       </div>

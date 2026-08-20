@@ -1,10 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import Image from "next/image";
-import { useTheme } from "next-themes";
 import { useTranslations } from "next-intl";
-import { Moon, Sun, ListOrdered, Languages, LogOut } from "lucide-react";
+import { ListOrdered, Languages, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -38,11 +37,9 @@ export function AppHeader({ title }: AppHeaderProps) {
   const t = useTranslations("header");
   const tLang = useTranslations("language");
   const { locale, setLocale } = useLocale();
-  const { setTheme, resolvedTheme } = useTheme();
   const router = useRouter();
   const [reorderOpen, setReorderOpen] = useState(false);
   const [languageModalOpen, setLanguageModalOpen] = useState(false);
-  const [mounted, setMounted] = useState(false);
 
   async function handleLogout() {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -50,32 +47,13 @@ export function AppHeader({ title }: AppHeaderProps) {
     router.refresh();
   }
 
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  const isDark = resolvedTheme === "dark";
-
-  const toggleTheme = () => {
-    setTheme(isDark ? "light" : "dark");
-  };
-
-  const themeButtonContent = !mounted ? (
-    <Moon className="h-[1.15rem] w-[1.15rem]" aria-hidden />
-  ) : isDark ? (
-    <Sun className="h-[1.15rem] w-[1.15rem] transition-transform hover:rotate-12" />
-  ) : (
-    <Moon className="h-[1.15rem] w-[1.15rem] transition-transform hover:-rotate-12" />
-  );
-  const themeAriaLabel = !mounted ? t("theme") : isDark ? t("switchToLight") : t("switchToDark");
-  const themeTooltip = !mounted ? t("theme") : isDark ? t("lightMode") : t("darkMode");
-
   return (
     <>
-      <header className="border-b border-border bg-card px-4 sm:px-6 py-4">
+      <header className="border-b border-[#252a33] bg-[#0b0f15] px-4 py-4 sm:px-6">
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
-            <h1 className="truncate text-lg font-semibold text-foreground">RegData Xplainer (RDX)</h1>
+            <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#f5c400]">EY RegData</p>
+            <h1 className="truncate text-lg font-semibold text-[#f2f4f7]">RegData Xplainer (RDX)</h1>
           </div>
           <div className="flex items-center gap-1 shrink-0">
             <TooltipProvider>
@@ -84,7 +62,7 @@ export function AppHeader({ title }: AppHeaderProps) {
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="rounded-full h-9 w-9 text-muted-foreground hover:text-foreground hover:bg-accent"
+                    className="h-9 w-9 rounded-full text-muted-foreground hover:bg-[#f5c400]/10 hover:text-[#f5c400]"
                     aria-label={tLang("label")}
                     onClick={() => setLanguageModalOpen(true)}
                   >
@@ -103,7 +81,7 @@ export function AppHeader({ title }: AppHeaderProps) {
                     variant="ghost"
                     size="icon"
                     onClick={() => setReorderOpen(true)}
-                    className="rounded-full h-9 w-9 text-muted-foreground hover:text-foreground hover:bg-accent"
+                    className="h-9 w-9 rounded-full text-muted-foreground hover:bg-[#f5c400]/10 hover:text-[#f5c400]"
                     aria-label={t("reorderTabs")}
                   >
                     <ListOrdered className="h-[1.15rem] w-[1.15rem]" />
@@ -120,26 +98,8 @@ export function AppHeader({ title }: AppHeaderProps) {
                   <Button
                     variant="ghost"
                     size="icon"
-                    onClick={toggleTheme}
-                    className="shrink-0 rounded-full h-9 w-9 text-muted-foreground hover:text-foreground hover:bg-accent"
-                    aria-label={themeAriaLabel}
-                  >
-                    {themeButtonContent}
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">
-                  <p>{themeTooltip}</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
                     onClick={handleLogout}
-                    className="shrink-0 rounded-full h-9 w-9 text-muted-foreground hover:text-foreground hover:bg-accent"
+                    className="h-9 w-9 shrink-0 rounded-full text-muted-foreground hover:bg-[#f5c400]/10 hover:text-[#f5c400]"
                     aria-label="Sign out"
                   >
                     <LogOut className="h-[1.15rem] w-[1.15rem]" />

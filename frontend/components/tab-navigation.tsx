@@ -73,11 +73,11 @@ export function TabNavigation({ activeTab, onTabChange }: TabNavigationProps) {
 
   return (
     <aside
-      className="fixed left-0 top-0 flex h-screen w-72 shrink-0 flex-col border-r border-border bg-card transition-all duration-200 z-40"
+      className="fixed left-0 top-0 z-40 flex h-screen w-72 shrink-0 flex-col border-r border-[#252a33] bg-[#080b10] transition-all duration-200"
     >
-      <div className="flex items-center border-b border-border px-3 py-4">
-        <div className="flex min-w-0 flex-1 items-center justify-center">
-          <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-md p-0">
+      <div className="flex items-center border-b border-[#252a33] px-4 py-5">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-md p-0">
             <Image
               src="/EY_logo.png"
               alt="EY Logo"
@@ -86,11 +86,16 @@ export function TabNavigation({ activeTab, onTabChange }: TabNavigationProps) {
               priority
             />
           </div>
+          <div className="min-w-0">
+            <p className="truncate text-[11px] font-semibold uppercase tracking-[0.18em] text-[#f5c400]">RegData</p>
+            <p className="truncate text-xs text-[#8c96a8]">Xplainer</p>
+          </div>
         </div>
       </div>
 
-      <nav className="flex-1 overflow-y-auto px-2 py-3" aria-label="Primary navigation">
-        <div className="space-y-1.5">
+      <nav className="flex-1 overflow-y-auto px-3 py-5" aria-label="Primary navigation">
+        <p className="mb-3 px-3 text-[10px] font-semibold uppercase tracking-[0.2em] text-[#687386]">Workspace</p>
+        <div className="space-y-1">
           {order.map((id) => {
             const label = getLabel(id);
             const isActive = activeTab === id;
@@ -102,20 +107,20 @@ export function TabNavigation({ activeTab, onTabChange }: TabNavigationProps) {
                 onClick={() => onTabChange(id)}
                 title={label}
                 className={cn(
-                  "flex w-full items-center gap-3 rounded-md border px-2.5 py-2.5 text-left text-sm font-medium transition-colors justify-start",
+                  "relative flex w-full items-center gap-3 rounded-sm border border-transparent px-3 py-2.5 text-left text-sm font-medium transition-colors justify-start",
                   isActive
-                    ? "border-[#FFD700]/50 bg-[#FFD700]/20 text-foreground shadow-md"
-                    : "border-transparent bg-transparent text-muted-foreground hover:border-border hover:bg-accent/60 hover:text-foreground"
+                    ? "border-[#f5c400]/15 bg-[#f5c400]/10 text-white before:absolute before:inset-y-1 before:left-0 before:w-0.5 before:bg-[#f5c400]"
+                    : "bg-transparent text-[#8c96a8] hover:border-[#252a33] hover:bg-[#11161e] hover:text-[#f2f4f7]"
                 )}
                 aria-current={isActive ? "page" : undefined}
                 aria-label={label}
               >
                 <span
                   className={cn(
-                    "flex h-7 min-w-7 items-center justify-center rounded-md border",
+                    "flex h-7 min-w-7 items-center justify-center rounded-sm border",
                     isActive
-                      ? "border-[#FFD700]/60 bg-[#FFD700]/30 text-[#FFD700]"
-                      : "border-border bg-muted text-muted-foreground"
+                      ? "border-[#f5c400]/30 bg-[#f5c400]/10 text-[#f5c400]"
+                      : "border-[#252a33] bg-[#11161e] text-[#768196]"
                   )}
                 >
                   {getNavIcon(id)}
