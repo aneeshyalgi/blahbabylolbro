@@ -39,17 +39,27 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background px-4">
-      <div className="w-full max-w-sm space-y-6">
-        <div className="flex flex-col items-center gap-3">
-          <Image src="/EY_logo.png" alt="EY Logo" width={48} height={48} className="object-contain" />
-          <h1 className="text-2xl font-semibold text-foreground">DataFlow Platform</h1>
-          <p className="text-sm text-muted-foreground">Sign in to continue</p>
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#080b10] px-4 py-10">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(245,196,0,0.08),transparent_32%),linear-gradient(135deg,rgba(24,31,42,0.55),transparent_48%)]" />
+      <div className="relative w-full max-w-md space-y-7">
+        <div className="flex items-center gap-4">
+          <div className="flex h-14 w-14 items-center justify-center rounded-md border border-[#252a33] bg-[#11161e] shadow-2xl">
+            <Image src="/EY_logo.png" alt="EY Logo" width={42} height={42} className="object-contain" priority />
+          </div>
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#f5c400]">EY RegData</p>
+            <h1 className="mt-1 text-2xl font-semibold tracking-tight text-[#f2f4f7]">RegData Xplainer</h1>
+            <p className="mt-1 text-sm text-[#8c96a8]">Sign in to continue</p>
+          </div>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-1">
-            <label htmlFor="username" className="text-sm font-medium text-foreground">
+        <form onSubmit={handleSubmit} className="space-y-5 rounded-md border border-[#252a33] bg-[#0f141c] p-6 shadow-2xl sm:p-7">
+          <div className="border-b border-[#252a33] pb-4">
+            <p className="text-sm font-medium text-[#f2f4f7]">Workspace access</p>
+            <p className="mt-1 text-xs text-[#8c96a8]">Use your credentials to open the regulatory data workspace.</p>
+          </div>
+          <div className="space-y-2">
+            <label htmlFor="username" className="text-xs font-semibold uppercase tracking-wide text-[#aeb7c6]">
               Username
             </label>
             <input
@@ -59,13 +69,13 @@ export default function LoginPage() {
               required
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+              className="h-11 w-full rounded-sm border border-[#303845] bg-[#080b10] px-3 text-sm text-[#f2f4f7] placeholder:text-[#687386] outline-none transition-colors focus:border-[#f5c400] focus:ring-2 focus:ring-[#f5c400]/20"
               placeholder="admin"
             />
           </div>
 
-          <div className="space-y-1">
-            <label htmlFor="password" className="text-sm font-medium text-foreground">
+          <div className="space-y-2">
+            <label htmlFor="password" className="text-xs font-semibold uppercase tracking-wide text-[#aeb7c6]">
               Password
             </label>
             <input
@@ -75,13 +85,13 @@ export default function LoginPage() {
               required
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+              className="h-11 w-full rounded-sm border border-[#303845] bg-[#080b10] px-3 text-sm text-[#f2f4f7] placeholder:text-[#687386] outline-none transition-colors focus:border-[#f5c400] focus:ring-2 focus:ring-[#f5c400]/20"
               placeholder="••••••••"
             />
           </div>
 
           {error && (
-            <p className="text-sm text-red-500" role="alert">
+            <p className="border-l-2 border-red-500 bg-red-500/10 px-3 py-2 text-sm text-red-300" role="alert">
               {error}
             </p>
           )}
@@ -89,7 +99,7 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
+            className="h-11 w-full rounded-sm bg-[#f5c400] px-4 text-sm font-semibold text-[#080b10] shadow-lg shadow-[#f5c400]/10 transition-colors hover:bg-[#ffd32a] disabled:cursor-not-allowed disabled:opacity-50"
           >
             {loading ? "Signing in…" : "Sign in"}
           </button>
