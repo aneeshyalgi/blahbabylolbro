@@ -140,11 +140,9 @@ RELEASE_NOTES_DIR = Path(
 )
 
 RELEASE_NOTES_SHEET_RANGES: Dict[str, Tuple[str, str]] = {
-    "abacus360 r7.18.0.00": ("A2", "K6"),
-    "module definition": ("A1", "C172"),
-    "rwa release notes": ("A1", "K4"),
+    "rwa release notes": ("A1", "J4"),
 }
-SPECIAL_RELEASE_NOTES_FILENAME = "rwa release notes_1 (1).xlsm"
+SPECIAL_RELEASE_NOTES_FILENAME = "iref release notes_1.xlsm"
 SPECIAL_RELEASE_NOTES_VISIBLE_SHEET = "rwa release notes"
 CHAT_RELEASE_NOTES_MAX_SHEETS_PER_WORKBOOK = 12
 CHAT_RELEASE_NOTES_MAX_ROWS_PER_SHEET = 140
@@ -247,6 +245,8 @@ RWA_INPUT_HARDCODED_FILENAMES = {
     "rwa_input_1 - Copy(1).xlsx",
     "rwa_input_1 - Copy(2).xlsx",
     "rwa_input_1 - Copy(3).xlsx",
+    "iref-kalkulator_coderequirement_1.xlsx",
+    "iref-kalkulator_coderequirement_2.xlsx",
 }
 
 
@@ -257,6 +257,11 @@ def _normalize_filename(filename: Optional[str]) -> str:
 def _is_rwacalculator_coderequirement_filename(filename: Optional[str]) -> bool:
     normalized = _normalize_filename(filename)
     return normalized.startswith("rwacalculator_coderequirement")
+
+
+def _is_iref_kalkulator_filename(filename: Optional[str]) -> bool:
+    normalized = _normalize_filename(filename)
+    return normalized.startswith("iref-kalkulator_coderequirement") or normalized.startswith("iref_kalkulator_coderequirement")
 
 
 def _is_rwa_input_filename(filename: Optional[str]) -> bool:
@@ -286,114 +291,9 @@ RWA_EMPTY_CELLS_BY_FILENAME: Dict[str, set] = {
 RWA_TABLE_EXTENT_BY_FILENAME: Dict[str, Optional[Tuple[int, int]]] = {
     "rwa_input.xlsx": None,           # full sheet
     "rwa_input again.xlsx": (6, 13),  # A1:M6 (6 rows, 13 cols)
+    "iref-kalkulator_coderequirement_1.xlsx": (6, 11),  # B2:K6 (rows 2-6, cols 2-11)
+    "iref-kalkulator_coderequirement_2.xlsx": (6, 11),  # B2:K6 (rows 2-6, cols 2-11)
 }
-
-RWA_INPUT_FILL_CODE = """balance_sheet_by_product = {
-    'Loan': 'OnBalance',
-    'Deposit': 'OnBalance',
-    'Security': 'OnBalance',
-    'Limit': 'OffBalance',
-    'Guarantee': 'OffBalance',
-}
-
-for col in ['Nominal', 'Book Value', 'Accrued Interests', 'Market Value', 'Assessment Base', 'CCF', 'Risk Weight', 'EAD', 'RWA']:
-    if col in df.columns:
-        df[col] = pd.to_numeric(df[col], errors='coerce')
-
-df['BalanceSheetType'] = df['BalanceSheetType'].fillna(df['ProductType'].map(balance_sheet_by_product))
-
-df['Accrued Interests'] = df['Accrued Interests'].fillna(0.0)
-df['Market Value'] = df['Market Value'].fillna(0.0)
-df['Assessment Base'] = df['Assessment Base'].fillna(df['Accrued Interests'].fillna(0.0) + df['Book Value'].fillna(0.0))
-
-ccf_by_balance_sheet = {
-    'OnBalance': 1.0,
-    'OffBalance': 0.2,
-}
-df['CCF'] = df['CCF'].fillna(df['BalanceSheetType'].map(ccf_by_balance_sheet))
-df['EAD'] = df['EAD'].fillna(df['Assessment Base'] * df['CCF'])
-
-risk_weight_by_asset_class = {
-    'Corporates': 1.0,
-    'Banks': 0.5,
-    'Sovereigns': 0.0,
-}
-df['Risk Weight'] = df['Risk Weight'].fillna(df['Asset Class'].map(risk_weight_by_asset_class))
-df['RWA'] = df['RWA'].fillna(df['EAD'] * df['Risk Weight'])"""
-
-
-def _parse_rwa_column_instruction_prompt(prompt: Optional[str]) -> Dict[str, str]:
-    """Extract per-column overrides from the generated prompt, shaped like:
-    '- Column Name: instruction'
-    """
-    overrides: Dict[str, str] = {}
-    if not prompt:
-        return overrides
-
-    for raw_line in prompt.splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("Apply these column-specific rules"):
-            continue
-        if line.startswith("- "):
-            line = line[2:]
-        if ":" not in line:
-            continue
-        column_name, instruction = line.split(":", 1)
-        column_name = column_name.strip().strip("'\"")
-        instruction = instruction.strip()
-        if column_name and instruction:
-            overrides[column_name] = instruction
-    return overrides
-
-
-def _build_rwa_code_with_overrides(prompt: Optional[str]) -> str:
-    """Keep the established RWA template and only replace the assignments for columns the user explicitly mentions."""
-    base_code = RWA_INPUT_FILL_CODE
-    overrides = _parse_rwa_column_instruction_prompt(prompt)
-    if not overrides:
-        return base_code
-
-    canonical_assignments = {
-        "BalanceSheetType": "df['BalanceSheetType'] = df['BalanceSheetType'].fillna(df['ProductType'].map(balance_sheet_by_product))",
-        "Accrued Interests": "df['Accrued Interests'] = df['Accrued Interests'].fillna(0.0)",
-        "Market Value": "df['Market Value'] = df['Market Value'].fillna(0.0)",
-        "Assessment Base": "df['Assessment Base'] = df['Assessment Base'].fillna(df['Accrued Interests'].fillna(0.0) + df['Book Value'].fillna(0.0))",
-        "CCF": "df['CCF'] = df['CCF'].fillna(df['BalanceSheetType'].map(ccf_by_balance_sheet))",
-        "EAD": "df['EAD'] = df['EAD'].fillna(df['Assessment Base'] * df['CCF'])",
-        "Risk Weight": "df['Risk Weight'] = df['Risk Weight'].fillna(df['Asset Class'].map(risk_weight_by_asset_class))",
-        "RWA": "df['RWA'] = df['RWA'].fillna(df['EAD'] * df['Risk Weight'])",
-    }
-
-    normalized_lookup = {name.lower(): name for name in canonical_assignments}
-    replacement_map: Dict[str, str] = {}
-    for raw_name, instruction in overrides.items():
-        normalized = raw_name.strip().lower()
-        matched_name = normalized_lookup.get(normalized)
-        if matched_name is None:
-            continue
-        instruction_lower = instruction.lower()
-        if matched_name == "Assessment Base" and ("accrued" in instruction_lower or "book value" in instruction_lower):
-            replacement_map[matched_name] = canonical_assignments[matched_name]
-        elif matched_name in {"Accrued Interests", "Market Value", "BalanceSheetType", "CCF", "EAD", "Risk Weight", "RWA"}:
-            replacement_map[matched_name] = canonical_assignments[matched_name]
-
-    if not replacement_map:
-        return base_code
-
-    lines = base_code.splitlines()
-    final_lines = []
-    for line in lines:
-        stripped = line.strip()
-        match = re.match(r"df\[['\"]([^'\"]+)['\"]\]\s*=.*", stripped)
-        if match:
-            column_name = match.group(1)
-            replacement = replacement_map.get(column_name)
-            if replacement:
-                final_lines.append(replacement)
-                continue
-        final_lines.append(line)
-
-    return "\n".join(final_lines)
 
 
 def _rwa_clear_cell(excel_row_1based: int, excel_col_1based: int, filename_normalized: Optional[str] = None) -> bool:
@@ -465,6 +365,10 @@ def _build_rwa_input_tables(file_path: str, data_only_workbook: openpyxl.Workboo
         # RWACalculator CodeRequirement templates use range A2:O7 with header in row 2.
         header_excel_row = 2
         max_row, max_col = 7, 15
+    elif _is_iref_kalkulator_filename(filename_normalized):
+        # IReF Kalkulator CodeRequirement templates use range B2:K6 with header in row 2.
+        header_excel_row = 2
+        max_row, max_col = 6, 11
     else:
         header_excel_row = 1
         extent = RWA_TABLE_EXTENT_BY_FILENAME.get(filename_normalized) if filename_normalized else None
@@ -591,9 +495,10 @@ async def upload_dataset(
         data_only_workbook = openpyxl.load_workbook(file_path, data_only=True)
         
         is_rwa_input_file = _is_rwa_input_filename(file.filename)
-        rwa_filename_norm = _normalize_filename(file.filename) if file.filename and is_rwa_input_file else None
-        if is_rwa_input_file:
-            # Skip detector: fixed convention = row 1 header, rows 2..end data
+        is_iref_kalkulator_file = _is_iref_kalkulator_filename(file.filename)
+        rwa_filename_norm = _normalize_filename(file.filename) if file.filename and (is_rwa_input_file or is_iref_kalkulator_file) else None
+        if is_rwa_input_file or is_iref_kalkulator_file:
+            # Skip detector: fixed convention = row 1 header, rows 2..end data (or row 2 header for IReF)
             detected_tables = _build_rwa_input_tables(file_path, data_only_workbook, rwa_filename_norm)
         else:
             detector = TableDetector()
@@ -627,8 +532,9 @@ async def upload_dataset(
             # Extract table data from Excel
             worksheet = data_only_workbook[table.sheet]
             data_rows = []
-            # RWA_input hardcoded path uses row 1 = header, so first data row is Excel row 2 (row_idx+1)
-            excel_row_offset = 1 if is_rwa_input_file else 2
+            # RWA_input and IReF Kalkulator hardcoded path uses row 1 = header for RWA, row 2 for IReF
+            # so first data row is Excel row 2 for RWA (row_idx+1), or Excel row 3 for IReF (row_idx+2)
+            excel_row_offset = 1 if is_rwa_input_file else (2 if is_iref_kalkulator_file else 2)
             for row_idx in range(table.start_row + 1, table.end_row + 1):
                 row_data = {}
                 for col_info in table.columns:
@@ -851,7 +757,8 @@ def update_table_data(dataset_id: str, table_id: str, request: dict):
 
                 rwa_filename_norm = _normalize_filename(metadata.get("filename"))
                 is_rwa_input_file = _is_rwa_input_filename(rwa_filename_norm)
-                excel_row_offset = 1 if is_rwa_input_file else 2
+                is_iref_kalkulator_file = _is_iref_kalkulator_filename(rwa_filename_norm)
+                excel_row_offset = 1 if is_rwa_input_file else (2 if is_iref_kalkulator_file else 2)
 
                 # Map edited rows back to worksheet coordinates using the same row offset logic
                 # as upload parsing.
@@ -1105,11 +1012,6 @@ def generate_code(request: GenerateCodeRequest):
     col_names = [c.get("name") or "" for c in columns if c.get("name")]
     dataset_name = metadata.get("user_name") or request.dataset_id
 
-    if _is_rwa_input_filename(metadata.get("filename")):
-        if not (request.prompt or "").strip():
-            return {"code": RWA_INPUT_FILL_CODE}
-        return {"code": _build_rwa_code_with_overrides(request.prompt)}
-
     if not openai_api_key and (not api_key or not endpoint):
         raise HTTPException(
             503,
@@ -1141,7 +1043,8 @@ def generate_code(request: GenerateCodeRequest):
                 worksheet = workbook[table["sheet"]]
                 rwa_filename_norm = _normalize_filename(metadata.get("filename"))
                 is_rwa_input = _is_rwa_input_filename(rwa_filename_norm)
-                excel_row_offset = 1 if is_rwa_input else 2
+                is_iref_kalkulator = _is_iref_kalkulator_filename(rwa_filename_norm)
+                excel_row_offset = 1 if is_rwa_input else (2 if is_iref_kalkulator else 2)
                 data_rows = []
                 for row_idx in range(table["start_row"] + 1, table["end_row"] + 1):
                     row_data = {}
@@ -1149,7 +1052,7 @@ def generate_code(request: GenerateCodeRequest):
                         excel_row = row_idx + excel_row_offset
                         excel_col = col_info["index"] + 1
                         cell = worksheet.cell(row=excel_row, column=excel_col)
-                        val = None if (is_rwa_input and _rwa_clear_cell(excel_row, excel_col, rwa_filename_norm)) else cell.value
+                        val = None if ((is_rwa_input or is_iref_kalkulator) and _rwa_clear_cell(excel_row, excel_col, rwa_filename_norm)) else cell.value
                         row_data[col_info["name"]] = val
                     data_rows.append(row_data)
                 if data_rows:
@@ -1765,7 +1668,8 @@ async def execute_code(request: dict):
         worksheet = workbook[table_info["sheet"]]
         rwa_filename_norm = _normalize_filename(metadata.get("filename"))
         is_rwa_input = _is_rwa_input_filename(rwa_filename_norm)
-        excel_row_offset = 1 if is_rwa_input else 2
+        is_iref_kalkulator = _is_iref_kalkulator_filename(rwa_filename_norm)
+        excel_row_offset = 1 if is_rwa_input else (2 if is_iref_kalkulator else 2)
         data_rows = []
         for row_idx in range(table_info["start_row"] + 1, table_info["end_row"] + 1):
             row_data = {}
@@ -1773,7 +1677,7 @@ async def execute_code(request: dict):
                 excel_row = row_idx + excel_row_offset
                 excel_col = col_info["index"] + 1
                 cell = worksheet.cell(row=excel_row, column=excel_col)
-                val = None if (is_rwa_input and _rwa_clear_cell(excel_row, excel_col, rwa_filename_norm)) else cell.value
+                val = None if ((is_rwa_input or is_iref_kalkulator) and _rwa_clear_cell(excel_row, excel_col, rwa_filename_norm)) else cell.value
                 row_data[col_info["name"]] = val
             data_rows.append(row_data)
         df_original = pd.DataFrame(data_rows, columns=column_names)
@@ -3134,8 +3038,9 @@ def compare_clusters(request: dict):
     data_rows_a = data_a.get("data", [])
     data_rows_b = data_b.get("data", [])
     
-    # Try to find ID column (common naming conventions)
-    id_candidates = ["ID", "Id", "id", "KEY", "Key", "key", "INDEX", "Index", "index"]
+    # Try to find ID column (common naming conventions); Position is checked before falling
+    # back to the first common column since date/type columns are rarely unique per row.
+    id_candidates = ["ID", "Id", "id", "KEY", "Key", "key", "INDEX", "Index", "index", "Position", "position", "POSITION"]
     key_column = None
     
     for candidate in id_candidates:
