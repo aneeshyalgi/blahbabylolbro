@@ -21,7 +21,7 @@ import { ReleaseNotesWorkbookViewer, type ReleaseNoteSheet } from "@/components/
 
 type Workbook = { id: string; filename: string; size: number; upload_date: string; sheets: string[] };
 
-const SPECIAL_RELEASE_NOTE_FILENAME = "rwa release notes_1 (1).xlsm";
+const SPECIAL_RELEASE_NOTE_FILENAME = "iref release notes_1.xlsm";
 const SPECIAL_RELEASE_NOTE_VISIBLE_SHEET = "rwa release notes";
 
 const normalizeName = (value: string) => value.trim().toLowerCase();
