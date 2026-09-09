@@ -4,6 +4,9 @@ import os
 from pathlib import Path
 from typing import Dict, List, Any
 import pandas as pd
+from dotenv import load_dotenv
+
+load_dotenv(override=True)
 
 APP_DATA_ROOT = Path(os.environ.get("APP_DATA_ROOT", Path(__file__).parent))
 DATABASE_PATH = Path(os.environ.get("RWA_DATABASE_PATH", str(APP_DATA_ROOT / "rwa_data.db")))
@@ -855,10 +858,15 @@ def create_user(username: str, password_hash: str):
 
 def seed_default_user():
     """Create the default admin user from env vars if it doesn't exist yet."""
-    import os
     from passlib.context import CryptContext
-    admin_username = os.environ.get("ADMIN_USERNAME", "admin")
-    admin_password = os.environ.get("ADMIN_PASSWORD", "admin123")
+
+    admin_username = (os.environ.get("ADMIN_USERNAME") or "").strip()
+    admin_password = (os.environ.get("ADMIN_PASSWORD") or "").strip()
+
+    if not admin_username or not admin_password:
+        print("[auth] ADMIN_USERNAME and ADMIN_PASSWORD are not set; skipping default user seeding.")
+        return
+
     if get_user(admin_username) is None:
         pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
         create_user(admin_username, pwd_context.hash(admin_password))
