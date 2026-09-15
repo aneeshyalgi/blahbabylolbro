@@ -9,6 +9,7 @@ import {
   Rows3,
   GitCompare,
   AlertTriangle,
+  Bot,
   Network,
   Shield,
   FileText,
@@ -60,6 +61,8 @@ export function TabNavigation({ activeTab, onTabChange }: TabNavigationProps) {
         return <GitCompare className={iconClassName} />;
       case "root-cause":
         return <AlertTriangle className={iconClassName} />;
+      case "rootcause-ai-agents":
+        return <Bot className={iconClassName} />;
       case "semantic-lineage":
         return <Network className={iconClassName} />;
       case "regulations":
@@ -77,7 +80,7 @@ export function TabNavigation({ activeTab, onTabChange }: TabNavigationProps) {
     >
       <div className="flex items-center border-b border-[#252a33] px-4 py-5">
         <div className="flex min-w-0 flex-1 items-center gap-3">
-          <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-md p-0">
+          {/* <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-md p-0">
             <Image
               src="/EY_logo.png"
               alt="EY Logo"
@@ -85,7 +88,7 @@ export function TabNavigation({ activeTab, onTabChange }: TabNavigationProps) {
               className="object-contain"
               priority
             />
-          </div>
+          </div> */}
           <div className="min-w-0">
             <p className="truncate text-[11px] font-semibold uppercase tracking-[0.18em] text-[#f5c400]">RegData</p>
             <p className="truncate text-xs text-[#8c96a8]">Xplainer</p>

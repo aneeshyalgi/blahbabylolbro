@@ -45,6 +45,7 @@ export const API_ENDPOINTS = {
   clusterExecutionDelete: (id: string) => `${API_BASE_URL}/api/clusters/executions/${id}`,
   clustersCompare: `${API_BASE_URL}/api/clusters/compare`,
   rootCauseAnalyze: `${API_BASE_URL}/api/rootcause/analyze`,
+  rootCauseAgentsAnalyze: `${API_BASE_URL}/api/rootcause/agents/analyze`,
   
   // Lineage
   contentLineage: `${API_BASE_URL}/api/content-lineage`,

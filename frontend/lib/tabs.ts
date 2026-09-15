@@ -12,6 +12,7 @@ export const DEFAULT_TAB_ORDER = [
   "release-notes",
   "regulations",
   "root-cause",
+  "rootcause-ai-agents",
 ] as const;
 
 export const TAB_LABELS: Record<string, string> = {
@@ -23,6 +24,7 @@ export const TAB_LABELS: Record<string, string> = {
   "content-lineage": "Content Lineage",
   "compare-clusters": "Compare",
   "root-cause": "Root Cause",
+  "rootcause-ai-agents": "Rootcause AI Agents",
   "semantic-lineage": "Semantic Lineage",
   regulations: "Regulation",
   "release-notes": "Release Notes",

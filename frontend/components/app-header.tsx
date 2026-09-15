@@ -52,7 +52,7 @@ export function AppHeader({ title }: AppHeaderProps) {
       <header className="border-b border-[#252a33] bg-[#0b0f15] px-4 py-4 sm:px-6">
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
-            <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#f5c400]">EY RegData</p>
+            {/* <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#f5c400]">EY RegData</p> */}
             <h1 className="truncate text-lg font-semibold text-[#f2f4f7]">RegData Xplainer (RDX)</h1>
           </div>
           <div className="flex items-center gap-1 shrink-0">

@@ -2899,11 +2899,7 @@ def analyze_root_cause(request: RootCauseRequest):
                     include_changed_branch(parent)
 
         include_changed_branch(output_column)
-        position_lineage = " -> ".join(
-            step["field"]
-            for step in lineage_steps
-            if step["field"] in relevant_fields
-        )
+        full_position_lineage = " -> ".join(step["field"] for step in lineage_steps)
         source_fields = [
             item for item in source_fields
             if not lineage_by_field.get(item.get("field"), {}).get("parents")
@@ -2928,7 +2924,7 @@ def analyze_root_cause(request: RootCauseRequest):
             "value_a": output_value.get("value_a"),
             "value_b": output_value.get("value_b"),
             "difference": summary_diff,
-            "lineage": position_lineage,
+            "lineage": full_position_lineage,
             "input": ", ".join(item.get("field", "") for item in source_fields),
             "release_note": release_note,
             "explanation": llm_explanation,
@@ -3003,6 +2999,65 @@ def analyze_root_cause(request: RootCauseRequest):
             })
     analysis["rows"] = normalized_rows
     analysis["detail_rows"] = detail_rows
+
+    if not isinstance(analysis.get("evidence"), list) or not analysis["evidence"]:
+        evidence_items: List[str] = []
+        if selected_rows:
+            evidence_items.append(
+                f"Verglichen wurden {len(selected_rows)} betroffene Positionen fuer {output_column} zwischen den beiden Ausfuehrungen."
+            )
+        if changed_sources:
+            evidence_items.append(
+                f"Es wurden {len(changed_sources)} geaenderte Source-Felder in der Lineage identifiziert: "
+                + ", ".join(sorted({str(item.get("field")) for item in changed_sources if item.get("field")}))
+                + "."
+            )
+        if position_release_notes:
+            matched_jira = sorted({
+                str(note.get("jira_id"))
+                for notes in position_release_notes.values()
+                for note in notes
+                if note.get("jira_id")
+            })
+            if matched_jira:
+                evidence_items.append(
+                    "Positionsbezogene Release-Notes wurden gefunden und mit den geaenderter Feldern verknuepft: "
+                    + ", ".join(matched_jira[:3])
+                    + "."
+                )
+        if not evidence_items:
+            evidence_items.append(
+                f"Keine belastbaren Evidenzpunkte fuer {output_column} gefunden; die Abweichung muss mit den Quell- und Lineage-Daten manuell validiert werden."
+            )
+        analysis["evidence"] = evidence_items
+
+    if not isinstance(analysis.get("next_checks"), list) or not analysis["next_checks"]:
+        next_checks: List[str] = []
+        if changed_sources:
+            next_checks.append(
+                "Pruefen Sie die geaenderte Lineage-Reihenfolge und die betroffenen Inputfelder erneut, damit die Ursache nicht nur durch die Ausgabeabweichung interpretiert wird."
+            )
+        if position_release_notes:
+            next_checks.append(
+                "Validieren Sie die zugeordneten Release-Notes gegen die jeweilige Position und die betroffenen Felder, bevor Sie sie als finale Ursache akzeptieren."
+            )
+        next_checks.append(
+            "Fuhren Sie eine tiefergehende Input-/Code-Validierung fuer die betroffenen Positionen durch, um die Ursache mit den urspruenglichen Datenaenderungen abzugleichen."
+        )
+        if not next_checks:
+            next_checks.append(
+                "Zusatzpruefung: Reproduzieren Sie die Abweichung mit den gleichen Eingabedaten und vergleichen Sie die relevanten Quellfelder erneut."
+            )
+        analysis["next_checks"] = next_checks[:4]
+
+    if not analysis.get("release_note_links"):
+        analysis["release_note_links"] = sorted({
+            str(note.get("workbook"))
+            for notes in position_release_notes.values()
+            for note in notes
+            if note.get("workbook")
+        })
+
     return _rootcause_json_safe({
         "status": "success",
         "comparison_direction": "B - A (execution_b minus execution_a)",
@@ -3015,6 +3070,22 @@ def analyze_root_cause(request: RootCauseRequest):
         },
         "analysis": analysis,
     })
+
+
+@app.post("/api/rootcause/agents/analyze")
+def analyze_root_cause_with_agents(request: RootCauseRequest):
+    """Run the independent agent pipeline without changing normal RootCause."""
+    from rootcause_agents import run_agent_rootcause
+
+    try:
+        return run_agent_rootcause(
+            execution_id_a=request.execution_id_a,
+            execution_id_b=request.execution_id_b,
+            output_column=request.output_column,
+            position=request.position,
+        )
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
 
 
 @app.get("/api/results/{execution_id}")

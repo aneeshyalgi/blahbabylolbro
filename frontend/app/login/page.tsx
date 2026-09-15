@@ -2,7 +2,6 @@
 
 import { useState, FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import Image from "next/image";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -43,11 +42,8 @@ export default function LoginPage() {
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(245,196,0,0.08),transparent_32%),linear-gradient(135deg,rgba(24,31,42,0.55),transparent_48%)]" />
       <div className="relative w-full max-w-md space-y-7">
         <div className="flex items-center gap-4">
-          <div className="flex h-14 w-14 items-center justify-center rounded-md border border-[#252a33] bg-[#11161e] shadow-2xl">
-            <Image src="/EY_logo.png" alt="EY Logo" width={42} height={42} className="object-contain" priority />
-          </div>
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#f5c400]">EY RegData</p>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#f5c400]">RegData</p>
             <h1 className="mt-1 text-2xl font-semibold tracking-tight text-[#f2f4f7]">RegData Xplainer</h1>
             <p className="mt-1 text-sm text-[#8c96a8]">Sign in to continue</p>
           </div>

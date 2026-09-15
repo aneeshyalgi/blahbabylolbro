@@ -95,7 +95,7 @@ const displayLineage = (lineage: string, input: string, output: string) => {
 
   const displayFullLineage = (lineage: string) => lineage.trim();
 
-const ROOT_CAUSE_NORMAL_STORAGE_KEY = "dataflow_root_cause_normal_state_v3";
+const ROOT_CAUSE_AGENTS_STORAGE_KEY = "dataflow_root_cause_agents_state_v3";
 
 type PersistedRootCauseState = {
   clusterAId: string;
@@ -110,8 +110,8 @@ type PersistedRootCauseState = {
   result: RootCauseResult | null;
 };
 
-export function RootCauseTabContent() {
-  const storageKey = ROOT_CAUSE_NORMAL_STORAGE_KEY;
+export function RootCauseAIAgentsTabContent() {
+  const storageKey = ROOT_CAUSE_AGENTS_STORAGE_KEY;
   const { baseClusterId, comparisonClusterId } = useClusterSelection();
   const [clusters, setClusters] = useState<Cluster[]>([]);
   const [clusterAId, setClusterAId] = useState(baseClusterId || "");
@@ -220,7 +220,7 @@ export function RootCauseTabContent() {
     setLoading(true);
     setResult(null);
     try {
-      const response = await fetch(API_ENDPOINTS.rootCauseAnalyze, {
+      const response = await fetch(API_ENDPOINTS.rootCauseAgentsAnalyze, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -457,13 +457,7 @@ export function RootCauseTabContent() {
         </Dialog>
         <div className="grid gap-6 lg:grid-cols-2">
           <Card><CardHeader><CardTitle className="text-base">Root cause summary</CardTitle></CardHeader><CardContent><p className="whitespace-pre-line text-sm leading-6">{result.analysis.root_cause || result.analysis.explanation || "No root cause identified."}</p></CardContent></Card>
-          <Card><CardHeader><CardTitle className="text-base">Evidence and next checks</CardTitle></CardHeader><CardContent className="space-y-3">
-            {(result.analysis.evidence || []).length === 0 && (result.analysis.next_checks || []).length === 0 ? (
-              <p className="text-sm text-muted-foreground">No evidence items or next checks were returned for this comparison.</p>
-            ) : null}
-            {(result.analysis.evidence || []).map((item) => <div key={item} className="flex gap-2 text-sm"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-green-600" />{item}</div>)}
-            {(result.analysis.next_checks || []).map((item) => <div key={item} className="flex gap-2 text-sm"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />{item}</div>)}
-          </CardContent></Card>
+          <Card><CardHeader><CardTitle className="text-base">Evidence and next checks</CardTitle></CardHeader><CardContent className="space-y-3">{(result.analysis.evidence || []).map((item) => <div key={item} className="flex gap-2 text-sm"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-green-600" />{item}</div>)}{(result.analysis.next_checks || []).map((item) => <div key={item} className="flex gap-2 text-sm"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />{item}</div>)}</CardContent></Card>
         </div>
       </div>}
       {!result && !loading && <p className="text-sm text-muted-foreground">Choose two executions and an output field to generate a structured root-cause analysis.</p>}

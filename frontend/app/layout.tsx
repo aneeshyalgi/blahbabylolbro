@@ -12,10 +12,10 @@ export const metadata: Metadata = {
   title: 'DataFlow Platform',
   description: 'Enterprise Excel-driven Data Processing Platform',
   generator: 'v0.app',
-  icons: {
-    icon: '/EY_logo.png',
-    apple: '/EY_logo.png',
-  },
+  // icons: {
+  //   icon: '/EY_logo.png',
+  //   apple: '/EY_logo.png',
+  // },
 }
 
 export default function RootLayout({
