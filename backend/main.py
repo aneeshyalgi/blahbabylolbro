@@ -3086,6 +3086,9 @@ def analyze_root_cause_with_agents(request: RootCauseRequest):
         )
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
+    except Exception as exc:
+        traceback.print_exc()
+        raise HTTPException(500, f"Rootcause AI Agents failed: {exc}") from exc
 
 
 @app.get("/api/results/{execution_id}")
