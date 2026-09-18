@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { AlertCircle, CheckCircle2, CircleX, Eye, GitBranch, Sparkles } from "lucide-react";
+import { AlertCircle, CheckCircle2, CircleX, Eye, GitBranch, Loader2, Sparkles, X } from "lucide-react";
 import { API_ENDPOINTS } from "@/lib/api-config";
 import { useClusterSelection } from "@/context/cluster-selection-context";
 import { Button } from "@/components/ui/button";
@@ -10,8 +10,10 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Dialog,
   DialogContent,
@@ -35,6 +37,8 @@ type RootCauseTableRow = {
   confidence: number;
 };
 type RootCauseResult = {
+  review_id?: string;
+  post_run_review_available?: boolean;
   comparison_direction?: string;
   stages: {
     dependencies: string[];
@@ -128,6 +132,10 @@ export function RootCauseTabContent() {
   const [showUnchanged, setShowUnchanged] = useState(false);
   const [resultView, setResultView] = useState<"summary" | "lineage">("summary");
   const [loading, setLoading] = useState(false);
+  const [postRunReviewOpen, setPostRunReviewOpen] = useState(false);
+  const [postRunSubmitting, setPostRunSubmitting] = useState(false);
+  const [postRunPrimaryCause, setPostRunPrimaryCause] = useState("");
+  const finalReportRef = useRef<HTMLDivElement | null>(null);
   const restoredState = useRef(false);
   const { toast } = useToast();
 
@@ -230,7 +238,13 @@ export function RootCauseTabContent() {
           position: position === "all" ? null : position,
         }),
       });
-      const data = await response.json();
+      const responseText = await response.text();
+      let data: RootCauseResult & { detail?: string };
+      try {
+        data = responseText ? JSON.parse(responseText) : {};
+      } catch {
+        throw new Error(responseText || response.statusText || "Backend returned an invalid response");
+      }
       if (!response.ok) throw new Error(data.detail || "Root-cause analysis failed");
       setResult(data);
       setShowUnchanged(false);
@@ -241,6 +255,46 @@ export function RootCauseTabContent() {
       toast({ title: "Root-cause analysis failed", description: error instanceof Error ? error.message : "Request failed", variant: "destructive" });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const openPostRunReview = () => {
+    if (!result) return;
+    setPostRunPrimaryCause(result.analysis.root_cause || "");
+    setPostRunReviewOpen(true);
+  };
+
+  const submitPostRunReview = async () => {
+    if (!result?.review_id) return;
+    setPostRunSubmitting(true);
+    setPostRunReviewOpen(false);
+    requestAnimationFrame(() => finalReportRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }));
+    try {
+      const response = await fetch(API_ENDPOINTS.rootCauseAnalyze, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          execution_id_a: executionA,
+          execution_id_b: executionB,
+          output_column: outputColumn.trim(),
+          position: position === "all" ? null : position,
+          review_id: result.review_id,
+          human_review: {
+            review_type: "post_run",
+            primary_cause_override: postRunPrimaryCause.trim(),
+          },
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Post-run review failed");
+      setResult(data);
+      setShowUnchanged(false);
+      setResultView("summary");
+      toast({ title: "RootCause report updated", description: "Your post-run review was applied." });
+    } catch (error) {
+      toast({ title: "Post-run review failed", description: error instanceof Error ? error.message : "Request failed", variant: "destructive" });
+    } finally {
+      setPostRunSubmitting(false);
     }
   };
 
@@ -274,12 +328,22 @@ export function RootCauseTabContent() {
       </Card>
 
       {loading && <Card><CardContent className="space-y-3 p-6"><Skeleton className="h-5 w-1/3" /><Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" /></CardContent></Card>}
-      {result && !loading && <div className="space-y-6">
+      {result && !loading && <div ref={finalReportRef} className={`relative space-y-6 scroll-mt-6 ${postRunSubmitting ? "pointer-events-none" : ""}`}>
+        {postRunSubmitting ? <div className="absolute inset-0 z-30 flex min-h-[620px] items-center justify-center rounded-xl bg-[#080b10]/82 p-6 backdrop-blur-[3px]" aria-live="polite" aria-busy="true">
+          <div className="flex min-w-[min(360px,calc(100vw-48px))] flex-col items-center gap-5 rounded-2xl border border-[#f5c400]/45 bg-[#111820]/98 px-10 py-9 text-center shadow-[0_20px_60px_rgba(0,0,0,0.58),0_0_40px_rgba(245,196,0,0.1)]">
+            <div className="relative flex h-20 w-20 items-center justify-center"><span className="absolute inset-0 animate-ping rounded-full border border-[#f5c400]/30 bg-[#f5c400]/10" /><span className="absolute inset-1 animate-[spin_2.8s_linear_infinite] rounded-full border-2 border-transparent border-t-[#f5c400] border-r-[#f5c400]/45" /><Loader2 className="relative h-8 w-8 animate-spin text-[#f5c400]" /></div>
+            <div><p className="text-base font-semibold text-[#f2f4f7]">Updating RootCause report</p><p className="mt-2 text-sm leading-6 text-[#aeb8c7]">Applying your human review and regenerating the normal RootCause result.</p></div>
+            <div className="h-1 w-40 overflow-hidden rounded-full bg-[#252a33]"><div className="normal-post-run-loader h-full w-1/2 rounded-full bg-[#f5c400] shadow-[0_0_12px_rgba(245,196,0,0.8)]" /></div>
+          </div>
+        </div> : null}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center justify-between text-base">
               <span>Structured root-cause results</span>
-              <Badge variant={confidence >= 75 ? "default" : "outline"}>{confidence}% overall confidence</Badge>
+              <div className="flex items-center gap-2">
+                <Badge variant={confidence >= 75 ? "default" : "outline"}>{confidence}% overall confidence</Badge>
+                {result.review_id ? <Tooltip><TooltipTrigger asChild><Button size="sm" variant="outline" className="normal-post-run-review-button relative overflow-hidden border-amber-300 bg-gradient-to-r from-amber-300 via-yellow-400 to-amber-500 px-3 font-semibold text-[#16120a] shadow-[0_0_0_1px_rgba(251,191,36,0.22),0_5px_18px_rgba(245,158,11,0.24)]" onClick={openPostRunReview} disabled={postRunSubmitting}><Eye className="mr-2 h-4 w-4" />Post-run human review</Button></TooltipTrigger><TooltipContent side="bottom" sideOffset={8} className="max-w-sm leading-5">Edit the human instruction for the completed normal RootCause report. The backend regenerates the summary and, when your instruction requests it, the row explanations too, while preserving deterministic values, differences, lineage, positions, and inputs. The analysis pipeline itself is not rerun.</TooltipContent></Tooltip> : null}
+              </div>
             </CardTitle>
             <p className="text-sm text-muted-foreground">The rows below combine result deviations, code lineage, changed source inputs, release-note matches, and the LLM explanation.</p>
             <div className="flex items-center gap-3 pt-2">
@@ -465,8 +529,25 @@ export function RootCauseTabContent() {
             {(result.analysis.next_checks || []).map((item) => <div key={item} className="flex gap-2 text-sm"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />{item}</div>)}
           </CardContent></Card>
         </div>
+        {postRunReviewOpen && <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-background/95 p-4 backdrop-blur-sm md:p-8">
+          <div className="my-auto flex w-full max-w-5xl flex-col gap-4">
+            <div className="flex items-center justify-between gap-4 border-b border-border bg-background/95 pb-4"><div><h3 className="text-xl font-semibold text-foreground">Post-run human review</h3><p className="mt-1 text-sm text-muted-foreground">Edit the normal RootCause inputs and regenerate the final result.</p></div><button type="button" onClick={() => setPostRunReviewOpen(false)} className="rounded-lg border border-border bg-card p-3 text-muted-foreground hover:bg-accent hover:text-foreground" aria-label="Close post-run review"><X className="h-5 w-5" /></button></div>
+            <div className="rounded-lg border border-[#f5c400]/40 bg-[#0b0f15] p-6">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#f5c400]">Root cause override</p>
+              <Textarea value={postRunPrimaryCause} onChange={(event) => setPostRunPrimaryCause(event.target.value)} className="mt-3 min-h-24" placeholder="Enter the primary cause for the updated RootCause report..." />
+              <div className="mt-6 flex justify-end gap-2 border-t border-border pt-4"><Button variant="outline" onClick={() => setPostRunReviewOpen(false)} disabled={postRunSubmitting}>Cancel</Button><Button onClick={() => void submitPostRunReview()} disabled={postRunSubmitting}>{postRunSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}Regenerate RootCause</Button></div>
+            </div>
+          </div>
+        </div>}
       </div>}
       {!result && !loading && <p className="text-sm text-muted-foreground">Choose two executions and an output field to generate a structured root-cause analysis.</p>}
+      <style jsx>{`
+        .normal-post-run-loader { animation: normal-post-run-slide 1.4s ease-in-out infinite; }
+        .normal-post-run-review-button { background-size: 220% 100%; animation: normal-review-gradient 5.5s ease-in-out infinite; }
+        @keyframes normal-post-run-slide { 0%, 100% { transform: translateX(-100%); opacity: .55; } 50% { transform: translateX(100%); opacity: 1; } }
+        @keyframes normal-review-gradient { 0%, 100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
+        @media (prefers-reduced-motion: reduce) { .normal-post-run-loader, .normal-post-run-review-button { animation: none; } }
+      `}</style>
     </div>
   );
 }

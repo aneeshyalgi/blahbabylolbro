@@ -148,28 +148,10 @@ const AGENT_STEPS = [
     ],
   },
   {
-    name: "Causal Verification Agent",
-    description: "Tests whether the changed fields line up with the observed output movement for each affected position.",
-    processPreview: [
-      "Read output values for each affected position from both executions.",
-      "Connect changed candidate fields to the observed B - A movement.",
-      "Classify each position as supported or unable to verify.",
-    ],
-  },
-  {
-    name: "Critic/Consistency Agent",
-    description: "Checks the B - A math and records warnings when evidence is incomplete or inconsistent.",
-    processPreview: [
-      "Recompute available numeric differences as value B minus value A.",
-      "Check for direction or math inconsistencies.",
-      "Record warning flags for the evidence merger.",
-    ],
-  },
-  {
     name: "Final Rootcause Report",
     description: "Merges the evidence and calls the configured LLM to write the final German root-cause report.",
     processPreview: [
-      "Merge comparison, lineage, input changes, release notes, verification, and critic output.",
+      "Merge comparison, lineage, input changes, and release-note evidence.",
       "Ask the configured LLM for German JSON output grounded in supplied evidence.",
       "Normalize the final report, confidence, evidence, and next checks for display.",
     ],
@@ -181,8 +163,6 @@ const AGENT_PROGRESS_LABELS: Record<string, string> = {
   "Formula/Lineage Analyst Agent": "Lineage",
   "Input-Change Agent": "Input changes",
   "Release-Note Agent": "Release notes",
-  "Causal Verification Agent": "Verification",
-  "Critic/Consistency Agent": "Consistency",
   "Final Rootcause Report": "Final report",
 };
 
@@ -298,15 +278,9 @@ const agentTakeaway = (stepName: string, stage?: AgentStage, isActive?: boolean,
       return `${asNumber(asRecordValue(findings, "changed_source_fields"))} changed lineage/source field${asNumber(asRecordValue(findings, "changed_source_fields")) === 1 ? "" : "s"} found. ${summarizeChangedFields(asRecordValue(findings, "changed_fields_by_position"))}`;
     case "Release-Note Agent":
       if (asRecordValue(findings, "review_required") === true || asRecordValue(findings, "review_type") === "release_notes") {
-        return `${asNumber(asRecordValue(findings, "candidate_count"))} release-note candidate${asNumber(asRecordValue(findings, "candidate_count")) === 1 ? "" : "s"} found. Human review is required before causal verification can continue.`;
+        return `${asNumber(asRecordValue(findings, "candidate_count"))} release-note candidate${asNumber(asRecordValue(findings, "candidate_count")) === 1 ? "" : "s"} found. Human review is required before the final report can continue.`;
       }
       return `${asNumber(asRecordValue(findings, "release_notes_found"))} broad release-note candidate${asNumber(asRecordValue(findings, "release_notes_found")) === 1 ? "" : "s"} found. ${summarizeReleaseNoteCounts(asRecordValue(findings, "position_specific_release_notes"))}`;
-    case "Causal Verification Agent":
-      return `Verified ${asNumber(asRecordValue(findings, "positions_verified"))} position${asNumber(asRecordValue(findings, "positions_verified")) === 1 ? "" : "s"}; ${asNumber(asRecordValue(findings, "supported_positions"))} had changed candidate fields supporting the output movement.`;
-    case "Critic/Consistency Agent":
-      return asNumber(asRecordValue(findings, "evidence_warnings")) > 0
-        ? `Found ${asNumber(asRecordValue(findings, "evidence_warnings"))} evidence/math warning${asNumber(asRecordValue(findings, "evidence_warnings")) === 1 ? "" : "s"}; review the warning details before trusting the answer.`
-        : `No B - A consistency issues found; direction checked as ${asText(asRecordValue(findings, "direction"))}.`;
     case "Final Rootcause Report":
       return asRecordValue(findings, "llm_error")
         ? `LLM report fell back because of: ${displayFindingValue(asRecordValue(findings, "llm_error"))}`
@@ -714,13 +688,10 @@ export function RootCauseAIAgentsTabContent() {
     ? result.analysis.changed_fields
     : Array.from(new Set((result?.stages?.changed_source_fields || []).map((item) => item.field).filter(Boolean)));
   const finalReportReleaseNotes = result?.stages?.release_notes || [];
-  const finalReportNextChecks = result?.analysis?.next_checks || [];
   const rankedDrivers = result?.analysis?.ranked_drivers || [];
   const driverSummaries = result?.analysis?.driver_summaries || [];
   const keyEvidence = result?.analysis?.key_evidence || [];
   const releaseNoteAssessments = result?.analysis?.release_note_assessments || [];
-  const uncertaintyNotes = result?.analysis?.uncertainty_notes || [];
-  const validationPlan = result?.analysis?.validation_plan || [];
   const releaseNoteAgentIndex = AGENT_STEPS.findIndex((step) => step.name === "Release-Note Agent");
   const reviewPaused = Boolean(pendingReview && !loading);
   const progressPercent = result
@@ -799,7 +770,7 @@ export function RootCauseAIAgentsTabContent() {
             const steps = processSteps(stage, step.processPreview, isComplete, isActive);
             const findingEntries = stage?.findings ? Object.entries(stage.findings).filter(([key]) => key !== "process_steps") : [];
             const takeaway = reviewWasSubmitted
-              ? "Release-note links reviewed. Continuing with causal verification."
+              ? "Release-note links reviewed. Continuing to the final report."
               : agentTakeaway(step.name, stage, isActive, isComplete);
             return (
               <div ref={(node) => { agentCardRefs.current[step.name] = node; }} key={step.name} className={`rounded-md border p-3 ${requiresReview ? "border-amber-400/70 bg-amber-400/10" : isActive ? "border-[#f5c400]/50 bg-[#f5c400]/10" : isComplete ? "border-emerald-500/25 bg-emerald-500/5" : "border-[#252a33] bg-[#080b10]"}`}>
@@ -1091,7 +1062,7 @@ export function RootCauseAIAgentsTabContent() {
                   <div className="rounded-sm border border-[#252a33] bg-[#080b10] p-3"><p className="text-xs text-[#8c96a8]">Difference (B - A)</p><p className={`mt-1 font-mono ${differenceClassName(selectedRow.difference)}`}>{displayDifference(selectedRow.difference)}</p></div>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <div><p className="text-xs font-semibold uppercase tracking-wide text-[#8c96a8]">Lineage</p><p className="mt-1 break-words text-[#f2f4f7]">{selectedRow.lineage || "-"}</p></div>
+                  <div><p className="text-xs font-semibold uppercase tracking-wide text-[#8c96a8]">Lineage</p><div className="mt-2">{selectedRow.lineage ? renderLineageChain(selectedRow.lineage) : <p className="text-[#f2f4f7]">-</p>}</div></div>
                   <div><p className="text-xs font-semibold uppercase tracking-wide text-[#8c96a8]">Input</p><p className="mt-1 break-words text-[#f2f4f7]">{selectedRow.input || "-"}</p></div>
                   <div><p className="text-xs font-semibold uppercase tracking-wide text-[#8c96a8]">Release note</p><p className="mt-1 break-words text-[#f5c400]">{selectedRow.release_note || "-"}</p></div>
                   <div>
@@ -1193,7 +1164,7 @@ export function RootCauseAIAgentsTabContent() {
                 ) : null}
               </div>
             </CardTitle>
-            <p className="text-sm text-muted-foreground">Consolidated AI-agent report built from comparison, lineage, changed fields, release-note evidence, verification, and final LLM synthesis.</p>
+            <p className="text-sm text-muted-foreground">Consolidated AI-agent report built from comparison, lineage, changed fields, release-note evidence, and final LLM synthesis.</p>
           </CardHeader>
           {postRunSubmitting ? <div className="absolute inset-0 z-20 flex min-h-[520px] items-center justify-center bg-[#080b10]/82 p-6 backdrop-blur-[3px]" aria-live="polite" aria-busy="true">
             <div className="flex min-w-[min(360px,calc(100vw-48px))] flex-col items-center gap-5 rounded-2xl border border-[#f5c400]/45 bg-[#111820]/98 px-10 py-9 text-center shadow-[0_20px_60px_rgba(0,0,0,0.58),0_0_40px_rgba(245,196,0,0.1)]">
@@ -1226,24 +1197,18 @@ export function RootCauseAIAgentsTabContent() {
               {result.analysis.explanation && result.analysis.explanation !== result.analysis.root_cause ? <p className="mt-3 whitespace-pre-line border-t border-[#252a33] pt-3 text-sm leading-6 text-[#cbd5e1]">{result.analysis.explanation}</p> : null}
             </div>
 
-            <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
-              <div className="rounded-sm border border-[#252a33] bg-[#05080d] p-4">
+            <div className="rounded-sm border border-[#252a33] bg-[#05080d] p-4">
                 <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#687386]">Key evidence</p>
                 <div className="space-y-3">
                   <div>{renderLineageChain(finalReportLineage)}</div>
                   <div className="flex flex-wrap gap-2">{finalReportChangedFields.length ? finalReportChangedFields.map((field) => <Badge key={field} variant="secondary" className="rounded-sm">{field}</Badge>) : <span className="text-sm text-muted-foreground">-</span>}</div>
-                  {keyEvidence.map((item, index) => <div key={`key-evidence-${index}`} className="rounded-sm border border-[#252a33] bg-[#080b10] px-3 py-2 text-sm leading-6 text-[#f2f4f7]">{item}</div>)}
-                  {driverSummaries.slice(0, 3).map((driver, index) => <div key={`${driver.field || index}-summary`} className="rounded-sm border border-[#252a33] bg-[#080b10] px-3 py-2"><div className="flex flex-wrap items-center gap-2"><Badge variant="outline">#{index + 1}</Badge><span className="font-semibold text-[#f2f4f7]">{driver.field || "-"}</span>{driver.support ? <Badge variant="secondary" className="rounded-sm">{driver.support}</Badge> : null}</div>{driver.summary ? <p className="mt-1 text-xs leading-5 text-[#cbd5e1]">{driver.summary}</p> : null}{driver.positions?.length ? <div className="mt-2 flex flex-wrap gap-1.5">{driver.positions.map((position) => <Badge key={`${driver.field}-${position}`} variant="outline" className="rounded-sm text-[11px]">{position}</Badge>)}</div> : null}</div>)}
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {keyEvidence.map((item, index) => <div key={`key-evidence-${index}`} className="rounded-sm border border-[#252a33] bg-[#080b10] px-3 py-3 text-sm leading-6 text-[#f2f4f7]">{item}</div>)}
+                  </div>
+                  <div className="grid gap-3 md:grid-cols-3">
+                    {driverSummaries.slice(0, 3).map((driver, index) => <div key={`${driver.field || index}-summary`} className="rounded-sm border border-[#252a33] bg-[#080b10] px-3 py-3"><div className="flex flex-wrap items-center gap-2"><Badge variant="outline">#{index + 1}</Badge><span className="font-semibold text-[#f2f4f7]">{driver.field || "-"}</span>{driver.support ? <Badge variant="secondary" className="rounded-sm">{driver.support}</Badge> : null}</div>{driver.summary ? <p className="mt-1 text-xs leading-5 text-[#cbd5e1]">{driver.summary}</p> : null}{driver.positions?.length ? <div className="mt-2 flex flex-wrap gap-1.5">{driver.positions.map((position) => <Badge key={`${driver.field}-${position}`} variant="outline" className="rounded-sm text-[11px]">{position}</Badge>)}</div> : null}</div>)}
+                  </div>
                 </div>
-              </div>
-
-              <div className="rounded-sm border border-[#252a33] bg-[#05080d] p-4">
-                <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#687386]">Validation and uncertainty</p>
-                <div className="space-y-2">
-                  {(validationPlan.length ? validationPlan : finalReportNextChecks.map(displayListItem)).slice(0, 4).map((item, index) => <div key={`validation-${index}`} className="flex gap-3 rounded-sm border border-[#252a33] bg-[#080b10] px-3 py-2"><span className="flex h-5 min-w-5 items-center justify-center rounded-full border border-[#f5c400]/30 bg-[#f5c400]/10 text-[10px] font-bold text-[#f5c400]">{index + 1}</span><p className="text-sm leading-6 text-[#f2f4f7]">{item}</p></div>)}
-                  {uncertaintyNotes.slice(0, 2).map((item, index) => <div key={`uncertainty-${index}`} className="flex gap-2 rounded-sm border border-amber-500/25 bg-amber-500/5 px-3 py-2 text-sm leading-6"><AlertCircle className="mt-1 h-4 w-4 shrink-0 text-amber-600" /><span>{item}</span></div>)}
-                </div>
-              </div>
             </div>
 
             <div className="rounded-sm border border-[#252a33] bg-[#05080d] p-4">

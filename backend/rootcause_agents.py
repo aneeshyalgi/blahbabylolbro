@@ -40,7 +40,6 @@ class AgentState(TypedDict, total=False):
     input_changes: List[Dict[str, Any]]
     release_notes: List[Dict[str, Any]]
     human_review: Dict[str, Any]
-    verification: List[Dict[str, Any]]
     warnings: List[str]
     position_release_notes: Dict[str, List[Dict[str, Any]]]
     merged_evidence: Dict[str, Any]
@@ -425,8 +424,6 @@ def _confidence(state: AgentState) -> int:
         score += 20
     if state.get("input_changes"):
         score += 20
-    if state.get("verification") and all(item.get("candidate_fields") for item in state["verification"]):
-        score += 15
     if state.get("release_notes"):
         score += 10
     if state.get("warnings"):
@@ -675,6 +672,9 @@ def release_note_agent_node(state: AgentState) -> AgentState:
         )
         for position in position_keys
     }
+    for position, position_notes in position_release_notes.items():
+        for index, note in enumerate(position_notes):
+            note["candidate_id"] = _review_candidate_id(str(position), note, index)
     review_candidates = _release_note_review_candidates(position_release_notes)
     human_review: Dict[str, Any] = {}
     if review_candidates:
@@ -701,7 +701,7 @@ def release_note_agent_node(state: AgentState) -> AgentState:
                 continue
             seen_notes.add(note_key)
             ranked_notes.append(note)
-    if not ranked_notes:
+    if not ranked_notes and not human_review:
         ranked_notes = notes
     state["release_notes"] = ranked_notes[:60]
     state["position_release_notes"] = {position: items[:10] for position, items in position_release_notes.items()}
@@ -733,60 +733,6 @@ def release_note_agent_node(state: AgentState) -> AgentState:
             "decisions": human_review.get("decisions", []) if isinstance(human_review, dict) else [],
         },
         "matched_fields": sorted({field for note in notes for field in note.get("matched_fields", [])}),
-    })
-    return state
-
-
-def causal_verification_agent_node(state: AgentState) -> AgentState:
-    output_rows_a = _position_map(state["execution_a"].get("data", []))
-    output_rows_b = _position_map(state["execution_b"].get("data", []))
-    verification: List[Dict[str, Any]] = []
-    for row in state.get("comparison", {}).get("comparison_data", []):
-        position = str(row.get("key"))
-        left = output_rows_a.get(position, {}).get(state["output_column"])
-        right = output_rows_b.get(position, {}).get(state["output_column"])
-        changed = [item for item in state.get("input_changes", []) if str(item.get("position")) == position]
-        verification.append({
-            "position": position,
-            "output_a": _safe_value(left),
-            "output_b": _safe_value(right),
-            "difference": _safe_value(_numeric_difference(left, right)),
-            "candidate_fields": [item.get("field") for item in changed],
-            "classification": "partially supported" if changed else "unable to verify",
-        })
-    state["verification"] = verification
-    _append_stage(state, "Causal Verification Agent", "completed", {
-        "process_steps": [
-            f"Loaded final output values for {state['output_column']} from both executions.",
-            f"Checked {len(verification)} affected positions against the changed fields found by the Input-Change Agent.",
-            "Classified a position as partially supported when changed candidate fields exist for that same position.",
-            f"Found {sum(1 for item in verification if item.get('candidate_fields'))} positions with candidate fields supporting the output movement.",
-        ],
-        "positions_verified": len(verification),
-        "supported_positions": sum(1 for item in verification if item.get("candidate_fields")),
-    })
-    return state
-
-
-def critic_consistency_agent_node(state: AgentState) -> AgentState:
-    warnings = list(state.get("warnings", []))
-    for row in state.get("comparison", {}).get("comparison_data", []):
-        for column in row.get("columns", []):
-            left = column.get("value_a")
-            right = column.get("value_b")
-            difference = column.get("difference")
-            if difference is not None and not _values_equal(_numeric_difference(left, right), difference):
-                warnings.append(f"{row.get('key')}:{column.get('column_name')}")
-    state["warnings"] = warnings
-    _append_stage(state, "Critic/Consistency Agent", "warning" if warnings else "completed", {
-        "process_steps": [
-            "Recomputed every available numeric difference as value_b minus value_a.",
-            f"Checked {sum(len(row.get('columns', [])) for row in state.get('comparison', {}).get('comparison_data', []))} compared output cells for B - A consistency.",
-            f"Recorded {len(warnings)} warning items after consistency review.",
-        ],
-        "direction": "B - A",
-        "inconsistencies": warnings,
-        "evidence_warnings": len(warnings),
     })
     return state
 
@@ -915,10 +861,11 @@ def llm_rootcause_report_node(state: AgentState) -> AgentState:
             "changed_inputs": len(state.get("input_changes", [])),
             "calculation_path": " -> ".join(state.get("lineage", {}).get("ordered", [])),
         },
-        "verified_causes": state.get("verification", []),
         "supporting_documentation": state.get("release_notes", []),
         "warnings": stage_warnings + state.get("warnings", []),
         "classification": classification,
+        "human_review": state.get("human_review", {}),
+        "human_overrides": state.get("human_overrides", {}),
     }
     state["merged_evidence"] = merged_evidence
     output_rows_a = _position_map(state["execution_a"].get("data", []))
@@ -948,8 +895,8 @@ def llm_rootcause_report_node(state: AgentState) -> AgentState:
         "input_changes": state.get("input_changes", []),
         "release_notes": state.get("release_notes", [])[:12],
         "position_release_notes": state.get("position_release_notes", {}),
-        "verification": state.get("verification", []),
         "merged_evidence": merged_evidence,
+        "human_review": state.get("human_review", {}),
         "human_overrides": state.get("human_overrides", {}),
     }
     messages = [
@@ -976,6 +923,7 @@ def llm_rootcause_report_node(state: AgentState) -> AgentState:
                 "primary_cause muss ein kurzer deutscher Ursachen-Satz sein, nicht nur ein Feldname. "
                 "Wenn human_overrides.primary_cause_override vorhanden ist, uebernimm diese menschliche Formulierung als primaere Ursache und richte root_cause, explanation und die Positions-Erklaerungen daran aus. "
                 "Wenn human_overrides.release_note_decisions vorhanden ist, beruecksichtige nur akzeptierte oder teilweise akzeptierte Release-Note-Kandidaten; abgelehnte Kandidaten duerfen nicht als Unterstuetzung erscheinen. "
+                "Die human_review-Entscheidungen und Kommentare sind verbindliche menschliche Korrekturen. Ignoriere keine Entscheidung: akzeptierte und teilweise akzeptierte Kandidaten duerfen verwendet werden, abgelehnte Kandidaten muessen vollstaendig ausgeschlossen werden. "
                 "key_evidence muss 4 bis 7 deutsche Evidenzsaetze enthalten. Jeder Satz muss eine konkrete Beobachtung enthalten. Keine JSON-Strings als Text. "
                 "driver_summaries muss ein Array von Objekten sein. Jedes Objekt hat field, summary, positions, support. "
                 "summary muss erklaeren, warum genau dieses Feld ein Treiber ist, welche Positionen betroffen sind und wie es in der Lineage wirkt. "
@@ -1027,11 +975,25 @@ def llm_rootcause_report_node(state: AgentState) -> AgentState:
                 violations = _report_quality_violations(report, position_facts)
             if violations:
                 report["quality_warnings"] = violations
+        human_overrides = state.get("human_overrides", {})
+        primary_override = str(human_overrides.get("primary_cause_override") or "").strip()
+        if primary_override:
+            report["primary_cause"] = primary_override
+            root_cause_text = str(report.get("root_cause") or "").strip()
+            explanation_text = str(report.get("explanation") or "").strip()
+            override_marker = "Menschlich festgelegte Hauptursache:"
+            if primary_override.casefold() not in root_cause_text.casefold():
+                report["root_cause"] = f"{override_marker} {primary_override}\n\n{root_cause_text}" if root_cause_text else f"{override_marker} {primary_override}"
+            if primary_override.casefold() not in explanation_text.casefold():
+                report["explanation"] = f"{override_marker} {primary_override}\n\n{explanation_text}" if explanation_text else f"{override_marker} {primary_override}"
+            report["human_override_applied"] = True
+        if state.get("human_review") or human_overrides:
+            report["human_review_applied"] = True
         status = "completed"
     state["llm_report"] = report
     _append_stage(state, "Final Rootcause Report", status, {
         "process_steps": [
-            "Merged comparison, lineage, changed fields, release-note matches, verification, and critic warnings into one evidence packet.",
+            "Merged comparison, lineage, changed fields, release-note evidence, and warnings into one evidence packet.",
             "Prepared a compact evidence payload from that merged packet for final report generation.",
             "Asked the configured LLM to write German JSON output using only supplied evidence and position-specific release-note candidates.",
             "Parsed the LLM JSON response and normalized confidence, evidence, and next-check fields for UI rendering.",
@@ -1075,16 +1037,12 @@ def _build_graph():
     graph.add_node("formula_lineage_analyst", formula_lineage_analyst_node)
     graph.add_node("input_change_agent", input_change_agent_node)
     graph.add_node("release_note_agent", release_note_agent_node)
-    graph.add_node("causal_verification_agent", causal_verification_agent_node)
-    graph.add_node("critic_consistency_agent", critic_consistency_agent_node)
     graph.add_node("llm_rootcause_report", llm_rootcause_report_node)
     graph.add_edge(START, "comparison_analyst")
     graph.add_edge("comparison_analyst", "formula_lineage_analyst")
     graph.add_edge("formula_lineage_analyst", "input_change_agent")
     graph.add_edge("input_change_agent", "release_note_agent")
-    graph.add_edge("release_note_agent", "causal_verification_agent")
-    graph.add_edge("causal_verification_agent", "critic_consistency_agent")
-    graph.add_edge("critic_consistency_agent", "llm_rootcause_report")
+    graph.add_edge("release_note_agent", "llm_rootcause_report")
     graph.add_edge("llm_rootcause_report", END)
     return graph.compile(checkpointer=MemorySaver())
 
@@ -1111,8 +1069,8 @@ def _build_rows(state: AgentState) -> tuple[List[Dict[str, Any]], List[Dict[str,
     row_explanations = state.get("llm_report", {}).get("row_explanations", {})
     if not isinstance(row_explanations, dict):
         row_explanations = {}
-    for verification in state.get("verification", []):
-        position = str(verification["position"])
+    for comparison_row in state.get("comparison", {}).get("comparison_data", []):
+        position = str(comparison_row.get("key"))
         left = output_a.get(position, {}).get(output)
         right = output_b.get(position, {}).get(output)
         changed_fields = [item for item in state.get("input_changes", []) if str(item.get("position")) == position]
@@ -1213,8 +1171,6 @@ def _format_success_response(final_state: AgentState, review_id: Optional[str] =
         "Formula/Lineage Analyst Agent",
         "Input-Change Agent",
         "Release-Note Agent",
-        "Causal Verification Agent",
-        "Critic/Consistency Agent",
         "Final Rootcause Report",
     ]
     return _json_safe({
@@ -1245,6 +1201,8 @@ def _format_success_response(final_state: AgentState, review_id: Optional[str] =
             "uncertainty_notes": uncertainty_notes,
             "uncertainty_summary": report.get("uncertainty_summary", ""),
             "validation_plan": validation_plan,
+            "human_review_applied": bool(final_state.get("human_review") or final_state.get("human_overrides")),
+            "human_override_applied": bool(report.get("human_override_applied")),
             "rows": rows,
             "detail_rows": details,
         },
@@ -1256,8 +1214,6 @@ def _format_success_response(final_state: AgentState, review_id: Optional[str] =
                 "formula_lineage_analyst",
                 "input_change_agent",
                 "release_note_agent",
-                "causal_verification_agent",
-                "critic_consistency_agent",
                 "llm_rootcause_report",
             ],
             "agents": architecture_agents,
@@ -1283,7 +1239,7 @@ def _format_release_note_review_response(review_id: str, snapshot: Any) -> Dict[
             "findings": {
                 "process_steps": [
                     "Scanned and ranked release-note candidates.",
-                    "Paused the LangGraph run with interrupt() before causal verification.",
+                    "Paused the LangGraph run with interrupt() before final report generation.",
                     "Waiting for human accept, reject, or partial decisions for the proposed links.",
                 ],
                 "review_type": "release_notes",
@@ -1318,7 +1274,6 @@ def run_agent_rootcause(execution_id_a: str, execution_id_b: str, output_column:
         "release_notes": [],
         "human_review": {},
         "human_overrides": {},
-        "verification": [],
         "warnings": [],
         "position_release_notes": {},
         "merged_evidence": {},

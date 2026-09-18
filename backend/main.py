@@ -94,6 +94,8 @@ class ChatRequest(PydanticBaseModel):
 
 app = FastAPI(title="RWA Backend API")
 
+NORMAL_ROOTCAUSE_SESSIONS: Dict[str, Dict[str, Any]] = {}
+
 # Seed default admin user on startup (idempotent)
 db.seed_default_user()
 
@@ -2713,6 +2715,82 @@ def _rootcause_llm(prompt: str) -> Dict[str, Any]:
 
 @app.post("/api/rootcause/analyze")
 def analyze_root_cause(request: RootCauseRequest):
+    if request.review_id and request.human_review and request.human_review.get("review_type") == "post_run":
+        stored_request = NORMAL_ROOTCAUSE_SESSIONS.get(request.review_id)
+        if not stored_request:
+            raise HTTPException(404, "Normal RootCause review session not found")
+        base_request = RootCauseRequest(**stored_request)
+        refreshed = analyze_root_cause(base_request)
+        overrides = request.human_review
+        primary_cause = str(overrides.get("primary_cause_override") or "").strip()
+        if primary_cause:
+            analysis = refreshed.setdefault("analysis", {})
+            current_rows = analysis.get("rows") or []
+            instruction_prompt = (
+                "Du fuehrst eine Post-Run-Ueberarbeitung einer normalen Root-Cause-Analyse durch. "
+                "Die menschliche Eingabe ist eine verbindliche redaktionelle Anweisung fuer den Bericht. "
+                "Ueberarbeite root_cause und explanation entsprechend dieser Anweisung. "
+                "Wenn die Anweisung die Tabelle, jede Position, Row-Erklaerungen oder die Ursachenbewertung der Positionen betrifft, "
+                "ueberarbeite rows[].explanation fuer jede Position entsprechend. Wenn sie nur den Berichtstext betrifft, "
+                "lasse die sachlichen Row-Erklaerungen unveraendert. Aendere niemals position, output, value_a, value_b, difference, lineage oder input. "
+                "Schreibe auf Deutsch und bleibe strikt bei den gelieferten Fakten. Gib valides JSON mit root_cause, explanation, confidence und rows zurueck.\n\n"
+                "Menschliche Anweisung:\n" + primary_cause + "\n\n"
+                "Aktueller Bericht:\n" + json.dumps({
+                    "root_cause": analysis.get("root_cause", ""),
+                    "explanation": analysis.get("explanation", ""),
+                    "confidence": analysis.get("confidence", 0),
+                    "rows": current_rows,
+                }, ensure_ascii=True, default=str)
+            )
+            try:
+                rewritten = _rootcause_llm(instruction_prompt)
+            except Exception:
+                rewritten = {}
+            table_rows = current_rows
+            changed_fields = sorted({
+                str(field).strip()
+                for row in table_rows
+                for field in str(row.get("input") or "").split(",")
+                if str(field).strip() and str(field).strip() != "-"
+            })
+            movement_lines = [
+                f"{row.get('position')}: {row.get('output')} von {row.get('value_a')} auf {row.get('value_b')} ({'B - A = ' + str(row.get('difference'))})."
+                for row in table_rows
+            ]
+            table_grounded_summary = (
+                f"Die Tabelle zeigt Abweichungen im Feld {request.output_column.strip()} für {len(table_rows)} Positionen. "
+                + (f"Als geänderte Tabellenfelder sind {', '.join(changed_fields)} erkennbar. " if changed_fields else "Die Tabelle weist keine eindeutigen geänderten Eingabefelder aus. ")
+                + "Die beobachteten Bewegungen sind: "
+                + " ".join(movement_lines[:6])
+                + " Die Ursachenbewertung wurde anhand der angezeigten Werte, Eingabefelder und Lineage vorgenommen."
+            )
+            if isinstance(rewritten, dict):
+                rewritten_root_cause = str(rewritten.get("root_cause") or "").strip()
+                rewritten_explanation = str(rewritten.get("explanation") or "").strip()
+                echoed_instruction = rewritten_root_cause.casefold() == primary_cause.casefold()
+                analysis["root_cause"] = rewritten_root_cause if rewritten_root_cause and not echoed_instruction else table_grounded_summary
+                analysis["explanation"] = rewritten_explanation if rewritten_explanation and rewritten_explanation.casefold() != primary_cause.casefold() else table_grounded_summary
+                analysis["primary_cause"] = primary_cause
+                rewritten_rows = {
+                    str(row.get("position")): row
+                    for row in (rewritten.get("rows") or [])
+                    if isinstance(row, dict) and row.get("position") is not None
+                }
+                for row in current_rows:
+                    rewritten_row = rewritten_rows.get(str(row.get("position")))
+                    if rewritten_row and isinstance(rewritten_row.get("explanation"), str) and rewritten_row["explanation"].strip():
+                        row["explanation"] = rewritten_row["explanation"].strip()
+                    if rewritten_row and rewritten_row.get("confidence") is not None:
+                        row["confidence"] = rewritten_row["confidence"]
+                analysis["rows"] = current_rows
+            else:
+                analysis["root_cause"] = table_grounded_summary
+                analysis["explanation"] = table_grounded_summary
+                analysis["primary_cause"] = primary_cause
+        refreshed["review_id"] = request.review_id
+        refreshed["post_run_review_available"] = True
+        return refreshed
+
     result_a = _rootcause_result(request.execution_id_a)
     result_b = _rootcause_result(request.execution_id_b)
     comparison = compare_clusters({
@@ -3060,8 +3138,17 @@ def analyze_root_cause(request: RootCauseRequest):
             if note.get("workbook")
         })
 
+    review_id = str(uuid.uuid4())
+    NORMAL_ROOTCAUSE_SESSIONS[review_id] = {
+        "execution_id_a": request.execution_id_a,
+        "execution_id_b": request.execution_id_b,
+        "output_column": request.output_column,
+        "position": request.position,
+    }
     return _rootcause_json_safe({
         "status": "success",
+        "review_id": review_id,
+        "post_run_review_available": True,
         "comparison_direction": "B - A (execution_b minus execution_a)",
         "stages": {
             "comparison_direction": "B - A (execution_b minus execution_a)",
