@@ -1987,6 +1987,8 @@ class RootCauseRequest(PydanticBaseModel):
     execution_id_b: str
     output_column: str = "RWA"
     position: Optional[str] = None
+    review_id: Optional[str] = None
+    human_review: Optional[Dict[str, Any]] = None
 
 
 @app.post("/api/content-lineage")
@@ -3075,9 +3077,19 @@ def analyze_root_cause(request: RootCauseRequest):
 @app.post("/api/rootcause/agents/analyze")
 def analyze_root_cause_with_agents(request: RootCauseRequest):
     """Run the independent agent pipeline without changing normal RootCause."""
-    from rootcause_agents import run_agent_rootcause
+    from rootcause_agents import post_run_agent_rootcause_review, resume_agent_rootcause, run_agent_rootcause
 
     try:
+        if request.review_id and request.human_review is not None:
+            if request.human_review.get("review_type") == "post_run":
+                return post_run_agent_rootcause_review(
+                    review_id=request.review_id,
+                    overrides=request.human_review,
+                )
+            return resume_agent_rootcause(
+                review_id=request.review_id,
+                human_review=request.human_review,
+            )
         return run_agent_rootcause(
             execution_id_a=request.execution_id_a,
             execution_id_b=request.execution_id_b,

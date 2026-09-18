@@ -11,11 +11,14 @@ import json
 import math
 import os
 import re
+import uuid
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set, TypedDict
 
 import openpyxl
+from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
+from langgraph.types import Command, interrupt
 
 import database as db
 
@@ -36,16 +39,13 @@ class AgentState(TypedDict, total=False):
     lineage: Dict[str, Any]
     input_changes: List[Dict[str, Any]]
     release_notes: List[Dict[str, Any]]
+    human_review: Dict[str, Any]
     verification: List[Dict[str, Any]]
     warnings: List[str]
     position_release_notes: Dict[str, List[Dict[str, Any]]]
-    hypotheses: List[Dict[str, Any]]
-    scored_hypotheses: List[Dict[str, Any]]
-    counterfactuals: List[Dict[str, Any]]
-    rejected_release_notes: List[Dict[str, Any]]
-    final_decision: Dict[str, Any]
     merged_evidence: Dict[str, Any]
     llm_report: Dict[str, Any]
+    human_overrides: Dict[str, Any]
     stages: List[Dict[str, Any]]
 
 
@@ -148,6 +148,69 @@ def _append_stage(state: AgentState, agent: str, status: str, findings: Dict[str
     stages = list(state.get("stages", []))
     stages.append({"agent": agent, "status": status, "findings": _json_safe(findings)})
     state["stages"] = stages
+
+
+def _review_candidate_id(position: str, note: Dict[str, Any], index: int) -> str:
+    parts = [
+        position,
+        str(note.get("jira_id") or ""),
+        str(note.get("workbook") or ""),
+        str(note.get("sheet") or ""),
+        str(index),
+    ]
+    return "|".join(parts)
+
+
+def _release_note_review_candidates(position_release_notes: Dict[str, List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    candidates: List[Dict[str, Any]] = []
+    for position, notes in position_release_notes.items():
+        for index, note in enumerate(notes):
+            candidates.append({
+                "candidate_id": _review_candidate_id(str(position), note, index),
+                "position": str(position),
+                "jira_id": note.get("jira_id"),
+                "workbook": note.get("workbook"),
+                "sheet": note.get("sheet"),
+                "matched_fields": note.get("matched_fields", []),
+                "matched_changed_fields": note.get("matched_changed_fields", []),
+                "relevance_score": note.get("relevance_score"),
+                "solution_description": note.get("solution_description"),
+                "problem_description": note.get("problem_description"),
+                "record_text": note.get("record_text"),
+                "label": _release_note_label(note),
+            })
+    return candidates
+
+
+def _apply_human_release_note_review(
+    position_release_notes: Dict[str, List[Dict[str, Any]]],
+    human_review: Dict[str, Any],
+) -> Dict[str, List[Dict[str, Any]]]:
+    raw_decisions = human_review.get("decisions", []) if isinstance(human_review, dict) else []
+    decisions = {
+        str(item.get("candidate_id")): item
+        for item in raw_decisions
+        if isinstance(item, dict) and item.get("candidate_id") is not None
+    }
+    filtered: Dict[str, List[Dict[str, Any]]] = {}
+    for position, notes in position_release_notes.items():
+        kept: List[Dict[str, Any]] = []
+        for index, note in enumerate(notes):
+            candidate_id = _review_candidate_id(str(position), note, index)
+            decision = decisions.get(candidate_id, {})
+            status = str(decision.get("decision") or "accept").strip().casefold()
+            if status == "reject":
+                continue
+            reviewed_note = dict(note)
+            reviewed_note["human_review"] = {
+                "candidate_id": candidate_id,
+                "decision": status if status in {"accept", "partial"} else "accept",
+                "comment": decision.get("comment") or human_review.get("comment") or "",
+                "reviewed": True,
+            }
+            kept.append(reviewed_note)
+        filtered[str(position)] = kept
+    return filtered
 
 
 def _input_rows(dataset_id: Optional[str]) -> List[Dict[str, Any]]:
@@ -409,52 +472,10 @@ def _coerce_text_list(value: Any) -> List[str]:
     return items
 
 
-def _fallback_evidence_items(state: AgentState) -> List[str]:
-    output = state["output_column"]
-    changed_fields = sorted({str(item.get("field")) for item in state.get("input_changes", []) if item.get("field")})
-    items = [
-        f"Verglichen wurden {len(state.get('comparison', {}).get('comparison_data', []))} betroffene Positionen fuer {output} zwischen den beiden Ausfuehrungen.",
-        f"Der von LangGraph rekonstruierte Berechnungspfad lautet: {' -> '.join(state.get('lineage', {}).get('ordered', [])) or 'nicht verfuegbar'}.",
-    ]
-    if changed_fields:
-        items.append("Geaenderte Lineage-/Source-Felder: " + ", ".join(changed_fields) + ".")
-    matched_jira = sorted({
-        _release_note_label(note)
-        for notes in state.get("position_release_notes", {}).values()
-        for note in notes
-        if _release_note_label(note)
-    })
-    if matched_jira:
-        items.append("Positionsbezogene Release-Notes wurden gefunden: " + ", ".join(matched_jira[:3]) + ".")
-    return items
-
-
-def _fallback_next_checks(state: AgentState) -> List[str]:
-    checks = list(state.get("warnings", []))
-    if state.get("input_changes"):
-        checks.append("Pruefen Sie die geaenderten Lineage-/Source-Felder gegen die Originaldaten und die ausgefuehrte Code-Version.")
-    if state.get("position_release_notes"):
-        checks.append("Validieren Sie die positionsspezifischen Release-Notes gegen Position, Problem Description, Solution Description und geaenderte Felder.")
-    checks.append("Reproduzieren Sie die Abweichung fuer die betroffenen Positionen mit denselben Eingaben, um die B-minus-A-Bewegung zu bestaetigen.")
-    return checks[:4]
-
-
-def _output_diff_by_position(state: AgentState) -> Dict[str, float]:
-    output_rows_a = _position_map(state["execution_a"].get("data", []))
-    output_rows_b = _position_map(state["execution_b"].get("data", []))
-    return {
-        str(row.get("key")): float(diff)
-        for row in state.get("comparison", {}).get("comparison_data", [])
-        if (diff := _numeric_difference(
-            output_rows_a.get(str(row.get("key")), {}).get(state["output_column"]),
-            output_rows_b.get(str(row.get("key")), {}).get(state["output_column"]),
-        )) is not None
-    }
-
-
-def _numeric_change_size(change: Dict[str, Any]) -> Optional[float]:
-    diff = _numeric_difference(change.get("value_a"), change.get("value_b"))
-    return abs(diff) if diff is not None else None
+def _coerce_dict_list(value: Any) -> List[Dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [_json_safe(item) for item in value if isinstance(item, dict)]
 
 
 def _release_notes_for_field(state: AgentState, position: str, field: str) -> List[Dict[str, Any]]:
@@ -654,6 +675,18 @@ def release_note_agent_node(state: AgentState) -> AgentState:
         )
         for position in position_keys
     }
+    review_candidates = _release_note_review_candidates(position_release_notes)
+    human_review: Dict[str, Any] = {}
+    if review_candidates:
+        human_review = interrupt({
+            "review_type": "release_notes",
+            "message": "Review the release-note links proposed by the Release-Note Agent before the graph continues.",
+            "candidates": review_candidates,
+            "positions": position_keys,
+        }) or {}
+        if isinstance(human_review, dict):
+            position_release_notes = _apply_human_release_note_review(position_release_notes, human_review)
+            state["human_review"] = human_review
     ranked_notes: List[Dict[str, Any]] = []
     seen_notes = set()
     for position in position_keys:
@@ -694,6 +727,11 @@ def release_note_agent_node(state: AgentState) -> AgentState:
         "linked_release_notes": linked_release_notes,
         "release_notes_found": len(notes),
         "position_specific_release_notes": {position: len(items) for position, items in position_release_notes.items()},
+        "human_review": {
+            "required": bool(review_candidates),
+            "reviewed": bool(human_review),
+            "decisions": human_review.get("decisions", []) if isinstance(human_review, dict) else [],
+        },
         "matched_fields": sorted({field for note in notes for field in note.get("matched_fields", [])}),
     })
     return state
@@ -730,215 +768,6 @@ def causal_verification_agent_node(state: AgentState) -> AgentState:
     return state
 
 
-def hypothesis_generation_agent_node(state: AgentState) -> AgentState:
-    output_diffs = _output_diff_by_position(state)
-    hypotheses: List[Dict[str, Any]] = []
-    for change in state.get("input_changes", []):
-        position = str(change.get("position") or "")
-        field = str(change.get("field") or "")
-        if not position or not field:
-            continue
-        field_diff = _numeric_difference(change.get("value_a"), change.get("value_b"))
-        output_diff = output_diffs.get(position)
-        notes = _release_notes_for_field(state, position, field)
-        direction_alignment = "unknown"
-        if field_diff is not None and output_diff is not None:
-            direction_alignment = "same direction" if field_diff * output_diff > 0 else "opposite direction" if field_diff * output_diff < 0 else "neutral"
-        hypotheses.append({
-            "id": f"H{len(hypotheses) + 1}",
-            "position": position,
-            "field": field,
-            "hypothesis": f"{field} is a candidate driver for the {state['output_column']} movement in {position}.",
-            "value_a": change.get("value_a"),
-            "value_b": change.get("value_b"),
-            "field_difference": _safe_value(field_diff),
-            "output_difference": _safe_value(output_diff),
-            "direction_alignment": direction_alignment,
-            "release_note_candidates": [_release_note_label(note) for note in notes if _release_note_label(note)],
-            "lineage_role": "direct parent" if field in state.get("lineage", {}).get("graph", {}).get(state["output_column"], set()) else "upstream dependency",
-        })
-    hypotheses, generation_source = _llm_generate_hypotheses(state, hypotheses)
-    state["hypotheses"] = hypotheses
-    _append_stage(state, "Hypothesis Generation Agent", "completed" if hypotheses else "limited", {
-        "process_steps": [
-            "Built deterministic hypothesis seed data from changed fields, affected positions, output movements, lineage roles, and release-note candidates.",
-            "Sent that seed data to the configured LLM to generate analyst-style causal hypotheses constrained to the supplied evidence.",
-            "Normalized the LLM hypotheses back into structured fields for deterministic scoring and final decision agents.",
-            f"Generated {len(hypotheses)} candidate hypotheses for downstream scoring using source: {generation_source}.",
-        ],
-        "generation_source": generation_source,
-        "hypotheses_generated": len(hypotheses),
-        "hypotheses": hypotheses[:12],
-    })
-    return state
-
-
-def hypothesis_scoring_agent_node(state: AgentState) -> AgentState:
-    lineage_order = state.get("lineage", {}).get("ordered", [])
-    direct_parents = set(state.get("lineage", {}).get("graph", {}).get(state["output_column"], set()))
-    scored: List[Dict[str, Any]] = []
-    for hypothesis in state.get("hypotheses", []):
-        field = str(hypothesis.get("field") or "")
-        position = str(hypothesis.get("position") or "")
-        score = 20.0
-        score += 25.0 if field in direct_parents else 12.0
-        if hypothesis.get("release_note_candidates"):
-            score += 15.0
-        if hypothesis.get("direction_alignment") == "same direction":
-            score += 10.0
-        elif hypothesis.get("direction_alignment") == "opposite direction":
-            score += 4.0
-        field_change_size = _numeric_change_size({"value_a": hypothesis.get("value_a"), "value_b": hypothesis.get("value_b")})
-        output_size = abs(_as_float(hypothesis.get("output_difference")) or 0)
-        if field_change_size is not None and output_size > 0:
-            score += min(25.0, (field_change_size / output_size) * 25.0)
-        if field in lineage_order:
-            score += max(0.0, 10.0 - lineage_order.index(field))
-        scored.append({
-            **hypothesis,
-            "score": round(max(0.0, min(100.0, score)), 1),
-            "score_reason": (
-                f"Scored from lineage role ({hypothesis.get('lineage_role')}), release-note support "
-                f"({len(hypothesis.get('release_note_candidates') or [])} candidate(s)), direction alignment "
-                f"({hypothesis.get('direction_alignment')}), and relative movement size."
-            ),
-            "decision": "primary candidate" if score >= 70 else "secondary candidate" if score >= 50 else "weak candidate",
-        })
-    scored.sort(key=lambda item: item.get("score", 0), reverse=True)
-    for index, item in enumerate(scored):
-        item["rank"] = index + 1
-    state["scored_hypotheses"] = scored
-    generation_sources = sorted({str(item.get("generation_source") or "deterministic") for item in scored})
-    _append_stage(state, "Hypothesis Scoring Agent", "completed" if scored else "limited", {
-        "process_steps": [
-            "Scored every hypothesis using lineage proximity, release-note support, direction alignment, and relative movement size.",
-            "Ranked hypotheses so the final decision can separate primary, secondary, and weak causes.",
-            f"Top hypothesis: {scored[0]['field']} for {scored[0]['position']} with score {scored[0]['score']}" if scored else "No hypotheses were available to score.",
-        ],
-        "generation_sources": generation_sources,
-        "scored_hypotheses": scored[:12],
-    })
-    return state
-
-
-def counterfactual_agent_node(state: AgentState) -> AgentState:
-    output_diffs = _output_diff_by_position(state)
-    by_position: Dict[str, List[Dict[str, Any]]] = {}
-    for item in state.get("scored_hypotheses", []):
-        by_position.setdefault(str(item.get("position")), []).append(item)
-    counterfactuals: List[Dict[str, Any]] = []
-    for position, items in by_position.items():
-        output_diff = output_diffs.get(position)
-        numeric_items = [item for item in items if _as_float(item.get("field_difference")) is not None]
-        total_field_movement = sum(abs(_as_float(item.get("field_difference")) or 0) for item in numeric_items) or 0.0
-        for item in items:
-            field_diff = _as_float(item.get("field_difference"))
-            if output_diff is None or field_diff is None or total_field_movement == 0:
-                explained_share = None
-                estimated_output_effect = None
-            else:
-                explained_share = abs(field_diff) / total_field_movement
-                estimated_output_effect = output_diff * explained_share
-            counterfactuals.append({
-                "hypothesis_id": item.get("id"),
-                "position": position,
-                "field": item.get("field"),
-                "output_difference": _safe_value(output_diff),
-                "field_difference": _safe_value(field_diff),
-                "estimated_output_effect_if_only_this_changed": _safe_value(estimated_output_effect),
-                "estimated_explained_share": round(explained_share * 100, 1) if explained_share is not None else None,
-                "interpretation": (
-                    f"If only {item.get('field')} changed, it would explain about {round(explained_share * 100, 1)}% of the local changed-field movement basis."
-                    if explained_share is not None else
-                    "Counterfactual estimate is limited because numeric field movement or output movement is unavailable."
-                ),
-            })
-    counterfactuals, generation_source = _llm_generate_counterfactuals(state, counterfactuals)
-    state["counterfactuals"] = counterfactuals
-    _append_stage(state, "Counterfactual What-If Agent", "completed" if counterfactuals else "limited", {
-        "process_steps": [
-            "Built deterministic counterfactual seed data from scored hypotheses, output movement, field movement, and estimated explained share.",
-            "Sent that seed data to the configured LLM to generate what-if interpretations constrained to the supplied numbers.",
-            "Normalized the LLM what-if analysis back into structured counterfactual records for the report UI.",
-            f"Generated {len(counterfactuals)} counterfactual records using source: {generation_source}.",
-        ],
-        "generation_source": generation_source,
-        "counterfactuals": counterfactuals[:16],
-    })
-    return state
-
-
-def release_note_rejection_agent_node(state: AgentState) -> AgentState:
-    changed_by_position = _group_fields(state.get("input_changes", []))
-    rejected: List[Dict[str, Any]] = []
-    accepted_keys = {
-        (position, _release_note_label(note))
-        for position, notes in state.get("position_release_notes", {}).items()
-        for note in notes
-        if _release_note_label(note)
-    }
-    for position in [str(row.get("key")) for row in state.get("comparison", {}).get("comparison_data", [])]:
-        changed_fields = changed_by_position.get(position, [])
-        for note in state.get("release_notes", []):
-            label = _release_note_label(note)
-            if not label or (position, label) in accepted_keys:
-                continue
-            note_text = _normalize_text(json.dumps(note.get("record", {}), default=str))
-            field_hits = [field for field in changed_fields if _normalize_text(field) in note_text]
-            position_hits = sorted(term for term in _position_terms(position) if term in note_text)
-            reason = "Rejected because it did not match the affected position and changed fields together."
-            if field_hits and not position_hits:
-                reason = "Rejected because it matched changed fields but not the affected position context."
-            elif position_hits and not field_hits:
-                reason = "Rejected because it matched the position context but not the changed fields."
-            rejected.append({
-                "position": position,
-                "release_note": label,
-                "jira_id": note.get("jira_id"),
-                "workbook": note.get("workbook"),
-                "matched_changed_fields": field_hits,
-                "position_terms_found": position_hits,
-                "reason": reason,
-            })
-    state["rejected_release_notes"] = rejected[:24]
-    _append_stage(state, "Release-Note Rejection Agent", "completed", {
-        "process_steps": [
-            "Compared broad release-note matches against position-specific accepted candidates.",
-            "Rejected notes that matched only generic field text, only position text, or neither requirement together.",
-            f"Recorded {len(state['rejected_release_notes'])} rejected or weak release-note links for audit review.",
-        ],
-        "rejected_release_notes": state["rejected_release_notes"],
-    })
-    return state
-
-
-def final_decision_agent_node(state: AgentState) -> AgentState:
-    scored = state.get("scored_hypotheses", [])
-    top = scored[0] if scored else {}
-    secondary = [item for item in scored[1:5] if item.get("score", 0) >= 45]
-    rejected = [item for item in scored if item.get("score", 0) < 45]
-    decision = {
-        "primary_cause": top.get("field") or "Unresolved",
-        "primary_position": top.get("position"),
-        "primary_score": top.get("score"),
-        "secondary_causes": secondary,
-        "rejected_causes": rejected[:8],
-        "decision_rationale": top.get("score_reason") if top else "No scored hypothesis was available for a final decision.",
-        "evidence_strength": "strong" if top.get("score", 0) >= 75 else "moderate" if top.get("score", 0) >= 55 else "limited",
-    }
-    state["final_decision"] = decision
-    _append_stage(state, "Final Decision Agent", "completed" if top else "limited", {
-        "process_steps": [
-            "Reviewed scored hypotheses, counterfactual estimates, release-note support, and rejected note evidence.",
-            "Selected the highest-scoring hypothesis as the primary cause candidate.",
-            "Separated secondary causes from weak/rejected causes based on score thresholds.",
-            f"Final decision: {decision['primary_cause']} with {decision['evidence_strength']} evidence strength.",
-        ],
-        **decision,
-    })
-    return state
-
-
 def critic_consistency_agent_node(state: AgentState) -> AgentState:
     warnings = list(state.get("warnings", []))
     for row in state.get("comparison", {}).get("comparison_data", []):
@@ -958,37 +787,6 @@ def critic_consistency_agent_node(state: AgentState) -> AgentState:
         "direction": "B - A",
         "inconsistencies": warnings,
         "evidence_warnings": len(warnings),
-    })
-    return state
-
-
-def evidence_merger_agent_node(state: AgentState) -> AgentState:
-    stage_warnings = [stage["agent"] for stage in state.get("stages", []) if stage.get("status") in {"warning", "limited", "no evidence"}]
-    classification = "Confirmed Cause" if not stage_warnings and state.get("input_changes") else "Likely Cause" if state.get("input_changes") else "Unresolved Issue"
-    merged = {
-        "confirmed_facts": {
-            "comparison_positions": len(state.get("comparison", {}).get("comparison_data", [])),
-            "changed_inputs": len(state.get("input_changes", [])),
-            "calculation_path": " -> ".join(state.get("lineage", {}).get("ordered", [])),
-        },
-        "verified_causes": state.get("verification", []),
-        "supporting_documentation": state.get("release_notes", []),
-        "scored_hypotheses": state.get("scored_hypotheses", [])[:12],
-        "counterfactuals": state.get("counterfactuals", [])[:16],
-        "rejected_release_notes": state.get("rejected_release_notes", [])[:12],
-        "final_decision": state.get("final_decision", {}),
-        "warnings": stage_warnings + state.get("warnings", []),
-        "classification": classification,
-    }
-    state["merged_evidence"] = merged
-    _append_stage(state, "Evidence Merger Agent", "completed", {
-        "process_steps": [
-            "Collected the final outputs from comparison, lineage, input-change detection, release-note ranking, verification, and critic review.",
-            f"Counted {len(state.get('comparison', {}).get('comparison_data', []))} affected positions and {len(state.get('input_changes', []))} changed field observations.",
-            f"Included {sum(len(items) for items in state.get('position_release_notes', {}).values())} position-specific release-note candidate links.",
-            f"Applied classification rule and assigned: {classification}.",
-        ],
-        **merged,
     })
     return state
 
@@ -1016,242 +814,259 @@ def _parse_json_object(content: str) -> Dict[str, Any]:
 
 def _llm_client_response(messages: List[Dict[str, str]]) -> Optional[Dict[str, Any]]:
     api_key = os.environ.get("OPENAI_API_KEY")
-    azure_key = os.environ.get("AZURE_OPENAI_API_KEY")
-    endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
+    model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+    if not api_key:
+        return None
     try:
-        if api_key:
-            from openai import OpenAI
+        from openai import OpenAI
 
-            client = OpenAI(api_key=api_key, timeout=60.0, max_retries=1)
-            response = client.chat.completions.create(
-                model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
-                messages=messages,
-                temperature=0.1,
-                max_tokens=2200,
-                response_format={"type": "json_object"},
-            )
-        elif azure_key and endpoint:
-            from openai import AzureOpenAI
-
-            client = AzureOpenAI(
-                api_key=azure_key,
-                api_version=os.environ.get("AZURE_OPENAI_API_VERSION", "2024-10-21"),
-                azure_endpoint=endpoint.rstrip("/"),
-            )
-            response = client.chat.completions.create(
-                model=os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o"),
-                messages=messages,
-                temperature=0.1,
-                max_tokens=2200,
-                response_format={"type": "json_object"},
-            )
-        else:
-            return None
+        client = OpenAI(api_key=api_key, timeout=60.0, max_retries=1)
+        response = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=0.1,
+            max_tokens=4200,
+            response_format={"type": "json_object"},
+        )
         return _parse_json_object(response.choices[0].message.content or "{}")
     except Exception as exc:
-        return {"llm_error": str(exc)}
+        status_code = getattr(exc, "status_code", None)
+        body = getattr(exc, "body", None)
+        message = f"OpenAI request failed for OPENAI_MODEL={model}: {exc}"
+        if status_code == 404:
+            message = f"OpenAI model not found or unavailable for OPENAI_MODEL={model}. Check that this exact model name is enabled for the API key. Original error: {exc}"
+        return {"llm_error": message, "llm_status_code": status_code, "llm_body": body}
 
 
-def _llm_generate_hypotheses(state: AgentState, seed_hypotheses: List[Dict[str, Any]]) -> tuple[List[Dict[str, Any]], str]:
-    if not seed_hypotheses:
-        return [], "deterministic_empty_seed"
-    messages = [
-        {
-            "role": "system",
-            "content": (
-                "You are an LLM Hypothesis Generation Agent for financial root-cause analysis. "
-                "Use only the provided deterministic seed evidence. Do not invent positions, fields, values, Jira IDs, or formulas. "
-                "Return valid JSON only with key hypotheses, an array. Each hypothesis must preserve id, position, field, "
-                "value_a, value_b, field_difference, output_difference, direction_alignment, release_note_candidates, and lineage_role. "
-                "Add or improve these fields: hypothesis, causal_mechanism, evidence_to_check, rejection_risk, confidence_basis. "
-                "Use exactly the same number and order of hypotheses as seed_hypotheses. "
-                "Do not wrap the list under another key. Write explanatory text in German. Keep it concise and evidence-grounded."
-            ),
-        },
-        {
-            "role": "user",
-            "content": json.dumps(_json_safe({
-                "output_column": state.get("output_column"),
-                "lineage": state.get("lineage", {}),
-                "verification": state.get("verification", []),
-                "seed_hypotheses": seed_hypotheses,
-            }), ensure_ascii=True),
-        },
+def _normalize_report_fields(report: Dict[str, Any]) -> Dict[str, Any]:
+    report["confidence"] = _coerce_confidence(report.get("confidence"), 0)
+    report["evidence"] = _coerce_text_list(report.get("evidence"))
+    report["next_checks"] = _coerce_text_list(report.get("next_checks"))
+    report["key_evidence"] = _coerce_text_list(report.get("key_evidence"))
+    report["driver_summaries"] = _coerce_dict_list(report.get("driver_summaries"))
+    report["release_note_assessments"] = _coerce_dict_list(report.get("release_note_assessments"))
+    report["uncertainty_notes"] = _coerce_text_list(report.get("uncertainty_notes"))
+    report["validation_plan"] = _coerce_text_list(report.get("validation_plan"))
+    report["row_explanations"] = _normalize_row_explanations(report)
+    return report
+
+
+def _release_note_reference_ok(text: str) -> bool:
+    lower = text.lower()
+    release_terms = ("release", "jira", "solution description", "lösungsbeschreibung", "loesungsbeschreibung", "dokumentiert", "unterstützt", "unterstuetzt", "bestätigt", "bestaetigt")
+    if not any(term in lower for term in release_terms):
+        return True
+    has_note_id = bool(re.search(r"\b(?:jira\s*)?\d{5,}\b", lower))
+    has_solution = "solution description" in lower or "lösungsbeschreibung" in lower or "loesungsbeschreibung" in lower
+    return has_note_id and has_solution
+
+
+def _report_quality_violations(report: Dict[str, Any], position_facts: List[Dict[str, Any]]) -> List[str]:
+    violations: List[str] = []
+    generic_terms = ("ist relevant", "beeinflusst", "kann zusammenhängen", "kann zusammenhaengen", "weitere analyse erforderlich")
+    text_fields = [
+        str(report.get("root_cause") or ""),
+        str(report.get("explanation") or ""),
+        str(report.get("primary_cause") or ""),
+        str(report.get("uncertainty_summary") or ""),
+        *[str(item) for item in report.get("key_evidence", []) if isinstance(item, str)],
+        *[str(item) for item in report.get("uncertainty_notes", []) if isinstance(item, str)],
+        *[str(item) for item in report.get("validation_plan", []) if isinstance(item, str)],
     ]
-    result = _llm_client_response(messages)
-    if not result or result.get("llm_error"):
-        return seed_hypotheses, "deterministic_fallback_no_llm"
-    llm_items = result.get("hypotheses")
-    if not isinstance(llm_items, list):
-        return seed_hypotheses, "deterministic_fallback_bad_llm_schema"
-    seed_by_id = {str(item.get("id")): item for item in seed_hypotheses}
-    seed_by_position_field = {
-        (str(item.get("position")), str(item.get("field"))): item
-        for item in seed_hypotheses
-    }
+    for item in report.get("driver_summaries", []):
+        if isinstance(item, dict):
+            text_fields.append(str(item.get("summary") or ""))
+    for item in report.get("release_note_assessments", []):
+        if isinstance(item, dict):
+            text_fields.append(str(item.get("assessment") or ""))
+    row_explanations = report.get("row_explanations", {}) if isinstance(report.get("row_explanations"), dict) else {}
+    text_fields.extend(str(value) for value in row_explanations.values() if isinstance(value, str))
 
-    def _first_text(source: Dict[str, Any], *keys: str) -> str:
-        for key in keys:
-            value = source.get(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-        return ""
-
-    normalized: List[Dict[str, Any]] = []
-    for index, item in enumerate(llm_items):
-        if not isinstance(item, dict):
-            continue
-        seed = (
-            seed_by_id.get(str(item.get("id")))
-            or seed_by_position_field.get((str(item.get("position")), str(item.get("field"))))
-            or seed_by_position_field.get((str(item.get("Position")), str(item.get("Field"))))
-            or (seed_hypotheses[index] if index < len(seed_hypotheses) else {})
-        )
-        if not seed:
-            continue
-        normalized.append({
-            **seed,
-            "hypothesis": _first_text(item, "hypothesis", "Hypothesis", "hypothese", "claim") or str(seed.get("hypothesis") or "").strip(),
-            "causal_mechanism": _first_text(item, "causal_mechanism", "causalMechanism", "mechanism", "mechanismus", "begruendung"),
-            "evidence_to_check": _first_text(item, "evidence_to_check", "evidenceToCheck", "evidence", "check", "validierung"),
-            "rejection_risk": _first_text(item, "rejection_risk", "rejectionRisk", "risk", "risiko", "limitation"),
-            "confidence_basis": _first_text(item, "confidence_basis", "confidenceBasis", "confidence", "basis", "evidenzbasis"),
-            "generation_source": "llm",
-        })
-    return (normalized or seed_hypotheses), "llm" if normalized else "deterministic_fallback_empty_llm_items"
-
-
-def _llm_generate_counterfactuals(state: AgentState, seed_counterfactuals: List[Dict[str, Any]]) -> tuple[List[Dict[str, Any]], str]:
-    if not seed_counterfactuals:
-        return [], "deterministic_empty_seed"
-    messages = [
-        {
-            "role": "system",
-            "content": (
-                "You are an LLM Counterfactual What-If Agent for financial root-cause analysis. "
-                "Use only the provided deterministic numeric seed estimates. Do not recalculate unsupported numbers or invent data. "
-                "Return valid JSON only with key counterfactuals, an array. Each item must preserve hypothesis_id, position, field, "
-                "output_difference, field_difference, estimated_output_effect_if_only_this_changed, and estimated_explained_share. "
-                "Add or improve interpretation, caveat, and validation_test. Write explanatory text in German. "
-                "If the estimate is limited, explicitly say why."
-            ),
-        },
-        {
-            "role": "user",
-            "content": json.dumps(_json_safe({
-                "output_column": state.get("output_column"),
-                "scored_hypotheses": state.get("scored_hypotheses", [])[:16],
-                "seed_counterfactuals": seed_counterfactuals,
-            }), ensure_ascii=True),
-        },
-    ]
-    result = _llm_client_response(messages)
-    if not result or result.get("llm_error"):
-        return seed_counterfactuals, "deterministic_fallback_no_llm"
-    llm_items = result.get("counterfactuals")
-    if not isinstance(llm_items, list):
-        return seed_counterfactuals, "deterministic_fallback_bad_llm_schema"
-    seed_by_id = {str(item.get("hypothesis_id")): item for item in seed_counterfactuals}
-    normalized: List[Dict[str, Any]] = []
-    for index, item in enumerate(llm_items):
-        if not isinstance(item, dict):
-            continue
-        seed = seed_by_id.get(str(item.get("hypothesis_id"))) or (seed_counterfactuals[index] if index < len(seed_counterfactuals) else {})
-        if not seed:
-            continue
-        normalized.append({
-            **seed,
-            "interpretation": str(item.get("interpretation") or seed.get("interpretation") or "").strip(),
-            "caveat": str(item.get("caveat") or "").strip(),
-            "validation_test": str(item.get("validation_test") or "").strip(),
-            "generation_source": "llm",
-        })
-    return (normalized or seed_counterfactuals), "llm" if normalized else "deterministic_fallback_empty_llm_items"
+    if len(str(report.get("root_cause") or "")) < 350:
+        violations.append("root_cause ist zu kurz; schreibe 2 bis 4 substanzielle deutsche Absaetze.")
+    if len(str(report.get("explanation") or "")) < 250:
+        violations.append("explanation ist zu kurz; erklaere die technische Lineage-Propagation detaillierter.")
+    if len(report.get("key_evidence", [])) < 4:
+        violations.append("key_evidence muss mindestens 4 konkrete deutsche Evidenzsaetze enthalten.")
+    for fact in position_facts:
+        position = str(fact.get("position"))
+        explanation = str(row_explanations.get(position) or "")
+        if len(explanation) < 300:
+            violations.append(f"row_explanations[{position}] ist zu kurz; schreibe 3 bis 5 konkrete Saetze.")
+        if str(fact.get("value_a_baseline")) not in explanation or str(fact.get("value_b_compare")) not in explanation:
+            violations.append(f"row_explanations[{position}] muss value_a_baseline und value_b_compare exakt enthalten.")
+        if str(fact.get("difference_b_minus_a")) not in explanation:
+            violations.append(f"row_explanations[{position}] muss difference_b_minus_a exakt enthalten.")
+    for text in text_fields:
+        lower = text.lower()
+        if any(term in lower for term in generic_terms):
+            violations.append("Generische Formulierung gefunden; ersetze sie durch konkrete Lineage-, Werte- und Release-Note-Begruendung.")
+        if not _release_note_reference_ok(text):
+            violations.append("Release-Note-Aussage ohne Jira/Release-Note-Nummer und Solution Description gefunden.")
+    return sorted(set(violations))[:12]
 
 
 def llm_rootcause_report_node(state: AgentState) -> AgentState:
+    stage_warnings = [stage["agent"] for stage in state.get("stages", []) if stage.get("status") in {"warning", "limited", "no evidence"}]
+    classification = "Confirmed Cause" if not stage_warnings and state.get("input_changes") else "Likely Cause" if state.get("input_changes") else "Unresolved Issue"
+    merged_evidence = {
+        "confirmed_facts": {
+            "comparison_positions": len(state.get("comparison", {}).get("comparison_data", [])),
+            "changed_inputs": len(state.get("input_changes", [])),
+            "calculation_path": " -> ".join(state.get("lineage", {}).get("ordered", [])),
+        },
+        "verified_causes": state.get("verification", []),
+        "supporting_documentation": state.get("release_notes", []),
+        "warnings": stage_warnings + state.get("warnings", []),
+        "classification": classification,
+    }
+    state["merged_evidence"] = merged_evidence
+    output_rows_a = _position_map(state["execution_a"].get("data", []))
+    output_rows_b = _position_map(state["execution_b"].get("data", []))
+    position_facts = []
+    for row in state.get("comparison", {}).get("comparison_data", []):
+        position = str(row.get("key"))
+        value_a = output_rows_a.get(position, {}).get(state["output_column"])
+        value_b = output_rows_b.get(position, {}).get(state["output_column"])
+        difference = _numeric_difference(value_a, value_b)
+        position_facts.append({
+            "position": position,
+            "output_column": state["output_column"],
+            "value_a_baseline": _safe_value(value_a),
+            "value_b_compare": _safe_value(value_b),
+            "difference_b_minus_a": _safe_value(difference),
+            "movement_de": "gestiegen" if difference is not None and difference > 0 else "gesunken" if difference is not None and difference < 0 else "unveraendert",
+            "required_sentence_pattern": "von value_a_baseline auf value_b_compare, B - A = difference_b_minus_a",
+        })
     evidence_payload = {
         "output_column": state["output_column"],
         "comparison_direction": "B - A (execution_b minus execution_a)",
         "comparison": state.get("comparison", {}),
+        "positions": [str(row.get("key")) for row in state.get("comparison", {}).get("comparison_data", [])],
+        "position_facts_must_copy": position_facts,
         "lineage": _json_safe(state.get("lineage", {})),
         "input_changes": state.get("input_changes", []),
         "release_notes": state.get("release_notes", [])[:12],
         "position_release_notes": state.get("position_release_notes", {}),
         "verification": state.get("verification", []),
-        "scored_hypotheses": state.get("scored_hypotheses", [])[:12],
-        "counterfactuals": state.get("counterfactuals", [])[:16],
-        "rejected_release_notes": state.get("rejected_release_notes", [])[:12],
-        "final_decision": state.get("final_decision", {}),
-        "merged_evidence": state.get("merged_evidence", {}),
+        "merged_evidence": merged_evidence,
+        "human_overrides": state.get("human_overrides", {}),
     }
     messages = [
         {
             "role": "system",
             "content": (
-                "You are the final LangGraph RootCause report agent. Use only the supplied evidence. "
-                "All differences are B - A. Return valid JSON only with keys: root_cause, explanation, "
-                "confidence, evidence, next_checks, row_explanations, primary_cause, uncertainty_summary. "
-                "Write user-facing natural language in German. "
-                "row_explanations must be an object keyed by position. For each position, state exact A and B "
-                "values, the B - A movement, changed lineage/source fields, and whether the matched release notes "
-                "support, partially support, or do not support the observed change. Use position_release_notes as the "
-                "authoritative release-note candidate list for each position. Do not copy a Jira ID or solution from "
-                "another position. Do not infer causation from a field-name match alone. Do not invent facts."
+                "Du bist der finale LangGraph RootCause Report Agent fuer eine finanzielle Datenanalyse. "
+                "Du schreibst ausschliesslich auf Deutsch. Keine englischen Saetze, keine englischen Labels in Freitextfeldern. "
+                "Nutze ausschliesslich die gelieferten Evidenzdaten. Erfinde keine Felder, Positionen, Werte, Formeln, Jira-IDs oder Release-Notes. "
+                "Alle Abweichungen sind strikt B - A, also execution_b minus execution_a. value_a ist Baseline, value_b ist Vergleich. "
+                "Wenn difference positiv ist, ist der Output gestiegen. Wenn difference negativ ist, ist der Output gesunken. "
+                "Diese Richtung muss in jeder Positions-Erklaerung mathematisch korrekt sein. Pruefe sie vor dem Antworten. "
+                "Nutze position_facts_must_copy als verbindliche Wahrheit fuer jede Position. Schreibe immer von value_a_baseline auf value_b_compare, niemals umgekehrt. "
+                "Beispielregel: Wenn value_a_baseline=20000, value_b_compare=19200 und difference_b_minus_a=-800, dann muss der Text sagen: 'von 20000 auf 19200 gesunken (B - A = -800)'. "
+                "Ein Text wie 'von 19200 auf 20000 gestiegen' waere in diesem Beispiel falsch und verboten. "
+                "Antworte mit validem JSON und exakt diesen Top-Level-Schluesseln: root_cause, explanation, confidence, evidence, next_checks, "
+                "row_explanations, rows, primary_cause, uncertainty_summary, key_evidence, driver_summaries, release_note_assessments, "
+                "uncertainty_notes, validation_plan. Keine Markdown-Ausgabe ausserhalb des JSON. "
+                "Qualitaetsregeln: Jede Freitextantwort muss konkret, evidenzbasiert und nicht generisch sein. Verbotene Formulierungen sind: "
+                "'ist relevant', 'beeinflusst', 'kann zusammenhaengen', 'weitere Analyse erforderlich' ohne konkrete Begruendung. "
+                "Nenne immer konkrete Werte, Felder, Positionen und die beobachtete B-minus-A-Bewegung. "
+                "root_cause muss 2 bis 4 dichte Absaetze enthalten: erst die Hauptursache, dann die wichtigsten Treiber, dann Release-Note-Unterstuetzung, dann Unsicherheit. "
+                "explanation muss technisch sein und die Kette von geaenderten Feldern ueber die Lineage bis zum Output erklaeren. "
+                "primary_cause muss ein kurzer deutscher Ursachen-Satz sein, nicht nur ein Feldname. "
+                "Wenn human_overrides.primary_cause_override vorhanden ist, uebernimm diese menschliche Formulierung als primaere Ursache und richte root_cause, explanation und die Positions-Erklaerungen daran aus. "
+                "Wenn human_overrides.release_note_decisions vorhanden ist, beruecksichtige nur akzeptierte oder teilweise akzeptierte Release-Note-Kandidaten; abgelehnte Kandidaten duerfen nicht als Unterstuetzung erscheinen. "
+                "key_evidence muss 4 bis 7 deutsche Evidenzsaetze enthalten. Jeder Satz muss eine konkrete Beobachtung enthalten. Keine JSON-Strings als Text. "
+                "driver_summaries muss ein Array von Objekten sein. Jedes Objekt hat field, summary, positions, support. "
+                "summary muss erklaeren, warum genau dieses Feld ein Treiber ist, welche Positionen betroffen sind und wie es in der Lineage wirkt. "
+                "support muss kurz sagen: 'stark unterstuetzt', 'teilweise unterstuetzt' oder 'nicht dokumentiert'. "
+                "release_note_assessments muss ein Array von Objekten sein. Jedes Objekt hat position, status, jira_id, assessment. "
+                "assessment muss erklaeren, warum die Release Note diese Position stuetzt, nur teilweise stuetzt oder nicht beweist. "
+                "Release-Note-Zitationsregel ohne Ausnahme: Immer wenn du in root_cause, explanation, key_evidence, driver_summaries[].summary, "
+                "release_note_assessments[].assessment, row_explanations oder rows[].explanation behauptest, dass eine Release Note etwas stuetzt, teilweise stuetzt, dokumentiert, bestaetigt oder erklaert, "
+                "musst du in demselben Satz oder direkt im Folgesatz die konkrete Jira-ID bzw. Release-Note-Nummer und die Solution Description nennen. "
+                "Form: 'Jira <jira_id> mit der Solution Description "
+                "\"<solution_description>\" ...'. Wenn jira_id fehlt, nutze den besten verfuegbaren Release-Note-Bezeichner aus workbook/sheet. "
+                "Wenn solution_description leer oder nicht vorhanden ist, schreibe explizit: 'eine Solution Description ist in den Evidenzdaten nicht verfuegbar'. "
+                "Ein Satz wie 'Die Release Notes unterstuetzen dies' ist verboten, wenn er nicht Jira-ID/Release-Note-Nummer und Solution Description enthaelt. "
+                "Ein Satz wie 'in den Release-Notizen dokumentiert' ist verboten, wenn er nicht dieselben Details enthaelt. "
+                "Verwende position_release_notes als einzige massgebliche Kandidatenliste je Position. Kopiere niemals Jira-ID oder Loesungsbeschreibung von einer anderen Position. "
+                "Behaupte niemals Kausalitaet nur wegen eines Feldnamens. Eine Release Note ist nur Unterstuetzung, wenn Position, geaendertes Feld, Problem-/Solution-Beschreibung und Lineage zusammenpassen. "
+                "row_explanations muss ein Objekt sein, dessen Keys exakt die Positionen aus positions sind. Fuer jede Position 3 bis 5 deutsche Saetze: "
+                "Satz 1 muss exakt die Werte aus position_facts_must_copy benutzen und die Bewegung von value_a_baseline auf value_b_compare mit B - A nennen. Satz 2 nennt die geaenderten Treiberfelder. "
+                "Satz 3 erklaert die Propagation ueber die Lineage bis zum Output. Satz 4 bewertet Release-Note-Unterstuetzung und muss dabei Jira-ID/Release-Note-Nummer sowie Solution Description nennen. "
+                "Satz 5 nennt Unsicherheit, falls die Evidenz nicht voll beweisend ist. "
+                "rows muss zusaetzlich ein Array mit einem Objekt pro Position sein, jedes mit position und explanation; die explanation muss inhaltlich identisch oder mindestens gleichwertig zu row_explanations[position] sein. "
+                "uncertainty_notes muss konkrete Unsicherheiten nennen, nicht generisch. validation_plan muss konkrete Pruefschritte nennen, z.B. welches Feld, welche Position oder welche Release Note zu validieren ist. "
+                "confidence ist eine Zahl von 0 bis 100. Gib keine Woerter wie 'hoch' statt einer Zahl zurueck."
             ),
         },
         {"role": "user", "content": json.dumps(_json_safe(evidence_payload), ensure_ascii=True)},
     ]
     report = _llm_client_response(messages)
     if not report or report.get("llm_error"):
-        report = _fallback_llm_report(state, report.get("llm_error") if report else None)
+        report = {"llm_error": report.get("llm_error") if report else "OpenAI is not configured"}
         status = "fallback"
     else:
-        report["confidence"] = _coerce_confidence(report.get("confidence"), _confidence(state))
+        report = _normalize_report_fields(report)
+        violations = _report_quality_violations(report, position_facts)
+        if violations:
+            retry_messages = messages + [
+                {
+                    "role": "system",
+                    "content": (
+                        "Die vorherige Antwort wurde wegen Qualitaetsverstoessen abgelehnt. "
+                        "Erzeuge das komplette JSON neu. Behebe alle folgenden Punkte strikt: "
+                        + json.dumps(violations, ensure_ascii=False)
+                    ),
+                }
+            ]
+            retry_report = _llm_client_response(retry_messages)
+            if retry_report and not retry_report.get("llm_error"):
+                report = _normalize_report_fields(retry_report)
+                violations = _report_quality_violations(report, position_facts)
+            if violations:
+                report["quality_warnings"] = violations
         status = "completed"
-    report["evidence"] = _coerce_text_list(report.get("evidence")) or _fallback_evidence_items(state)
-    report["next_checks"] = _coerce_text_list(report.get("next_checks")) or _fallback_next_checks(state)
     state["llm_report"] = report
     _append_stage(state, "Final Rootcause Report", status, {
         "process_steps": [
-            "Prepared a compact evidence payload containing comparison data, lineage, changed fields, ranked release notes, verification results, and merged evidence.",
+            "Merged comparison, lineage, changed fields, release-note matches, verification, and critic warnings into one evidence packet.",
+            "Prepared a compact evidence payload from that merged packet for final report generation.",
             "Asked the configured LLM to write German JSON output using only supplied evidence and position-specific release-note candidates.",
             "Parsed the LLM JSON response and normalized confidence, evidence, and next-check fields for UI rendering.",
             f"Final report status: {status}.",
         ],
-        "classification": state.get("merged_evidence", {}).get("classification", "Unresolved Issue"),
+        "classification": classification,
+        "merged_evidence": merged_evidence,
         "confidence": report.get("confidence", _confidence(state)),
-        "llm_model": os.environ.get("OPENAI_MODEL") or os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME") or "not configured",
+        "llm_model": os.environ.get("OPENAI_MODEL") or "not configured",
         "llm_error": report.get("llm_error"),
     })
     return state
 
 
-def _fallback_llm_report(state: AgentState, error: Optional[str]) -> Dict[str, Any]:
-    output = state["output_column"]
-    changed_fields = sorted({str(item.get("field")) for item in state.get("input_changes", []) if item.get("field")})
-    root_cause = state.get("merged_evidence", {}).get("classification", "Unresolved Issue")
-    explanation = (
-        f"Die LangGraph-Agenten haben {output} anhand von Vergleich, Lineage, Input-Aenderungen und Release Notes bewertet. "
-        f"Geaenderte Felder: {', '.join(changed_fields) if changed_fields else 'keine eindeutig verifizierten Felder'}."
-    )
-    evidence = [
-        f"Der von LangGraph rekonstruierte Berechnungspfad lautet: {' -> '.join(state.get('lineage', {}).get('ordered', [])) or 'nicht verfuegbar'}.",
-        f"Geaenderte Felder: {', '.join(changed_fields) if changed_fields else 'keine eindeutig verifizierten Felder'}.",
-        f"Verifizierte Positionen: {len(state.get('verification', []))}.",
-    ]
-    next_checks = _fallback_next_checks(state)
-    report = {
-        "root_cause": root_cause,
-        "explanation": explanation,
-        "confidence": _confidence(state),
-        "evidence": evidence,
-        "next_checks": next_checks,
-        "row_explanations": {},
-    }
-    if error:
-        report["llm_error"] = error
-    return report
+def _normalize_row_explanations(report: Dict[str, Any]) -> Dict[str, str]:
+    explanations: Dict[str, str] = {}
+    raw = report.get("row_explanations")
+    if isinstance(raw, dict):
+        for position, explanation in raw.items():
+            if isinstance(explanation, str) and explanation.strip():
+                explanations[str(position)] = explanation.strip()
+            elif isinstance(explanation, dict):
+                text = explanation.get("explanation") or explanation.get("text") or explanation.get("summary")
+                if isinstance(text, str) and text.strip():
+                    explanations[str(position)] = text.strip()
+    rows = report.get("rows")
+    if isinstance(rows, list):
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            position = row.get("position") or row.get("key") or row.get("deviation")
+            explanation = row.get("explanation") or row.get("root_cause") or row.get("summary")
+            if position is not None and isinstance(explanation, str) and explanation.strip():
+                explanations.setdefault(str(position), explanation.strip())
+    return explanations
 
 
 def _build_graph():
@@ -1261,32 +1076,29 @@ def _build_graph():
     graph.add_node("input_change_agent", input_change_agent_node)
     graph.add_node("release_note_agent", release_note_agent_node)
     graph.add_node("causal_verification_agent", causal_verification_agent_node)
-    graph.add_node("hypothesis_generation_agent", hypothesis_generation_agent_node)
-    graph.add_node("hypothesis_scoring_agent", hypothesis_scoring_agent_node)
-    graph.add_node("counterfactual_agent", counterfactual_agent_node)
-    graph.add_node("release_note_rejection_agent", release_note_rejection_agent_node)
-    graph.add_node("final_decision_agent", final_decision_agent_node)
     graph.add_node("critic_consistency_agent", critic_consistency_agent_node)
-    graph.add_node("evidence_merger_agent", evidence_merger_agent_node)
     graph.add_node("llm_rootcause_report", llm_rootcause_report_node)
     graph.add_edge(START, "comparison_analyst")
     graph.add_edge("comparison_analyst", "formula_lineage_analyst")
     graph.add_edge("formula_lineage_analyst", "input_change_agent")
     graph.add_edge("input_change_agent", "release_note_agent")
     graph.add_edge("release_note_agent", "causal_verification_agent")
-    graph.add_edge("causal_verification_agent", "hypothesis_generation_agent")
-    graph.add_edge("hypothesis_generation_agent", "hypothesis_scoring_agent")
-    graph.add_edge("hypothesis_scoring_agent", "counterfactual_agent")
-    graph.add_edge("counterfactual_agent", "release_note_rejection_agent")
-    graph.add_edge("release_note_rejection_agent", "critic_consistency_agent")
-    graph.add_edge("critic_consistency_agent", "final_decision_agent")
-    graph.add_edge("final_decision_agent", "evidence_merger_agent")
-    graph.add_edge("evidence_merger_agent", "llm_rootcause_report")
+    graph.add_edge("causal_verification_agent", "critic_consistency_agent")
+    graph.add_edge("critic_consistency_agent", "llm_rootcause_report")
     graph.add_edge("llm_rootcause_report", END)
-    return graph.compile()
+    return graph.compile(checkpointer=MemorySaver())
 
 
 ROOTCAUSE_GRAPH = _build_graph()
+
+
+def _first_interrupt(snapshot: Any) -> Optional[Dict[str, Any]]:
+    for task in getattr(snapshot, "tasks", ()) or ():
+        for item in getattr(task, "interrupts", ()) or ():
+            value = getattr(item, "value", None)
+            if isinstance(value, dict):
+                return value
+    return None
 
 
 def _build_rows(state: AgentState) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
@@ -1308,18 +1120,7 @@ def _build_rows(state: AgentState) -> tuple[List[Dict[str, Any]], List[Dict[str,
         note_labels = [_release_note_label(note) for note in position_notes if _release_note_label(note)]
         explanation = row_explanations.get(position)
         if not isinstance(explanation, str) or not explanation.strip():
-            explanation = f"Fuer {position} hat sich {output} von {_value_text(left)} auf {_value_text(right)} geaendert (B - A = {_value_text(_numeric_difference(left, right))})."
-            if changed_fields:
-                explanation += " Geaenderte Lineage-/Source-Felder: " + ", ".join(str(item.get("field")) for item in changed_fields) + "."
-            else:
-                explanation += " Kein geaendertes Source-Feld wurde fuer diesen Output eindeutig verifiziert."
-            if position_notes:
-                primary_note = position_notes[0]
-                explanation += f" Primaere Release-Note-Evidenz: {_release_note_label(primary_note)}."
-                if primary_note.get("solution_description"):
-                    explanation += f" Die dokumentierte Loesung lautet: {primary_note.get('solution_description')}."
-            else:
-                explanation += " Fuer diese Position wurde keine positionsspezifische Release Note identifiziert."
+            explanation = ""
         rows.append({
             "position": position,
             "output": output,
@@ -1342,20 +1143,6 @@ def _build_rows(state: AgentState) -> tuple[List[Dict[str, Any]], List[Dict[str,
                 if normalized_field in {_normalize_text(value) for value in note.get("matched_fields", [])}
                 or normalized_field in _normalize_text(json.dumps(note.get("record", {}), default=str))
             ]
-            field_changed = not _values_equal(field_left, field_right)
-            detail_explanation = f"Fuer {position} gilt: {field_name} "
-            if field_changed:
-                detail_explanation += f"hat sich von {_value_text(field_left)} auf {_value_text(field_right)} geaendert."
-            else:
-                detail_explanation += "hat sich zwischen den beiden Ausfuehrungen nicht geaendert."
-            if field_parents:
-                detail_explanation += " Parent-Felder: " + ", ".join(field_parents) + "."
-            if field_name != output:
-                detail_explanation += f" Dieses Feld ist Teil der Lineage, die {output} speist."
-            if field_notes:
-                detail_explanation += f" Release-Note-Kontext: {_join_release_note_labels(field_notes)}."
-            else:
-                detail_explanation += " Keine Release Note dokumentiert diese Feld-Aenderung direkt."
             details.append({
                 "position": position,
                 "output": field_name,
@@ -1365,7 +1152,7 @@ def _build_rows(state: AgentState) -> tuple[List[Dict[str, Any]], List[Dict[str,
                 "lineage": lineage_path,
                 "input": ", ".join(field_parents),
                 "release_note": _join_release_note_labels(field_notes),
-                "explanation": detail_explanation,
+                "explanation": "",
                 "confidence": state.get("llm_report", {}).get("confidence", _confidence(state)),
             })
     return rows, details
@@ -1408,145 +1195,32 @@ def _build_ranked_drivers(state: AgentState, rows: List[Dict[str, Any]]) -> List
     )
     for index, driver in enumerate(ranked):
         driver["rank"] = index + 1
-        support_text = "with release-note support" if driver["release_note_support"] else "without direct release-note support"
-        driver["why_it_matters"] = (
-            f"{driver['field']} changed in {len(driver['positions'])} affected position(s), "
-            f"covering total absolute output movement {driver['total_abs_output_impact']:.2f}, {support_text}."
-        )
+        driver["why_it_matters"] = ""
     return ranked
 
 
-def _build_release_note_assessments(state: AgentState) -> List[Dict[str, Any]]:
-    assessments: List[Dict[str, Any]] = []
-    changed_by_position = _group_fields(state.get("input_changes", []))
-    for position, notes in state.get("position_release_notes", {}).items():
-        changed_fields = changed_by_position.get(position, [])
-        if not notes:
-            assessments.append({
-                "position": position,
-                "status": "not supported",
-                "note": "No position-specific release note matched both position context and changed fields.",
-                "changed_fields": changed_fields,
-            })
-            continue
-        for note in notes[:3]:
-            matched_changed_fields = [
-                field for field in changed_fields
-                if _normalize_text(field) in {_normalize_text(value) for value in note.get("matched_fields", [])}
-                or _normalize_text(field) in _normalize_text(json.dumps(note.get("record", {}), default=str))
-            ]
-            has_solution = bool(note.get("solution_description"))
-            status = "supports" if matched_changed_fields and has_solution else "partially supports" if matched_changed_fields else "weak match"
-            assessments.append({
-                "position": position,
-                "jira_id": note.get("jira_id"),
-                "workbook": note.get("workbook"),
-                "sheet": note.get("sheet"),
-                "status": status,
-                "matched_changed_fields": matched_changed_fields,
-                "relevance_score": note.get("relevance_score"),
-                "solution_description": note.get("solution_description"),
-                "reason": (
-                    f"Matched position {position} and changed field(s) {_field_list_text(matched_changed_fields)}."
-                    if matched_changed_fields else
-                    f"Matched release-note text, but not a changed field for {position}."
-                ),
-            })
-    return assessments
-
-
-def _build_contradictions(state: AgentState, release_note_assessments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    contradictions: List[Dict[str, Any]] = []
-    for warning in state.get("warnings", []):
-        contradictions.append({"severity": "high", "source": "Critic/Consistency Agent", "issue": str(warning)})
-    for assessment in release_note_assessments:
-        if assessment.get("status") in {"weak match", "not supported"}:
-            contradictions.append({
-                "severity": "medium",
-                "source": "Release-Note Agent",
-                "position": assessment.get("position"),
-                "issue": assessment.get("reason") or assessment.get("note"),
-            })
-        elif assessment.get("status") == "partially supports" and not assessment.get("solution_description"):
-            contradictions.append({
-                "severity": "low",
-                "source": "Release-Note Agent",
-                "position": assessment.get("position"),
-                "issue": "Release note matched changed fields but did not provide a solution description to validate the causal story.",
-            })
-    return contradictions
-
-
-def _build_uncertainty_notes(state: AgentState, ranked_drivers: List[Dict[str, Any]], contradictions: List[Dict[str, Any]]) -> List[str]:
-    notes: List[str] = []
-    if not ranked_drivers:
-        notes.append("No changed lineage/source driver was strong enough to rank.")
-    if not state.get("release_notes"):
-        notes.append("No release-note evidence was available, so documentation support is missing.")
-    if contradictions:
-        notes.append(f"{len(contradictions)} contradiction or evidence-limit item(s) require review before sign-off.")
-    if len(state.get("lineage", {}).get("ordered", [])) <= 1:
-        notes.append("The calculation lineage could not be fully reconstructed from the uploaded code.")
-    return notes or ["No major uncertainty was flagged by the agent workflow."]
-
-
-def _build_validation_plan(state: AgentState, ranked_drivers: List[Dict[str, Any]]) -> List[str]:
-    plan = [
-        "Re-run the affected positions with the same execution pair and confirm every displayed B - A movement.",
-        "Open the uploaded code version and validate that the reconstructed lineage path matches the implemented formula chain.",
-    ]
-    if ranked_drivers:
-        plan.append("Validate the top-ranked driver fields in the source input data: " + _field_list_text([driver["field"] for driver in ranked_drivers[:4]]) + ".")
-    if state.get("position_release_notes"):
-        plan.append("Review the linked Jira/release-note solution descriptions and confirm they apply to the same position and changed fields.")
-    plan.append("Use the lineage breakdown table to confirm that intermediate fields move consistently with the final output.")
-    return plan
-
-
-def run_agent_rootcause(execution_id_a: str, execution_id_b: str, output_column: str, position: Optional[str] = None) -> Dict[str, Any]:
-    final_state: AgentState = ROOTCAUSE_GRAPH.invoke({
-        "execution_a": _load_execution(execution_id_a),
-        "execution_b": _load_execution(execution_id_b),
-        "output_column": output_column.strip(),
-        "position": position,
-        "comparison": {},
-        "lineage": {},
-        "input_changes": [],
-        "release_notes": [],
-        "verification": [],
-        "warnings": [],
-        "position_release_notes": {},
-        "hypotheses": [],
-        "scored_hypotheses": [],
-        "counterfactuals": [],
-        "rejected_release_notes": [],
-        "final_decision": {},
-        "merged_evidence": {},
-        "llm_report": {},
-        "stages": [],
-    })
+def _format_success_response(final_state: AgentState, review_id: Optional[str] = None) -> Dict[str, Any]:
     rows, details = _build_rows(final_state)
     report = final_state.get("llm_report", {})
     ranked_drivers = _build_ranked_drivers(final_state, rows)
-    release_note_assessments = _build_release_note_assessments(final_state)
-    contradictions = _build_contradictions(final_state, release_note_assessments)
-    uncertainty_notes = _build_uncertainty_notes(final_state, ranked_drivers, contradictions)
-    validation_plan = _build_validation_plan(final_state, ranked_drivers)
+    release_note_assessments = _coerce_dict_list(report.get("release_note_assessments"))
+    uncertainty_notes = _coerce_text_list(report.get("uncertainty_notes"))
+    validation_plan = _coerce_text_list(report.get("validation_plan"))
+    key_evidence = _coerce_text_list(report.get("key_evidence"))
+    driver_summaries = _coerce_dict_list(report.get("driver_summaries"))
     architecture_agents = [
         "Comparison Analyst Agent",
         "Formula/Lineage Analyst Agent",
         "Input-Change Agent",
         "Release-Note Agent",
         "Causal Verification Agent",
-        "Hypothesis Generation Agent",
-        "Hypothesis Scoring Agent",
-        "Counterfactual What-If Agent",
-        "Release-Note Rejection Agent",
         "Critic/Consistency Agent",
-        "Final Decision Agent",
+        "Final Rootcause Report",
     ]
     return _json_safe({
         "status": "success",
+        "review_id": review_id,
+        "post_run_review_available": bool(review_id),
         "comparison_direction": "B - A (execution_b minus execution_a)",
         "stages": {
             "comparison_direction": "B - A (execution_b minus execution_a)",
@@ -1556,24 +1230,20 @@ def run_agent_rootcause(execution_id_a: str, execution_id_b: str, output_column:
             "deviations": final_state.get("comparison", {}).get("comparison_data", []),
         },
         "analysis": {
-            "root_cause": report.get("root_cause", final_state.get("merged_evidence", {}).get("classification", "Unresolved Issue")),
-            "explanation": report.get("explanation", "LangGraph RootCause analysis completed."),
+            "root_cause": report.get("root_cause", ""),
+            "explanation": report.get("explanation", ""),
             "confidence": report.get("confidence", _confidence(final_state)),
-            "primary_cause": report.get("primary_cause") or final_state.get("final_decision", {}).get("primary_cause") or (ranked_drivers[0]["field"] if ranked_drivers else "Unresolved"),
+            "primary_cause": report.get("primary_cause", ""),
             "evidence": report.get("evidence", []),
+            "key_evidence": key_evidence,
             "changed_fields": sorted({str(item.get("field")) for item in final_state.get("input_changes", []) if item.get("field")}),
             "release_note_links": [str(note.get("workbook")) for note in final_state.get("release_notes", []) if note.get("workbook")],
             "next_checks": report.get("next_checks", []),
             "ranked_drivers": ranked_drivers,
-            "hypotheses": final_state.get("hypotheses", []),
-            "scored_hypotheses": final_state.get("scored_hypotheses", []),
-            "counterfactuals": final_state.get("counterfactuals", []),
-            "rejected_release_notes": final_state.get("rejected_release_notes", []),
-            "final_decision": final_state.get("final_decision", {}),
+            "driver_summaries": driver_summaries,
             "release_note_assessments": release_note_assessments,
-            "contradictions": contradictions,
             "uncertainty_notes": uncertainty_notes,
-            "uncertainty_summary": report.get("uncertainty_summary") or " ".join(uncertainty_notes),
+            "uncertainty_summary": report.get("uncertainty_summary", ""),
             "validation_plan": validation_plan,
             "rows": rows,
             "detail_rows": details,
@@ -1587,18 +1257,144 @@ def run_agent_rootcause(execution_id_a: str, execution_id_b: str, output_column:
                 "input_change_agent",
                 "release_note_agent",
                 "causal_verification_agent",
-                "hypothesis_generation_agent",
-                "hypothesis_scoring_agent",
-                "counterfactual_agent",
-                "release_note_rejection_agent",
-                "final_decision_agent",
                 "critic_consistency_agent",
-                "evidence_merger_agent",
                 "llm_rootcause_report",
             ],
             "agents": architecture_agents,
-            "evidence_merger": "Evidence Merger Agent",
             "final_report": "Final Rootcause Report",
-            "llm_provider": "openai" if os.environ.get("OPENAI_API_KEY") else "azure_openai" if os.environ.get("AZURE_OPENAI_API_KEY") and os.environ.get("AZURE_OPENAI_ENDPOINT") else "not_configured",
+            "llm_provider": "openai" if os.environ.get("OPENAI_API_KEY") else "not_configured",
         },
     })
+
+
+def _format_release_note_review_response(review_id: str, snapshot: Any) -> Dict[str, Any]:
+    interrupt_payload = _first_interrupt(snapshot) or {}
+    values = getattr(snapshot, "values", {}) or {}
+    candidates = interrupt_payload.get("candidates", []) if isinstance(interrupt_payload, dict) else []
+    return _json_safe({
+        "status": "requires_review",
+        "review_id": review_id,
+        "review_type": "release_notes",
+        "message": interrupt_payload.get("message") or "Release-note review required before the graph can continue.",
+        "release_note_candidates": candidates,
+        "agent_stages": list(values.get("stages", [])) + [{
+            "agent": "Release-Note Agent",
+            "status": "requires_review",
+            "findings": {
+                "process_steps": [
+                    "Scanned and ranked release-note candidates.",
+                    "Paused the LangGraph run with interrupt() before causal verification.",
+                    "Waiting for human accept, reject, or partial decisions for the proposed links.",
+                ],
+                "review_type": "release_notes",
+                "candidate_count": len(candidates),
+                "release_notes_found": len(candidates),
+                "position_specific_release_notes": {
+                    str(position): sum(1 for candidate in candidates if str(candidate.get("position")) == str(position))
+                    for position in sorted({str(candidate.get("position")) for candidate in candidates})
+                },
+                "review_required": True,
+            },
+        }],
+        "agent_architecture": {
+            "orchestrator": "LangGraph StateGraph with interrupt/checkpoint resume",
+            "human_in_the_loop": "Release-Note Agent only",
+            "paused_node": "release_note_agent",
+        },
+    })
+
+
+def run_agent_rootcause(execution_id_a: str, execution_id_b: str, output_column: str, position: Optional[str] = None) -> Dict[str, Any]:
+    review_id = str(uuid.uuid4())
+    config = {"configurable": {"thread_id": review_id}}
+    final_state: AgentState = ROOTCAUSE_GRAPH.invoke({
+        "execution_a": _load_execution(execution_id_a),
+        "execution_b": _load_execution(execution_id_b),
+        "output_column": output_column.strip(),
+        "position": position,
+        "comparison": {},
+        "lineage": {},
+        "input_changes": [],
+        "release_notes": [],
+        "human_review": {},
+        "human_overrides": {},
+        "verification": [],
+        "warnings": [],
+        "position_release_notes": {},
+        "merged_evidence": {},
+        "llm_report": {},
+        "stages": [],
+    }, config=config)
+    snapshot = ROOTCAUSE_GRAPH.get_state(config)
+    if _first_interrupt(snapshot):
+        return _format_release_note_review_response(review_id, snapshot)
+    return _format_success_response(final_state, review_id)
+
+
+def resume_agent_rootcause(review_id: str, human_review: Dict[str, Any]) -> Dict[str, Any]:
+    if not review_id:
+        raise ValueError("review_id is required")
+    config = {"configurable": {"thread_id": review_id}}
+    snapshot = ROOTCAUSE_GRAPH.get_state(config)
+    if not getattr(snapshot, "next", None):
+        raise ValueError(f"Review session {review_id} not found or already completed")
+    final_state: AgentState = ROOTCAUSE_GRAPH.invoke(Command(resume=human_review), config=config)
+    return _format_success_response(final_state, review_id)
+
+
+def _apply_post_run_overrides(state: AgentState, overrides: Dict[str, Any]) -> AgentState:
+    state["human_overrides"] = overrides
+    decisions = {
+        str(item.get("candidate_id") or item.get("index")): item
+        for item in overrides.get("release_note_decisions", [])
+        if isinstance(item, dict)
+    }
+    if decisions:
+        all_notes = list(state.get("release_notes", []))
+        kept_notes: List[Dict[str, Any]] = []
+        for index, note in enumerate(all_notes):
+            candidate_id = str(note.get("candidate_id") or index)
+            decision = decisions.get(candidate_id, decisions.get(str(index), {}))
+            choice = str(decision.get("decision") or "accept").casefold()
+            if choice == "reject":
+                continue
+            reviewed_note = dict(note)
+            reviewed_note["human_review"] = {
+                "decision": choice if choice in {"accept", "partial"} else "accept",
+                "comment": decision.get("comment") or "",
+            }
+            kept_notes.append(reviewed_note)
+        state["release_notes"] = kept_notes
+        filtered_positions: Dict[str, List[Dict[str, Any]]] = {}
+        for position, notes in state.get("position_release_notes", {}).items():
+            filtered_positions[str(position)] = [
+                note for note in notes
+                if note in kept_notes or any(
+                    note.get("jira_id") == kept.get("jira_id")
+                    and note.get("workbook") == kept.get("workbook")
+                    and note.get("sheet") == kept.get("sheet")
+                    for kept in kept_notes
+                )
+            ]
+        state["position_release_notes"] = filtered_positions
+    return state
+
+
+def post_run_agent_rootcause_review(review_id: str, overrides: Dict[str, Any]) -> Dict[str, Any]:
+    if not review_id:
+        raise ValueError("review_id is required")
+    config = {"configurable": {"thread_id": review_id}}
+    snapshot = ROOTCAUSE_GRAPH.get_state(config)
+    values = getattr(snapshot, "values", {}) or {}
+    if not values or not values.get("comparison"):
+        raise ValueError(f"Completed review session {review_id} not found")
+    final_state = _apply_post_run_overrides(dict(values), overrides)
+    final_state = llm_rootcause_report_node(final_state)
+    ROOTCAUSE_GRAPH.update_state(config, {
+        "human_overrides": overrides,
+        "llm_report": final_state.get("llm_report", {}),
+        "stages": final_state.get("stages", []),
+        "release_notes": final_state.get("release_notes", []),
+        "position_release_notes": final_state.get("position_release_notes", {}),
+    })
+    return _format_success_response(final_state, review_id)

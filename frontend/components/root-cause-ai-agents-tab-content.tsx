@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { AlertCircle, ArrowRight, Bot, CheckCircle2, CircleX, Eye, GitBranch, Loader2, Sparkles } from "lucide-react";
+import { AlertCircle, ArrowRight, Bot, CheckCircle2, CircleX, Eye, GitBranch, Loader2, Sparkles, X } from "lucide-react";
 import { API_ENDPOINTS } from "@/lib/api-config";
 import { useClusterSelection } from "@/context/cluster-selection-context";
 import { Button } from "@/components/ui/button";
@@ -10,8 +10,10 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Dialog,
   DialogContent,
@@ -40,12 +42,35 @@ type AgentStage = {
   findings?: Record<string, unknown>;
 };
 type RankedDriver = { rank?: number; field: string; positions?: string[]; occurrences?: number; total_abs_output_impact?: number; release_note_support?: string[]; why_it_matters?: string };
-type ReleaseNoteAssessment = { position?: string; status?: string; jira_id?: string; workbook?: string; sheet?: string; matched_changed_fields?: string[]; relevance_score?: number; solution_description?: string; reason?: string; note?: string };
-type Contradiction = { severity?: string; source?: string; position?: string; issue?: string };
-type ScoredHypothesis = { id?: string; rank?: number; position?: string; field?: string; hypothesis?: string; causal_mechanism?: string; evidence_to_check?: string; rejection_risk?: string; confidence_basis?: string; generation_source?: string; score?: number; decision?: string; score_reason?: string; release_note_candidates?: string[] };
-type Counterfactual = { hypothesis_id?: string; position?: string; field?: string; output_difference?: number | null; field_difference?: number | null; estimated_output_effect_if_only_this_changed?: number | null; estimated_explained_share?: number | null; interpretation?: string; caveat?: string; validation_test?: string; generation_source?: string };
-type FinalDecision = { primary_cause?: string; primary_position?: string; primary_score?: number; evidence_strength?: string; decision_rationale?: string; secondary_causes?: ScoredHypothesis[]; rejected_causes?: ScoredHypothesis[] };
+type DriverSummary = { field?: string; summary?: string; positions?: string[]; support?: string };
+type ReleaseNoteAssessment = { position?: string; status?: string; jira_id?: string; workbook?: string; sheet?: string; matched_changed_fields?: string[]; relevance_score?: number; solution_description?: string; assessment?: string; reason?: string; note?: string };
+type ReleaseNoteReviewCandidate = {
+  candidate_id: string;
+  position: string;
+  jira_id?: string | null;
+  workbook?: string | null;
+  sheet?: string | null;
+  matched_fields?: string[];
+  matched_changed_fields?: string[];
+  relevance_score?: number | null;
+  solution_description?: string | null;
+  problem_description?: string | null;
+  record_text?: string | null;
+  label?: string | null;
+};
+type PendingReleaseNoteReview = {
+  status: "requires_review";
+  review_id: string;
+  review_type: "release_notes";
+  message?: string;
+  release_note_candidates: ReleaseNoteReviewCandidate[];
+  agent_stages?: AgentStage[];
+  agent_architecture?: RootCauseResult["agent_architecture"] & { human_in_the_loop?: string; paused_node?: string };
+};
+type ReviewDecision = { decision: "accept" | "partial" | "reject"; comment: string };
 type RootCauseResult = {
+  review_id?: string;
+  post_run_review_available?: boolean;
   comparison_direction?: string;
   stages: {
     dependencies: string[];
@@ -58,21 +83,17 @@ type RootCauseResult = {
     root_cause?: string;
     confidence?: number;
     evidence?: unknown[];
+    key_evidence?: string[];
     primary_cause?: string;
     changed_fields?: string[];
     release_note_links?: string[];
     next_checks?: unknown[];
     ranked_drivers?: RankedDriver[];
+    driver_summaries?: DriverSummary[];
     release_note_assessments?: ReleaseNoteAssessment[];
-    contradictions?: Contradiction[];
     uncertainty_notes?: string[];
     uncertainty_summary?: string;
     validation_plan?: string[];
-    hypotheses?: ScoredHypothesis[];
-    scored_hypotheses?: ScoredHypothesis[];
-    counterfactuals?: Counterfactual[];
-    rejected_release_notes?: ReleaseNoteAssessment[];
-    final_decision?: FinalDecision;
     rows?: RootCauseTableRow[];
     detail_rows?: RootCauseTableRow[];
   };
@@ -86,6 +107,8 @@ type RootCauseResult = {
     llm_provider?: string;
   };
 };
+type RootCauseApiResponse = RootCauseResult | PendingReleaseNoteReview;
+type PostRunReleaseNoteDecision = { decision: "accept" | "partial" | "reject"; comment: string };
 
 const AGENT_STEPS = [
   {
@@ -134,42 +157,6 @@ const AGENT_STEPS = [
     ],
   },
   {
-    name: "Hypothesis Generation Agent",
-    description: "Turns changed fields into testable causal hypotheses for each affected position.",
-    processPreview: [
-      "Create one hypothesis per changed field and affected position.",
-      "Attach field movement, output movement, lineage role, and release-note candidates.",
-      "Send candidate hypotheses to the scoring agent.",
-    ],
-  },
-  {
-    name: "Hypothesis Scoring Agent",
-    description: "Scores each hypothesis by lineage proximity, magnitude, direction, and release-note support.",
-    processPreview: [
-      "Measure whether each field is direct or upstream in the lineage.",
-      "Score magnitude, direction alignment, and documentation support.",
-      "Rank hypotheses into primary, secondary, and weak candidates.",
-    ],
-  },
-  {
-    name: "Counterfactual What-If Agent",
-    description: "Estimates how much each candidate field could explain if it were the only changed driver.",
-    processPreview: [
-      "Group hypotheses by position.",
-      "Estimate each field's share of numeric changed-field movement.",
-      "Mark limited counterfactuals when values are non-numeric or incomplete.",
-    ],
-  },
-  {
-    name: "Release-Note Rejection Agent",
-    description: "Documents which broad release-note matches were rejected and why.",
-    processPreview: [
-      "Compare broad release-note candidates to accepted position-specific matches.",
-      "Reject notes that only match generic fields or only position text.",
-      "Expose rejected evidence so weak documentation support is visible.",
-    ],
-  },
-  {
     name: "Critic/Consistency Agent",
     description: "Checks the B - A math and records warnings when evidence is incomplete or inconsistent.",
     processPreview: [
@@ -179,41 +166,25 @@ const AGENT_STEPS = [
     ],
   },
   {
-    name: "Final Decision Agent",
-    description: "Selects the primary cause, secondary causes, rejected causes, and evidence strength.",
-    processPreview: [
-      "Review scored hypotheses, counterfactuals, release-note support, and rejection evidence.",
-      "Pick the highest-scoring hypothesis as the primary cause candidate.",
-      "Separate secondary and weak causes for final reporting.",
-    ],
-  },
-  {
-    name: "Evidence Merger Agent",
-    description: "Combines comparison, lineage, input changes, release notes, verification, and warnings into one evidence packet.",
-    processPreview: [
-      "Collect outputs from all previous agents.",
-      "Merge comparison facts, changed fields, release-note candidates, and warnings.",
-      "Assign the overall evidence classification.",
-    ],
-  },
-  {
     name: "Final Rootcause Report",
-    description: "Calls the configured LLM to write the final German root-cause report from the merged evidence only.",
+    description: "Merges the evidence and calls the configured LLM to write the final German root-cause report.",
     processPreview: [
-      "Prepare the compact final evidence payload.",
+      "Merge comparison, lineage, input changes, release notes, verification, and critic output.",
       "Ask the configured LLM for German JSON output grounded in supplied evidence.",
       "Normalize the final report, confidence, evidence, and next checks for display.",
     ],
   },
 ];
 
-const CLASSIFICATION_DEFINITIONS = [
-  { label: "Confirmed Cause", meaning: "Strongest label: changed fields were found, the evidence merged cleanly, and no major critic warning blocked the conclusion." },
-  { label: "Likely Cause", meaning: "A plausible cause was found, but one or more stages had limited evidence, missing documentation, or a warning." },
-  { label: "Partially supported", meaning: "Position-level label: changed candidate fields support the output movement, but this step alone is not full proof." },
-  { label: "Unable to verify", meaning: "The agent could see the output movement, but did not find enough changed lineage/source fields for that position." },
-  { label: "Unresolved Issue", meaning: "No strong changed-field evidence was found, so the workflow cannot identify a reliable cause." },
-];
+const AGENT_PROGRESS_LABELS: Record<string, string> = {
+  "Comparison Analyst Agent": "Comparison",
+  "Formula/Lineage Analyst Agent": "Lineage",
+  "Input-Change Agent": "Input changes",
+  "Release-Note Agent": "Release notes",
+  "Causal Verification Agent": "Verification",
+  "Critic/Consistency Agent": "Consistency",
+  "Final Rootcause Report": "Final report",
+};
 
 const displayValue = (value: unknown) => value === null || value === undefined ? "-" : String(value);
 const displayListItem = (value: unknown) => {
@@ -226,16 +197,6 @@ const displayListItem = (value: unknown) => {
     return String(value);
   }
 };
-const parseMaybeJson = (value: unknown): unknown => {
-  if (typeof value !== "string") return value;
-  const trimmed = value.trim();
-  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return value;
-  try {
-    return JSON.parse(trimmed);
-  } catch {
-    return value;
-  }
-};
 const displayFindingValue = (value: unknown) => {
   if (value === null || value === undefined || value === "") return "-";
   if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value);
@@ -244,21 +205,6 @@ const displayFindingValue = (value: unknown) => {
   } catch {
     return String(value);
   }
-};
-const renderReportEvidence = (value: unknown, index: number) => {
-  const parsed = parseMaybeJson(value);
-  if (!isRecord(parsed)) {
-    return <div key={`evidence-${index}`} className="flex gap-2 rounded-sm border border-[#252a33] bg-[#05080d] px-3 py-2 text-sm leading-6"><CheckCircle2 className="mt-1 h-4 w-4 shrink-0 text-green-600" /><span>{displayListItem(parsed)}</span></div>;
-  }
-  return (
-    <div key={`evidence-${index}`} className="rounded-sm border border-[#252a33] bg-[#05080d] p-3">
-      <div className="mb-2 flex items-center gap-2">
-        <CheckCircle2 className="h-4 w-4 text-green-600" />
-        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#687386]">Evidence item {index + 1}</p>
-      </div>
-      {renderSummaryRecord(parsed)}
-    </div>
-  );
 };
 const formatFindingLabel = (value: string) => value.replace(/_/g, " ");
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -351,35 +297,20 @@ const agentTakeaway = (stepName: string, stage?: AgentStage, isActive?: boolean,
     case "Input-Change Agent":
       return `${asNumber(asRecordValue(findings, "changed_source_fields"))} changed lineage/source field${asNumber(asRecordValue(findings, "changed_source_fields")) === 1 ? "" : "s"} found. ${summarizeChangedFields(asRecordValue(findings, "changed_fields_by_position"))}`;
     case "Release-Note Agent":
+      if (asRecordValue(findings, "review_required") === true || asRecordValue(findings, "review_type") === "release_notes") {
+        return `${asNumber(asRecordValue(findings, "candidate_count"))} release-note candidate${asNumber(asRecordValue(findings, "candidate_count")) === 1 ? "" : "s"} found. Human review is required before causal verification can continue.`;
+      }
       return `${asNumber(asRecordValue(findings, "release_notes_found"))} broad release-note candidate${asNumber(asRecordValue(findings, "release_notes_found")) === 1 ? "" : "s"} found. ${summarizeReleaseNoteCounts(asRecordValue(findings, "position_specific_release_notes"))}`;
     case "Causal Verification Agent":
       return `Verified ${asNumber(asRecordValue(findings, "positions_verified"))} position${asNumber(asRecordValue(findings, "positions_verified")) === 1 ? "" : "s"}; ${asNumber(asRecordValue(findings, "supported_positions"))} had changed candidate fields supporting the output movement.`;
-    case "Hypothesis Generation Agent":
-      return `Generated ${asNumber(asRecordValue(findings, "hypotheses_generated"))} testable causal hypothesis${asNumber(asRecordValue(findings, "hypotheses_generated")) === 1 ? "" : "es"} from changed fields, lineage roles, output movement, and release-note candidates.`;
-    case "Hypothesis Scoring Agent":
-      return Array.isArray(asRecordValue(findings, "scored_hypotheses")) && (asRecordValue(findings, "scored_hypotheses") as unknown[]).length > 0
-        ? `Scored and ranked ${(asRecordValue(findings, "scored_hypotheses") as unknown[]).length} hypotheses; the highest-ranked candidate is used by the final decision agent.`
-        : "No hypotheses were available to score.";
-    case "Counterfactual What-If Agent":
-      return Array.isArray(asRecordValue(findings, "counterfactuals"))
-        ? `Built ${(asRecordValue(findings, "counterfactuals") as unknown[]).length} what-if estimates showing how much each field could explain if isolated.`
-        : "No counterfactual estimates were returned.";
-    case "Release-Note Rejection Agent":
-      return Array.isArray(asRecordValue(findings, "rejected_release_notes"))
-        ? `Rejected or downgraded ${(asRecordValue(findings, "rejected_release_notes") as unknown[]).length} weak release-note links so generic matches do not look like proof.`
-        : "No rejected release-note list was returned.";
     case "Critic/Consistency Agent":
       return asNumber(asRecordValue(findings, "evidence_warnings")) > 0
         ? `Found ${asNumber(asRecordValue(findings, "evidence_warnings"))} evidence/math warning${asNumber(asRecordValue(findings, "evidence_warnings")) === 1 ? "" : "s"}; review the warning details before trusting the answer.`
         : `No B - A consistency issues found; direction checked as ${asText(asRecordValue(findings, "direction"))}.`;
-    case "Final Decision Agent":
-      return `Selected ${asText(asRecordValue(findings, "primary_cause"))} as primary cause with ${asText(asRecordValue(findings, "evidence_strength"))} evidence strength; secondary and weak causes were separated for the final report.`;
-    case "Evidence Merger Agent":
-      return `Merged the evidence into classification ${asText(asRecordValue(findings, "classification"))}; this combines comparison facts, changed fields, release-note support, and critic warnings.`;
     case "Final Rootcause Report":
       return asRecordValue(findings, "llm_error")
         ? `LLM report fell back because of: ${displayFindingValue(asRecordValue(findings, "llm_error"))}`
-        : `Final report completed with ${Math.round(asNumber(asRecordValue(findings, "confidence")))}% confidence using ${asText(asRecordValue(findings, "llm_model"))}.`;
+        : `Merged evidence and completed the final report with ${Math.round(asNumber(asRecordValue(findings, "confidence")))}% confidence using ${asText(asRecordValue(findings, "llm_model"))}.`;
     default:
       return "This agent completed its assigned evidence step.";
   }
@@ -391,7 +322,7 @@ const displayDifference = (value: number | null | undefined) => {
   return Number(value) > 0 ? `+${formatted}` : formatted;
 };
 const formatExplanation = (value: string | undefined) => {
-  if (!value) return "No explanation returned.";
+  if (!value) return "-";
   return value
     .replace(/\s*\n\s*/g, "\n")
     .replace(/([.!?])\s+(?=[A-Z0-9"'])/g, "$1\n");
@@ -456,8 +387,19 @@ export function RootCauseAIAgentsTabContent() {
   const [showUnchanged, setShowUnchanged] = useState(false);
   const [resultView, setResultView] = useState<"summary" | "lineage">("summary");
   const [loading, setLoading] = useState(false);
+  const [pendingReview, setPendingReview] = useState<PendingReleaseNoteReview | null>(null);
+  const [reviewDecisions, setReviewDecisions] = useState<Record<string, ReviewDecision>>({});
+  const [reviewSubmitting, setReviewSubmitting] = useState(false);
+  const [reviewFullscreenOpen, setReviewFullscreenOpen] = useState(false);
+  const [postRunReviewOpen, setPostRunReviewOpen] = useState(false);
+  const [postRunPrimaryCause, setPostRunPrimaryCause] = useState("");
+  const [postRunDecisions, setPostRunDecisions] = useState<Record<string, PostRunReleaseNoteDecision>>({});
+  const [postRunSubmitting, setPostRunSubmitting] = useState(false);
   const [traceExpanded, setTraceExpanded] = useState(false);
   const [activeAgentStep, setActiveAgentStep] = useState(0);
+  const agentCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const finalReportRef = useRef<HTMLDivElement | null>(null);
+  const previousLoading = useRef(false);
   const restoredState = useRef(false);
   const { toast } = useToast();
 
@@ -547,12 +489,41 @@ export function RootCauseAIAgentsTabContent() {
       setActiveAgentStep(0);
       return;
     }
-    setActiveAgentStep(0);
+    const releaseNoteIndex = AGENT_STEPS.findIndex((step) => step.name === "Release-Note Agent");
+    setActiveAgentStep(pendingReview ? Math.min(releaseNoteIndex + 1, AGENT_STEPS.length - 1) : 0);
     const interval = window.setInterval(() => {
       setActiveAgentStep((current) => Math.min(current + 1, AGENT_STEPS.length - 1));
     }, 1400);
     return () => window.clearInterval(interval);
   }, [loading]);
+
+  useEffect(() => {
+    const releaseNoteIndex = AGENT_STEPS.findIndex((step) => step.name === "Release-Note Agent");
+    const targetIndex = pendingReview && !loading ? releaseNoteIndex : loading ? activeAgentStep : -1;
+    if (targetIndex < 0) return;
+    const targetName = AGENT_STEPS[targetIndex]?.name;
+    if (!targetName) return;
+    const target = agentCardRefs.current[targetName];
+    target?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [activeAgentStep, loading, pendingReview]);
+
+  useEffect(() => {
+    const finishedRun = Boolean(result && !loading && previousLoading.current);
+    previousLoading.current = loading;
+    if (!finishedRun) return;
+    const frame = window.requestAnimationFrame(() => {
+      finalReportRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [loading, result]);
+
+  useEffect(() => {
+    if (!postRunSubmitting) return;
+    const frame = window.requestAnimationFrame(() => {
+      finalReportRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [postRunSubmitting]);
 
   const analyze = async () => {
     if (!executionA || !executionB || !outputColumn.trim()) {
@@ -562,6 +533,9 @@ export function RootCauseAIAgentsTabContent() {
     setLoading(true);
     setTraceExpanded(true);
     setResult(null);
+    setPendingReview(null);
+    setReviewDecisions({});
+    setReviewFullscreenOpen(false);
     try {
       const response = await fetch(API_ENDPOINTS.rootCauseAgentsAnalyze, {
         method: "POST",
@@ -574,7 +548,7 @@ export function RootCauseAIAgentsTabContent() {
         }),
       });
       const responseText = await response.text();
-      let data: RootCauseResult | { detail?: string } | null = null;
+      let data: RootCauseApiResponse | { detail?: string } | null = null;
       try {
         data = responseText ? JSON.parse(responseText) : null;
       } catch {
@@ -583,6 +557,15 @@ export function RootCauseAIAgentsTabContent() {
       if (!response.ok) {
         const detail = data && "detail" in data ? data.detail : undefined;
         throw new Error(detail || responseText || "Root-cause analysis failed");
+      }
+      if (data && "status" in data && data.status === "requires_review") {
+        const review = data as PendingReleaseNoteReview;
+        setPendingReview(review);
+        setReviewDecisions(Object.fromEntries(
+          review.release_note_candidates.map((candidate) => [candidate.candidate_id, { decision: "accept", comment: "" } satisfies ReviewDecision]),
+        ));
+        setTraceExpanded(true);
+        return;
       }
       if (!data || !("analysis" in data)) throw new Error("Root-cause analysis returned an invalid response");
       setResult(data);
@@ -598,6 +581,122 @@ export function RootCauseAIAgentsTabContent() {
     }
   };
 
+  const submitReleaseNoteReview = async () => {
+    if (!pendingReview) return;
+    setReviewSubmitting(true);
+    setReviewFullscreenOpen(false);
+    setLoading(true);
+    setTraceExpanded(true);
+    try {
+      const response = await fetch(API_ENDPOINTS.rootCauseAgentsAnalyze, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          execution_id_a: executionA,
+          execution_id_b: executionB,
+          output_column: outputColumn.trim(),
+          position: position === "all" ? null : position,
+          review_id: pendingReview.review_id,
+          human_review: {
+            review_type: "release_notes",
+            decisions: pendingReview.release_note_candidates.map((candidate) => ({
+              candidate_id: candidate.candidate_id,
+              position: candidate.position,
+              jira_id: candidate.jira_id,
+              workbook: candidate.workbook,
+              sheet: candidate.sheet,
+              decision: reviewDecisions[candidate.candidate_id]?.decision || "accept",
+              comment: reviewDecisions[candidate.candidate_id]?.comment || "",
+            })),
+          },
+        }),
+      });
+      const responseText = await response.text();
+      let data: RootCauseResult | { detail?: string } | null = null;
+      try {
+        data = responseText ? JSON.parse(responseText) : null;
+      } catch {
+        data = null;
+      }
+      if (!response.ok) {
+        const detail = data && "detail" in data ? data.detail : undefined;
+        throw new Error(detail || responseText || "Release-note review resume failed");
+      }
+      if (!data || !("analysis" in data)) throw new Error("Resume returned an invalid response");
+      setResult(data);
+      setPendingReview(null);
+      setReviewDecisions({});
+      setTraceExpanded(false);
+      setShowUnchanged(false);
+      setResultView("summary");
+      const keys = (data.stages?.deviations || []).map((row: { key: string }) => String(row.key));
+      setPositions(keys);
+    } catch (error) {
+      toast({ title: "Release-note review failed", description: error instanceof Error ? error.message : "Request failed", variant: "destructive" });
+    } finally {
+      setReviewSubmitting(false);
+      setLoading(false);
+    }
+  };
+
+  const openPostRunReview = () => {
+    if (!result) return;
+    setPostRunPrimaryCause(result.analysis.primary_cause || "");
+    setPostRunDecisions(Object.fromEntries(
+      (result.stages?.release_notes || []).map((_, index) => [String(index), { decision: "accept", comment: "" } satisfies PostRunReleaseNoteDecision]),
+    ));
+    setPostRunReviewOpen(true);
+  };
+
+  const submitPostRunReview = async () => {
+    if (!result?.review_id) return;
+    setPostRunSubmitting(true);
+    setPostRunReviewOpen(false);
+    try {
+      const response = await fetch(API_ENDPOINTS.rootCauseAgentsAnalyze, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          execution_id_a: executionA,
+          execution_id_b: executionB,
+          output_column: outputColumn.trim(),
+          position: position === "all" ? null : position,
+          review_id: result.review_id,
+          human_review: {
+            review_type: "post_run",
+            primary_cause_override: postRunPrimaryCause.trim(),
+            release_note_decisions: Object.entries(postRunDecisions).map(([index, decision]) => ({
+              index,
+              decision: decision.decision,
+              comment: decision.comment,
+            })),
+          },
+        }),
+      });
+      const responseText = await response.text();
+      let data: RootCauseResult | { detail?: string } | null = null;
+      try {
+        data = responseText ? JSON.parse(responseText) : null;
+      } catch {
+        data = null;
+      }
+      if (!response.ok) {
+        const detail = data && "detail" in data ? data.detail : undefined;
+        throw new Error(detail || responseText || "Post-run review failed");
+      }
+      if (!data || !("analysis" in data)) throw new Error("Post-run review returned an invalid response");
+      setResult(data);
+      setTraceExpanded(false);
+      setShowUnchanged(false);
+      setResultView("summary");
+      toast({ title: "Final report regenerated", description: "Your human review overrides were applied to the final report." });
+    } catch (error) {
+      toast({ title: "Post-run review failed", description: error instanceof Error ? error.message : "Request failed", variant: "destructive" });
+    } finally {
+      setPostRunSubmitting(false);
+    }
+  };
+
   const selectedCluster = (id: string) => clusters.find((cluster) => cluster.id === id);
   const confidence = Math.round(result?.analysis?.confidence ?? 0);
   const resultRows = result?.analysis?.rows || [];
@@ -608,27 +707,60 @@ export function RootCauseAIAgentsTabContent() {
   });
   const displayedRows = showUnchanged ? summaryRows : changedRows;
   const detailRows = result?.analysis?.detail_rows || [];
-  const agentStages = result?.agent_stages || [];
+  const agentStages = result?.agent_stages || pendingReview?.agent_stages || [];
   const stageByAgent = new Map(agentStages.map((stage) => [stage.agent, stage]));
   const finalReportLineage = summaryRows[0]?.lineage || [...(result?.stages?.dependencies || []), outputColumn].filter(Boolean).join(" -> ");
   const finalReportChangedFields = result?.analysis?.changed_fields?.length
     ? result.analysis.changed_fields
     : Array.from(new Set((result?.stages?.changed_source_fields || []).map((item) => item.field).filter(Boolean)));
   const finalReportReleaseNotes = result?.stages?.release_notes || [];
-  const finalReportEvidence = result?.analysis?.evidence || [];
   const finalReportNextChecks = result?.analysis?.next_checks || [];
   const rankedDrivers = result?.analysis?.ranked_drivers || [];
+  const driverSummaries = result?.analysis?.driver_summaries || [];
+  const keyEvidence = result?.analysis?.key_evidence || [];
   const releaseNoteAssessments = result?.analysis?.release_note_assessments || [];
-  const contradictions = result?.analysis?.contradictions || [];
   const uncertaintyNotes = result?.analysis?.uncertainty_notes || [];
   const validationPlan = result?.analysis?.validation_plan || [];
-  const scoredHypotheses = result?.analysis?.scored_hypotheses || [];
-  const counterfactuals = result?.analysis?.counterfactuals || [];
-  const rejectedReleaseNotes = result?.analysis?.rejected_release_notes || [];
-  const finalDecision = result?.analysis?.final_decision;
+  const releaseNoteAgentIndex = AGENT_STEPS.findIndex((step) => step.name === "Release-Note Agent");
+  const reviewPaused = Boolean(pendingReview && !loading);
+  const progressPercent = result
+    ? postRunSubmitting
+      ? 94
+      : 100
+    : reviewPaused
+      ? ((releaseNoteAgentIndex + 1) / AGENT_STEPS.length) * 100
+      : loading
+        ? ((activeAgentStep + 1) / AGENT_STEPS.length) * 100
+        : 0;
+  const progressLabel = result
+    ? postRunSubmitting
+      ? "Applying your review to the final root-cause report"
+      : "Root-cause analysis complete"
+    : reviewPaused
+      ? "Your review is needed for the release-note links"
+      : loading
+        ? activeAgentStep <= 0
+          ? "Building the evidence map"
+          : activeAgentStep === 1
+            ? "Tracing the calculation path"
+            : activeAgentStep === 2
+              ? "Comparing changed inputs"
+              : activeAgentStep === 3
+                ? "Checking release-note evidence"
+                : activeAgentStep >= AGENT_STEPS.length - 1
+                  ? "Finishing the root-cause report"
+                  : "Connecting the evidence"
+        : "Ready when you are";
+  const completedAgentSteps = result
+    ? AGENT_STEPS
+    : reviewPaused
+      ? AGENT_STEPS.slice(0, releaseNoteAgentIndex)
+      : loading
+        ? AGENT_STEPS.slice(0, activeAgentStep)
+        : [];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-20">
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2"><GitBranch className="h-5 w-5" /> RootCause analysis</CardTitle>
@@ -641,55 +773,57 @@ export function RootCauseAIAgentsTabContent() {
           <div className="space-y-2"><Label>Execution B</Label><Select value={executionB} onValueChange={setExecutionB}><SelectTrigger><SelectValue placeholder="Select execution" /></SelectTrigger><SelectContent>{executionsB.map((execution) => <SelectItem key={execution.execution_id} value={execution.execution_id}>{dateValue(execution.executed_date)}{execution.code_filename ? ` - ${execution.code_filename}` : ""}</SelectItem>)}</SelectContent></Select></div>
           <div className="space-y-2"><Label>Output field</Label><input className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={outputColumn} onChange={(event) => setOutputColumn(event.target.value)} placeholder="Carrying Amount" /></div>
           <div className="space-y-2"><Label>Position</Label><Select value={position} onValueChange={setPosition}><SelectTrigger><SelectValue placeholder="All positions" /></SelectTrigger><SelectContent><SelectItem value="all">All positions</SelectItem>{positions.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}</SelectContent></Select></div>
-          <div className="md:col-span-2"><Button onClick={() => void analyze()} disabled={loading}><Sparkles className="mr-2 h-4 w-4" />{loading ? "Analyzing..." : "Generate root cause analysis"}</Button></div>
+          <div className="md:col-span-2"><Button onClick={() => void analyze()} disabled={loading || reviewSubmitting}><Sparkles className="mr-2 h-4 w-4" />{loading ? "Analyzing..." : "Generate root cause analysis"}</Button></div>
         </CardContent>
       </Card>
 
-      {(loading || result) && <Card className="border-[#f5c400]/25 bg-[#0b0f15]">
+      {(loading || result || pendingReview) && <Card className="border-[#f5c400]/25 bg-[#0b0f15]">
         <CardHeader>
           <CardTitle className="flex items-center justify-between gap-3 text-base">
             <span className="flex items-center gap-2"><Bot className="h-5 w-5 text-[#f5c400]" /> Agent reasoning trace</span>
               <div className="flex items-center gap-2">
                 {result && !loading ? <Button size="sm" variant="outline" onClick={() => setTraceExpanded((current) => !current)}>{traceExpanded ? "Hide trace" : "Show trace"}</Button> : null}
-                <Badge variant="outline">{result?.agent_architecture?.orchestrator || "LangGraph StateGraph"}</Badge>
+                <Badge variant="outline">{result?.agent_architecture?.orchestrator || pendingReview?.agent_architecture?.orchestrator || "LangGraph StateGraph"}</Badge>
               </div>
           </CardTitle>
-          <p className="text-sm text-muted-foreground">{loading ? AGENT_STEPS[activeAgentStep]?.description : `${agentStages.length || AGENT_STEPS.length} graph stages completed`}</p>
+          <p className="text-sm text-muted-foreground">{loading ? AGENT_STEPS[activeAgentStep]?.description : pendingReview ? "Paused at the Release-Note Agent for human review" : `${agentStages.length || AGENT_STEPS.length} graph stages completed`}</p>
         </CardHeader>
           {(loading || traceExpanded) ? <CardContent className="space-y-3">
-          <div className="rounded-md border border-[#252a33] bg-[#080b10] p-3">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#f5c400]">Classification labels</p>
-            <div className="mt-3 grid gap-2 md:grid-cols-2">
-              {CLASSIFICATION_DEFINITIONS.map((item) => (
-                <div key={item.label} className="rounded-sm border border-[#252a33] bg-[#05080d] px-3 py-2">
-                  <p className="text-xs font-semibold text-[#f2f4f7]">{item.label}</p>
-                  <p className="mt-1 text-xs leading-5 text-[#8c96a8]">{item.meaning}</p>
-                </div>
-              ))}
-            </div>
-          </div>
           {AGENT_STEPS.map((step, index) => {
             const stage = stageByAgent.get(step.name);
             const isActive = loading && index === activeAgentStep;
             const isComplete = Boolean(stage) || (loading && index < activeAgentStep);
-            const status = stage?.status || (isComplete ? "completed" : isActive ? "running" : "queued");
+            const reviewWasSubmitted = reviewSubmitting && step.name === "Release-Note Agent";
+            const status = reviewWasSubmitted ? "completed" : stage?.status || (isComplete ? "completed" : isActive ? "running" : "queued");
+            const requiresReview = status === "requires_review";
             const steps = processSteps(stage, step.processPreview, isComplete, isActive);
             const findingEntries = stage?.findings ? Object.entries(stage.findings).filter(([key]) => key !== "process_steps") : [];
+            const takeaway = reviewWasSubmitted
+              ? "Release-note links reviewed. Continuing with causal verification."
+              : agentTakeaway(step.name, stage, isActive, isComplete);
             return (
-              <div key={step.name} className={`rounded-md border p-3 ${isActive ? "border-[#f5c400]/50 bg-[#f5c400]/10" : isComplete ? "border-emerald-500/25 bg-emerald-500/5" : "border-[#252a33] bg-[#080b10]"}`}>
+              <div ref={(node) => { agentCardRefs.current[step.name] = node; }} key={step.name} className={`rounded-md border p-3 ${requiresReview ? "border-amber-400/70 bg-amber-400/10" : isActive ? "border-[#f5c400]/50 bg-[#f5c400]/10" : isComplete ? "border-emerald-500/25 bg-emerald-500/5" : "border-[#252a33] bg-[#080b10]"}`}>
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 text-sm font-semibold text-[#f2f4f7]">
-                      {isActive ? <Loader2 className="h-4 w-4 animate-spin text-[#f5c400]" /> : isComplete ? <CheckCircle2 className="h-4 w-4 text-emerald-500" /> : <CircleX className="h-4 w-4 text-[#687386]" />}
+                      {requiresReview ? <AlertCircle className="h-4 w-4 text-amber-400" /> : isActive ? <Loader2 className="h-4 w-4 animate-spin text-[#f5c400]" /> : isComplete ? <CheckCircle2 className="h-4 w-4 text-emerald-500" /> : <CircleX className="h-4 w-4 text-[#687386]" />}
                       <span>{step.name}</span>
                     </div>
                     <p className="mt-1 text-xs leading-5 text-[#8c96a8]">{step.description}</p>
                   </div>
-                  <Badge variant={status === "completed" ? "default" : status === "running" ? "outline" : "secondary"}>{status}</Badge>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <Badge className={requiresReview ? "border-amber-400/60 bg-amber-400/15 text-amber-200" : undefined} variant={status === "completed" ? "default" : status === "running" ? "outline" : "secondary"}>{status}</Badge>
+                    {requiresReview && pendingReview ? (
+                      <Button size="sm" variant="outline" className="rootcause-review-button relative overflow-hidden border-amber-300 bg-gradient-to-r from-amber-300 via-yellow-400 to-amber-500 px-3 font-semibold text-[#16120a] shadow-[0_0_0_1px_rgba(251,191,36,0.22),0_5px_18px_rgba(245,158,11,0.24)] transition-[transform,box-shadow,filter] duration-300 hover:scale-[1.03] hover:border-yellow-200 hover:bg-gradient-to-r hover:from-amber-200 hover:via-yellow-300 hover:to-amber-400 hover:text-[#16120a] hover:shadow-[0_0_0_1px_rgba(253,224,71,0.38),0_8px_24px_rgba(245,158,11,0.34)] focus-visible:ring-2 focus-visible:ring-amber-300 focus-visible:ring-offset-2 focus-visible:ring-offset-[#111820]" onClick={() => setReviewFullscreenOpen(true)} disabled={reviewSubmitting}>
+                        <Eye className="mr-2 h-4 w-4" />
+                        Review
+                      </Button>
+                    ) : null}
+                  </div>
                 </div>
                 <div className="mt-3 rounded-sm border border-[#f5c400]/20 bg-[#f5c400]/5 px-3 py-2">
                   <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#f5c400]">Agent takeaway</p>
-                  <div className="mt-1 text-sm leading-5 text-[#f2f4f7]">{agentTakeaway(step.name, stage, isActive, isComplete)}</div>
+                  <div className="mt-1 text-sm leading-5 text-[#f2f4f7]">{takeaway}</div>
                 </div>
                 {steps.length > 0 ? (
                   <div className="mt-3 rounded-sm border border-[#252a33] bg-[#05080d] p-3">
@@ -719,9 +853,68 @@ export function RootCauseAIAgentsTabContent() {
           })}
         </CardContent> : null}
       </Card>}
+      {pendingReview && reviewFullscreenOpen && !loading && <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-background/95 p-4 backdrop-blur-sm md:p-8">
+        <div className="my-auto flex w-full max-w-7xl flex-col gap-4">
+          <div className="sticky top-0 z-10 flex items-center justify-between gap-4 border-b border-border bg-background/95 pb-4 backdrop-blur-sm">
+            <div className="min-w-0 flex-1">
+              <h3 className="truncate text-xl font-semibold text-foreground md:text-2xl">Release-note human review</h3>
+              <p className="mt-1 text-sm text-muted-foreground">Review links proposed by the Release-Note Agent before the LangGraph run continues.</p>
+            </div>
+            <button type="button" onClick={() => setReviewFullscreenOpen(false)} className="rounded-lg border border-border bg-card p-2 text-muted-foreground transition-all hover:bg-accent hover:text-foreground md:p-3" aria-label="Close release-note review">
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+          <div className="rounded-lg border border-[#f5c400]/40 bg-[#0b0f15] p-4 md:p-6">
+            <div className="mb-5 flex items-start gap-3 rounded-md border border-[#f5c400]/25 bg-[#f5c400]/5 p-4">
+              <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-[#f5c400]" />
+              <p className="text-sm leading-6 text-[#f2f4f7]">{pendingReview.message || "Approve, reject, or mark release-note links as partial before the LangGraph run continues."}</p>
+            </div>
+            <div className="space-y-3">
+              {pendingReview.release_note_candidates.map((candidate) => {
+                const decision = reviewDecisions[candidate.candidate_id] || { decision: "accept", comment: "" };
+                return (
+                  <div key={candidate.candidate_id} className="rounded-md border border-[#252a33] bg-[#05080d] p-3">
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                      <div className="min-w-0 space-y-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge variant="outline">{candidate.position}</Badge>
+                          <Badge variant="secondary">{candidate.jira_id ? `Jira ${candidate.jira_id}` : candidate.label || "Release note"}</Badge>
+                          {candidate.relevance_score !== null && candidate.relevance_score !== undefined ? <Badge variant="outline">Score {candidate.relevance_score}</Badge> : null}
+                        </div>
+                        <p className="text-sm font-medium text-[#f2f4f7]">{candidate.solution_description || "No solution description in evidence data"}</p>
+                        <p className="text-xs leading-5 text-[#8c96a8]">{[candidate.workbook, candidate.sheet].filter(Boolean).join(" / ") || "No workbook metadata"}</p>
+                        {candidate.matched_changed_fields?.length ? <p className="text-xs text-[#8c96a8]">Changed-field match: {candidate.matched_changed_fields.join(", ")}</p> : null}
+                        {candidate.record_text ? <p className="line-clamp-3 text-xs leading-5 text-[#8c96a8]">{candidate.record_text}</p> : null}
+                      </div>
+                      <div className="grid min-w-[220px] gap-2">
+                        <Select value={decision.decision} onValueChange={(value) => setReviewDecisions((current) => ({ ...current, [candidate.candidate_id]: { ...decision, decision: value as ReviewDecision["decision"] } }))}>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="accept">Accept link</SelectItem>
+                            <SelectItem value="partial">Mark partial</SelectItem>
+                            <SelectItem value="reject">Reject link</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <Textarea value={decision.comment} onChange={(event) => setReviewDecisions((current) => ({ ...current, [candidate.candidate_id]: { ...decision, comment: event.target.value } }))} placeholder="Optional review note" className="min-h-20" />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="mt-6 flex flex-wrap justify-end gap-2 border-t border-border pt-4">
+              <Button variant="outline" onClick={() => setReviewFullscreenOpen(false)} disabled={reviewSubmitting}>Close</Button>
+              <Button onClick={() => void submitReleaseNoteReview()} disabled={reviewSubmitting}>
+                {reviewSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}
+                Continue LangGraph run
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>}
       {loading && <Card><CardContent className="space-y-3 p-6"><Skeleton className="h-5 w-1/3" /><Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" /></CardContent></Card>}
       {result && !loading && <div className="flex flex-col gap-6">
-        <Card className="order-2">
+        <Card className={`relative order-2 overflow-hidden transition-[filter,opacity] duration-500 ${postRunSubmitting ? "pointer-events-none opacity-45 grayscale-[0.35]" : ""}`}>
           <CardHeader>
             <CardTitle className="flex items-center justify-between text-base">
               <span>Structured root-cause results</span>
@@ -755,6 +948,21 @@ export function RootCauseAIAgentsTabContent() {
               </Button>
             </div>
           </CardHeader>
+          {postRunSubmitting ? <div className="absolute inset-0 z-20 flex min-h-[520px] items-center justify-center bg-[#080b10]/70 p-6 backdrop-blur-[3px]" aria-hidden="true">
+            <div className="flex min-w-[min(360px,calc(100vw-48px))] flex-col items-center gap-5 rounded-2xl border border-[#f5c400]/45 bg-[#111820]/98 px-10 py-9 text-center shadow-[0_20px_60px_rgba(0,0,0,0.58),0_0_40px_rgba(245,196,0,0.1)]">
+              <div className="relative flex h-20 w-20 items-center justify-center">
+                <span className="absolute inset-0 animate-ping rounded-full border border-[#f5c400]/30 bg-[#f5c400]/10" />
+                <span className="absolute inset-1 animate-[spin_2.8s_linear_infinite] rounded-full border-2 border-transparent border-t-[#f5c400] border-r-[#f5c400]/45" />
+                <span className="absolute inset-3 rounded-full border border-[#f5c400]/25" />
+                <Loader2 className="relative h-8 w-8 animate-spin text-[#f5c400]" />
+              </div>
+              <div>
+                <p className="text-base font-semibold text-[#f2f4f7]">Refreshing structured results</p>
+                <p className="mt-2 text-sm leading-6 text-[#aeb8c7]">Updating the table with the reviewed final explanation.</p>
+              </div>
+              <div className="h-1 w-40 overflow-hidden rounded-full bg-[#252a33]"><div className="post-run-loader-rail h-full w-1/2 rounded-full bg-[#f5c400] shadow-[0_0_12px_rgba(245,196,0,0.8)]" /></div>
+            </div>
+          </div> : null}
           {resultView === "summary" && <CardContent>
             <div className="w-full overflow-hidden rounded-md border border-border [&_[data-slot=table-container]]:overflow-x-hidden">
               <Table className="w-full table-fixed">
@@ -776,7 +984,7 @@ export function RootCauseAIAgentsTabContent() {
                     <TableRow key={`${row.position}-${row.output}`}>
                       <TableCell className="min-w-0 whitespace-normal break-words align-top font-medium">{row.position}</TableCell>
                       <TableCell className="min-w-0 whitespace-normal break-words align-top">{row.output}<div className={`text-xs ${differenceClassName(row.difference)}`}>{displayDifference(row.difference)}</div></TableCell>
-                      <TableCell className="min-w-0 whitespace-normal break-words align-top">{displayFullLineage(row.lineage) || "-"}</TableCell>
+                      <TableCell className="min-w-0 whitespace-normal break-words align-top">{row.lineage ? renderLineageChain(row.lineage) : "-"}</TableCell>
                       <TableCell className="min-w-0 whitespace-normal break-words align-top">{row.input || "-"}</TableCell>
                       <TableCell className="min-w-0 whitespace-normal break-words align-top">{row.release_note || "-"}</TableCell>
                       <TableCell className="min-w-0 whitespace-normal break-words align-top">
@@ -901,86 +1109,146 @@ export function RootCauseAIAgentsTabContent() {
             )}
           </DialogContent>
         </Dialog>
-        <Card className="order-1 border-[#f5c400]/25 bg-[#0b0f15]">
+        {postRunReviewOpen && result && <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-background/95 p-4 backdrop-blur-sm md:p-8">
+          <div className="my-auto flex w-full max-w-6xl flex-col gap-4">
+            <div className="sticky top-0 z-10 flex items-center justify-between gap-4 border-b border-border bg-background/95 pb-4 backdrop-blur-sm">
+              <div className="min-w-0 flex-1">
+                <h3 className="truncate text-xl font-semibold text-foreground md:text-2xl">Post-run human review</h3>
+                <p className="mt-1 text-sm text-muted-foreground">Adjust the report inputs, then regenerate only the Final Rootcause Report.</p>
+              </div>
+              <button type="button" onClick={() => setPostRunReviewOpen(false)} className="rounded-lg border border-border bg-card p-2 text-muted-foreground transition-all hover:bg-accent hover:text-foreground md:p-3" aria-label="Close post-run review">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="rounded-lg border border-[#f5c400]/40 bg-[#0b0f15] p-4 md:p-6">
+              <div className="mb-5 rounded-md border border-[#f5c400]/25 bg-[#f5c400]/5 p-4">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#f5c400]">Primary cause override</p>
+                <p className="mt-1 text-xs leading-5 text-[#8c96a8]">The final report will use this human wording as its primary-cause anchor.</p>
+                <Textarea value={postRunPrimaryCause} onChange={(event) => setPostRunPrimaryCause(event.target.value)} className="mt-3 min-h-24" placeholder="Enter the primary cause you want the final report to explain..." />
+              </div>
+              <div className="space-y-3">
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#f5c400]">Release-note matches</p>
+                  <p className="mt-1 text-xs text-[#8c96a8]">Accept, mark partial, or reject each linked release note before regeneration.</p>
+                </div>
+                {finalReportReleaseNotes.map((note, index) => {
+                  const decision = postRunDecisions[String(index)] || { decision: "accept", comment: "" };
+                  return (
+                    <div key={`${note.workbook || "workbook"}-${note.sheet || "sheet"}-${note.jira_id || index}`} className="rounded-md border border-[#252a33] bg-[#05080d] p-3">
+                      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                        <div className="min-w-0 space-y-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge variant="outline">{note.jira_id || `Match ${index + 1}`}</Badge>
+                            <Badge variant="secondary">{note.sheet || "Release note"}</Badge>
+                          </div>
+                          <p className="text-sm font-medium text-[#f2f4f7]">{note.solution_description || "No solution description available"}</p>
+                          <p className="text-xs text-[#8c96a8]">{note.workbook || "Unknown workbook"}</p>
+                          {note.matched_fields?.length ? <div className="flex flex-wrap gap-1.5">{note.matched_fields.map((field) => <Badge key={`${index}-${field}`} variant="outline" className="rounded-sm text-[11px]">{field}</Badge>)}</div> : null}
+                        </div>
+                        <div className="grid min-w-[220px] gap-2">
+                          <Select value={decision.decision} onValueChange={(value) => setPostRunDecisions((current) => ({ ...current, [String(index)]: { ...decision, decision: value as PostRunReleaseNoteDecision["decision"] } }))}>
+                            <SelectTrigger><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="accept">Accept link</SelectItem>
+                              <SelectItem value="partial">Mark partial</SelectItem>
+                              <SelectItem value="reject">Reject link</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <Textarea value={decision.comment} onChange={(event) => setPostRunDecisions((current) => ({ ...current, [String(index)]: { ...decision, comment: event.target.value } }))} placeholder="Optional review note" className="min-h-20" />
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+                {!finalReportReleaseNotes.length ? <p className="rounded-md border border-[#252a33] bg-[#05080d] p-4 text-sm text-muted-foreground">No release-note matches are currently linked.</p> : null}
+              </div>
+              <div className="mt-6 flex flex-wrap justify-end gap-2 border-t border-border pt-4">
+                <Button variant="outline" onClick={() => setPostRunReviewOpen(false)} disabled={postRunSubmitting}>Cancel</Button>
+                <Button onClick={() => void submitPostRunReview()} disabled={postRunSubmitting}>
+                  {postRunSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
+                  Regenerate final report
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>}
+        <Card ref={finalReportRef} className="relative order-1 scroll-mt-6 overflow-hidden border-[#f5c400]/25 bg-[#0b0f15]">
           <CardHeader>
             <CardTitle className="flex items-center justify-between gap-3 text-base">
               <span className="flex items-center gap-2"><Sparkles className="h-5 w-5 text-[#f5c400]" /> Final Rootcause Report</span>
-              <Badge variant={confidence >= 75 ? "default" : "outline"}>{confidence}% confidence</Badge>
+              <div className="flex items-center gap-2">
+                <Badge variant={confidence >= 75 ? "default" : "outline"}>{confidence}% confidence</Badge>
+                {result.review_id ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button size="sm" variant="outline" className="rootcause-review-button relative overflow-hidden border-amber-300 bg-gradient-to-r from-amber-300 via-yellow-400 to-amber-500 px-3 font-semibold text-[#16120a] shadow-[0_0_0_1px_rgba(251,191,36,0.22),0_5px_18px_rgba(245,158,11,0.24)] transition-[transform,box-shadow,filter] duration-300 hover:scale-[1.03] hover:border-yellow-200 hover:bg-gradient-to-r hover:from-amber-200 hover:via-yellow-300 hover:to-amber-400 hover:text-[#16120a] hover:shadow-[0_0_0_1px_rgba(253,224,71,0.38),0_8px_24px_rgba(245,158,11,0.34)] focus-visible:ring-2 focus-visible:ring-amber-300 focus-visible:ring-offset-2 focus-visible:ring-offset-[#111820]" onClick={openPostRunReview} disabled={postRunSubmitting}>
+                        <Eye className="mr-2 h-4 w-4" />
+                        Post-run human review
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom" sideOffset={8} className="max-w-xs leading-5">
+                      Edit the primary cause and release-note decisions in the completed report, then regenerate only the final report. Earlier agent evidence remains unchanged.
+                    </TooltipContent>
+                  </Tooltip>
+                ) : null}
+              </div>
             </CardTitle>
             <p className="text-sm text-muted-foreground">Consolidated AI-agent report built from comparison, lineage, changed fields, release-note evidence, verification, and final LLM synthesis.</p>
           </CardHeader>
+          {postRunSubmitting ? <div className="absolute inset-0 z-20 flex min-h-[520px] items-center justify-center bg-[#080b10]/82 p-6 backdrop-blur-[3px]" aria-live="polite" aria-busy="true">
+            <div className="flex min-w-[min(360px,calc(100vw-48px))] flex-col items-center gap-5 rounded-2xl border border-[#f5c400]/45 bg-[#111820]/98 px-10 py-9 text-center shadow-[0_20px_60px_rgba(0,0,0,0.58),0_0_40px_rgba(245,196,0,0.1)]">
+              <div className="relative flex h-20 w-20 items-center justify-center">
+                <span className="absolute inset-0 animate-ping rounded-full border border-[#f5c400]/30 bg-[#f5c400]/10" />
+                <span className="absolute inset-1 animate-[spin_2.8s_linear_infinite] rounded-full border-2 border-transparent border-t-[#f5c400] border-r-[#f5c400]/45" />
+                <span className="absolute inset-3 rounded-full border border-[#f5c400]/25" />
+                <Loader2 className="relative h-8 w-8 animate-spin text-[#f5c400]" />
+              </div>
+              <div>
+                <p className="text-base font-semibold text-[#f2f4f7]">Updating the final report</p>
+                <p className="mt-2 text-sm leading-6 text-[#aeb8c7]">Applying your human review and regenerating the final AI explanation.</p>
+              </div>
+              <div className="h-1 w-40 overflow-hidden rounded-full bg-[#252a33]">
+                <div className="post-run-loader-rail h-full w-1/2 rounded-full bg-[#f5c400] shadow-[0_0_12px_rgba(245,196,0,0.8)]" />
+              </div>
+            </div>
+          </div> : null}
           <CardContent className="space-y-5">
             <div className="grid gap-3 md:grid-cols-4">
-              <div className="rounded-sm border border-[#252a33] bg-[#05080d] p-3"><p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#687386]">Output field</p><p className="mt-1 text-sm font-semibold text-[#f2f4f7]">{outputColumn}</p></div>
-              <div className="rounded-sm border border-[#252a33] bg-[#05080d] p-3"><p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#687386]">Affected positions</p><p className="mt-1 text-sm font-semibold text-[#f2f4f7]">{summaryRows.length}</p></div>
-              <div className="rounded-sm border border-[#252a33] bg-[#05080d] p-3"><p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#687386]">Changed fields</p><p className="mt-1 text-sm font-semibold text-[#f2f4f7]">{finalReportChangedFields.length}</p></div>
-              <div className="rounded-sm border border-[#252a33] bg-[#05080d] p-3"><p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#687386]">Release-note matches</p><p className="mt-1 text-sm font-semibold text-[#f2f4f7]">{finalReportReleaseNotes.length}</p></div>
+              <div className="rounded-sm border border-[#252a33] bg-[#05080d] p-3"><p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#687386]">Primary cause</p><p className="mt-1 text-base font-semibold text-[#f5c400]">{result.analysis.primary_cause || "-"}</p></div>
+              <div className="rounded-sm border border-[#252a33] bg-[#05080d] p-3"><p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#687386]">Output</p><p className="mt-1 text-sm font-semibold text-[#f2f4f7]">{outputColumn}</p></div>
+              <div className="rounded-sm border border-[#252a33] bg-[#05080d] p-3"><p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#687386]">Positions</p><p className="mt-1 text-sm font-semibold text-[#f2f4f7]">{summaryRows.length}</p></div>
+              <div className="rounded-sm border border-[#252a33] bg-[#05080d] p-3"><p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#687386]">Release notes</p><p className="mt-1 text-sm font-semibold text-[#f2f4f7]">{finalReportReleaseNotes.length}</p></div>
             </div>
 
             <div className="rounded-sm border border-[#252a33] bg-[#05080d] p-4">
               <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#f5c400]">Executive conclusion</p>
-              <div className="mt-3 rounded-sm border border-[#f5c400]/25 bg-[#f5c400]/5 p-3">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#f5c400]">Primary cause</p>
-                <p className="mt-1 text-lg font-semibold text-[#f2f4f7]">{result.analysis.primary_cause || finalDecision?.primary_cause || rankedDrivers[0]?.field || "Unresolved"}</p>
-                {finalDecision ? <p className="mt-2 text-xs leading-5 text-[#cbd5e1]">Evidence strength: <span className="font-semibold text-[#f5c400]">{finalDecision.evidence_strength || "-"}</span>{finalDecision.primary_score !== undefined ? `, score ${finalDecision.primary_score}` : ""}{finalDecision.primary_position ? `, strongest at ${finalDecision.primary_position}` : ""}.</p> : null}
-              </div>
-              <p className="mt-3 whitespace-pre-line text-sm leading-6 text-[#f2f4f7]">{result.analysis.root_cause || "No root cause identified."}</p>
+              <p className="mt-3 whitespace-pre-line text-sm leading-6 text-[#f2f4f7]">{result.analysis.root_cause || "-"}</p>
               {result.analysis.explanation && result.analysis.explanation !== result.analysis.root_cause ? <p className="mt-3 whitespace-pre-line border-t border-[#252a33] pt-3 text-sm leading-6 text-[#cbd5e1]">{result.analysis.explanation}</p> : null}
-              {finalDecision?.decision_rationale ? <p className="mt-3 whitespace-pre-line border-t border-[#252a33] pt-3 text-sm leading-6 text-[#cbd5e1]">Decision rationale: {finalDecision.decision_rationale}</p> : null}
             </div>
 
-            <div className="grid gap-4 lg:grid-cols-2">
+            <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
               <div className="rounded-sm border border-[#252a33] bg-[#05080d] p-4">
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#687386]">Hypothesis scoring board</p><Badge variant="outline">{scoredHypotheses.length} hypotheses</Badge></div>
-                <div className="space-y-2">
-                  {scoredHypotheses.slice(0, 8).map((item, index) => <div key={`${item.id || index}-${item.field}`} className="rounded-sm border border-[#252a33] bg-[#080b10] p-3"><div className="flex flex-wrap items-center justify-between gap-2"><div className="flex flex-wrap items-center gap-2"><Badge variant="secondary">#{item.rank || index + 1}</Badge><span className="font-semibold text-[#f2f4f7]">{item.field || "Unknown field"}</span><span className="text-xs text-[#8c96a8]">{item.position || "-"}</span>{item.generation_source ? <Badge variant="outline">{item.generation_source}</Badge> : null}</div><Badge variant={asNumber(item.score) >= 70 ? "default" : "outline"}>{item.score ?? "-"}</Badge></div><p className="mt-2 text-sm leading-6 text-[#cbd5e1]">{item.hypothesis || "No hypothesis text returned."}</p>{item.causal_mechanism ? <p className="mt-2 text-sm leading-6 text-[#f2f4f7]">Mechanism: {item.causal_mechanism}</p> : null}{item.evidence_to_check ? <p className="mt-2 text-xs leading-5 text-[#cbd5e1]">Evidence to check: {item.evidence_to_check}</p> : null}{item.rejection_risk ? <p className="mt-2 text-xs leading-5 text-amber-300">Rejection risk: {item.rejection_risk}</p> : null}{item.confidence_basis ? <p className="mt-2 text-xs leading-5 text-[#8c96a8]">Confidence basis: {item.confidence_basis}</p> : null}<p className="mt-2 border-t border-[#252a33] pt-2 text-xs leading-5 text-[#8c96a8]">{item.score_reason || "No score rationale returned."}</p>{item.release_note_candidates?.length ? <p className="mt-2 text-xs text-[#f5c400]">Release-note candidates: {item.release_note_candidates.join(", ")}</p> : null}</div>)}
-                  {!scoredHypotheses.length ? <p className="text-sm text-muted-foreground">No scored hypotheses were returned.</p> : null}
+                <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#687386]">Key evidence</p>
+                <div className="space-y-3">
+                  <div>{renderLineageChain(finalReportLineage)}</div>
+                  <div className="flex flex-wrap gap-2">{finalReportChangedFields.length ? finalReportChangedFields.map((field) => <Badge key={field} variant="secondary" className="rounded-sm">{field}</Badge>) : <span className="text-sm text-muted-foreground">-</span>}</div>
+                  {keyEvidence.map((item, index) => <div key={`key-evidence-${index}`} className="rounded-sm border border-[#252a33] bg-[#080b10] px-3 py-2 text-sm leading-6 text-[#f2f4f7]">{item}</div>)}
+                  {driverSummaries.slice(0, 3).map((driver, index) => <div key={`${driver.field || index}-summary`} className="rounded-sm border border-[#252a33] bg-[#080b10] px-3 py-2"><div className="flex flex-wrap items-center gap-2"><Badge variant="outline">#{index + 1}</Badge><span className="font-semibold text-[#f2f4f7]">{driver.field || "-"}</span>{driver.support ? <Badge variant="secondary" className="rounded-sm">{driver.support}</Badge> : null}</div>{driver.summary ? <p className="mt-1 text-xs leading-5 text-[#cbd5e1]">{driver.summary}</p> : null}{driver.positions?.length ? <div className="mt-2 flex flex-wrap gap-1.5">{driver.positions.map((position) => <Badge key={`${driver.field}-${position}`} variant="outline" className="rounded-sm text-[11px]">{position}</Badge>)}</div> : null}</div>)}
                 </div>
               </div>
+
               <div className="rounded-sm border border-[#252a33] bg-[#05080d] p-4">
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#687386]">Counterfactual what-if analysis</p><Badge variant="outline">{counterfactuals.length} estimates</Badge></div>
+                <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#687386]">Validation and uncertainty</p>
                 <div className="space-y-2">
-                  {counterfactuals.slice(0, 8).map((item, index) => <div key={`${item.hypothesis_id || index}-${item.field}`} className="rounded-sm border border-[#252a33] bg-[#080b10] p-3"><div className="flex flex-wrap items-center justify-between gap-2"><div className="flex flex-wrap items-center gap-2"><span className="font-semibold text-[#f2f4f7]">{item.field || "Unknown field"}</span>{item.generation_source ? <Badge variant="outline">{item.generation_source}</Badge> : null}</div><Badge variant="outline">{item.estimated_explained_share ?? "limited"}{item.estimated_explained_share !== null && item.estimated_explained_share !== undefined ? "%" : ""}</Badge></div><p className="mt-1 text-xs text-[#8c96a8]">{item.position || "-"} | output {displayValue(item.output_difference)} | field {displayValue(item.field_difference)}</p><p className="mt-2 text-sm leading-6 text-[#cbd5e1]">{item.interpretation || "No counterfactual interpretation returned."}</p>{item.caveat ? <p className="mt-2 text-xs leading-5 text-amber-300">Caveat: {item.caveat}</p> : null}{item.validation_test ? <p className="mt-2 text-xs leading-5 text-[#f2f4f7]">Validation test: {item.validation_test}</p> : null}{item.estimated_output_effect_if_only_this_changed !== null && item.estimated_output_effect_if_only_this_changed !== undefined ? <p className="mt-2 text-xs text-[#f5c400]">Estimated isolated output effect: {displayDifference(item.estimated_output_effect_if_only_this_changed)}</p> : null}</div>)}
-                  {!counterfactuals.length ? <p className="text-sm text-muted-foreground">No counterfactual estimates were returned.</p> : null}
+                  {(validationPlan.length ? validationPlan : finalReportNextChecks.map(displayListItem)).slice(0, 4).map((item, index) => <div key={`validation-${index}`} className="flex gap-3 rounded-sm border border-[#252a33] bg-[#080b10] px-3 py-2"><span className="flex h-5 min-w-5 items-center justify-center rounded-full border border-[#f5c400]/30 bg-[#f5c400]/10 text-[10px] font-bold text-[#f5c400]">{index + 1}</span><p className="text-sm leading-6 text-[#f2f4f7]">{item}</p></div>)}
+                  {uncertaintyNotes.slice(0, 2).map((item, index) => <div key={`uncertainty-${index}`} className="flex gap-2 rounded-sm border border-amber-500/25 bg-amber-500/5 px-3 py-2 text-sm leading-6"><AlertCircle className="mt-1 h-4 w-4 shrink-0 text-amber-600" /><span>{item}</span></div>)}
                 </div>
               </div>
             </div>
 
             <div className="rounded-sm border border-[#252a33] bg-[#05080d] p-4">
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#687386]">Ranked causal drivers</p>
-                <Badge variant="outline">{rankedDrivers.length} ranked</Badge>
-              </div>
-              <div className="grid gap-3 lg:grid-cols-3">
-                {rankedDrivers.map((driver) => (
-                  <div key={`${driver.rank}-${driver.field}`} className="rounded-sm border border-[#252a33] bg-[#080b10] p-3">
-                    <div className="flex items-center justify-between gap-2"><Badge variant="secondary">#{driver.rank || "-"}</Badge><span className="text-xs text-[#8c96a8]">{driver.occurrences || 0} changes</span></div>
-                    <p className="mt-2 text-base font-semibold text-[#f2f4f7]">{driver.field}</p>
-                    <p className="mt-2 text-xs leading-5 text-[#cbd5e1]">{driver.why_it_matters || "No driver rationale returned."}</p>
-                    {driver.positions?.length ? <div className="mt-3 flex flex-wrap gap-1.5">{driver.positions.map((position) => <Badge key={`${driver.field}-${position}`} variant="outline" className="rounded-sm text-[11px]">{position}</Badge>)}</div> : null}
-                    {driver.release_note_support?.length ? <p className="mt-2 text-xs text-[#f5c400]">Release-note support: {driver.release_note_support.join(", ")}</p> : <p className="mt-2 text-xs text-[#8c96a8]">No direct release-note support.</p>}
-                  </div>
-                ))}
-                {!rankedDrivers.length ? <p className="text-sm text-muted-foreground">No causal drivers were ranked.</p> : null}
-              </div>
-            </div>
-
-            <div className="rounded-sm border border-[#252a33] bg-[#05080d] p-4">
-              <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#687386]">Calculation lineage</p>
-              {renderLineageChain(finalReportLineage)}
-            </div>
-
-            <div className="rounded-sm border border-[#252a33] bg-[#05080d] p-4">
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#687386]">Changed lineage/source fields</p>
-                <Badge variant="outline">{finalReportChangedFields.length} total</Badge>
-              </div>
-              {finalReportChangedFields.length ? <div className="flex flex-wrap gap-2">{finalReportChangedFields.map((field) => <Badge key={field} variant="secondary" className="rounded-sm">{field}</Badge>)}</div> : <p className="text-sm text-muted-foreground">No changed fields were returned.</p>}
-            </div>
-
-            <div className="rounded-sm border border-[#252a33] bg-[#05080d] p-4">
-              <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#687386]">Position-level report</p>
-              <div className="grid gap-3">
+              <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#687386]">Affected positions</p>
+              <div className="grid gap-3 md:grid-cols-2">
                 {summaryRows.map((row) => (
                   <div key={`${row.position}-${row.output}-final-report`} className="rounded-sm border border-[#252a33] bg-[#080b10] p-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -993,71 +1261,175 @@ export function RootCauseAIAgentsTabContent() {
                       <div><p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#687386]">Inputs</p><p className="mt-1 text-sm text-[#f2f4f7]">{row.input || "-"}</p></div>
                       <div><p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#687386]">Release note</p><p className="mt-1 text-sm text-[#f5c400]">{row.release_note || "-"}</p></div>
                     </div>
-                    <p className="mt-3 whitespace-pre-line border-t border-[#252a33] pt-3 text-sm leading-6 text-[#cbd5e1]">{formatExplanation(row.explanation)}</p>
+                    {row.explanation ? <p className="mt-3 line-clamp-4 whitespace-pre-line border-t border-[#252a33] pt-3 text-sm leading-6 text-[#cbd5e1]">{formatExplanation(row.explanation)}</p> : null}
                   </div>
                 ))}
-                {!summaryRows.length ? <p className="text-sm text-muted-foreground">No position-level report rows were returned.</p> : null}
+                {!summaryRows.length ? <p className="text-sm text-muted-foreground">-</p> : null}
               </div>
             </div>
 
-            <div className="grid gap-4 lg:grid-cols-2">
-              <div className="rounded-sm border border-[#252a33] bg-[#05080d] p-4">
-                <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#687386]">Evidence used by final report</p>
-                <div className="space-y-2">{finalReportEvidence.length ? finalReportEvidence.map(renderReportEvidence) : <p className="text-sm text-muted-foreground">No evidence items were returned.</p>}</div>
-              </div>
-              <div className="rounded-sm border border-[#252a33] bg-[#05080d] p-4">
-                <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#687386]">Uncertainty and contradictions</p>
-                <div className="space-y-2">
-                  {contradictions.map((item, index) => <div key={`contradiction-${index}`} className="rounded-sm border border-amber-500/30 bg-amber-500/5 px-3 py-2"><div className="flex items-center gap-2"><AlertCircle className="h-4 w-4 text-amber-500" /><Badge variant="outline">{item.severity || "review"}</Badge><span className="text-xs text-[#8c96a8]">{item.source || "Agent"}</span></div><p className="mt-2 text-sm leading-6 text-[#f2f4f7]">{item.position ? `${item.position}: ` : ""}{item.issue || "Review required."}</p></div>)}
-                  {uncertaintyNotes.map((item, index) => <div key={`uncertainty-${index}`} className="flex gap-2 rounded-sm border border-[#252a33] bg-[#080b10] px-3 py-2 text-sm leading-6"><AlertCircle className="mt-1 h-4 w-4 shrink-0 text-amber-600" /><span>{item}</span></div>)}
-                  {!contradictions.length && !uncertaintyNotes.length ? <p className="text-sm text-muted-foreground">No uncertainty items were returned.</p> : null}
-                </div>
-              </div>
-            </div>
-
-            <div className="grid gap-4 lg:grid-cols-2">
+            <div className="grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
               <div className="rounded-sm border border-[#252a33] bg-[#05080d] p-4">
                 <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#687386]">Release-note support assessment</p>
                 <div className="space-y-2">
-                  {releaseNoteAssessments.map((item, index) => <div key={`release-assessment-${index}`} className="rounded-sm border border-[#252a33] bg-[#080b10] p-3"><div className="flex flex-wrap items-center gap-2"><Badge variant="secondary">{item.status || "assessment"}</Badge><span className="text-xs text-[#8c96a8]">{item.position || "position"}</span>{item.jira_id ? <Badge variant="outline">{item.jira_id}</Badge> : null}</div><p className="mt-2 text-sm leading-6 text-[#f2f4f7]">{item.reason || item.note || "No rationale returned."}</p>{item.matched_changed_fields?.length ? <div className="mt-2 flex flex-wrap gap-1.5">{item.matched_changed_fields.map((field) => <Badge key={`${index}-${field}`} variant="outline" className="rounded-sm text-[11px]">{field}</Badge>)}</div> : null}{item.solution_description ? <p className="mt-2 text-xs leading-5 text-[#cbd5e1]">{item.solution_description}</p> : null}</div>)}
-                  {!releaseNoteAssessments.length ? <p className="text-sm text-muted-foreground">No release-note assessments were returned.</p> : null}
+                  {releaseNoteAssessments.slice(0, 4).map((item, index) => <div key={`release-assessment-${index}`} className="rounded-sm border border-[#252a33] bg-[#080b10] p-3"><div className="flex flex-wrap items-center gap-2"><Badge variant="secondary">{item.status || "-"}</Badge><span className="text-xs text-[#8c96a8]">{item.position || "-"}</span>{item.jira_id ? <Badge variant="outline">{item.jira_id}</Badge> : null}</div>{item.assessment ? <p className="mt-2 text-sm leading-6 text-[#f2f4f7]">{item.assessment}</p> : null}{item.solution_description ? <p className="mt-2 line-clamp-3 text-xs leading-5 text-[#cbd5e1]">{item.solution_description}</p> : null}</div>)}
+                  {!releaseNoteAssessments.length ? <p className="text-sm text-muted-foreground">-</p> : null}
                 </div>
               </div>
               <div className="rounded-sm border border-[#252a33] bg-[#05080d] p-4">
-                <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#687386]">Validation plan</p>
-                <div className="space-y-2">{(validationPlan.length ? validationPlan : finalReportNextChecks.map(displayListItem)).map((item, index) => <div key={`validation-${index}`} className="flex gap-3 rounded-sm border border-[#252a33] bg-[#080b10] px-3 py-2"><span className="flex h-5 min-w-5 items-center justify-center rounded-full border border-[#f5c400]/30 bg-[#f5c400]/10 text-[10px] font-bold text-[#f5c400]">{index + 1}</span><p className="text-sm leading-6 text-[#f2f4f7]">{item}</p></div>)}</div>
-              </div>
-            </div>
-
-            <div className="rounded-sm border border-[#252a33] bg-[#05080d] p-4">
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#687386]">Rejected or weak release-note matches</p><Badge variant="outline">{rejectedReleaseNotes.length} rejected</Badge></div>
-              <div className="grid max-h-72 gap-2 overflow-y-auto pr-1 md:grid-cols-2">
-                {rejectedReleaseNotes.map((item, index) => <div key={`rejected-note-${index}`} className="rounded-sm border border-[#252a33] bg-[#080b10] p-3"><div className="flex flex-wrap items-center gap-2"><Badge variant="outline">{item.position || "position"}</Badge>{item.jira_id ? <Badge variant="secondary">{item.jira_id}</Badge> : null}<span className="text-xs text-[#8c96a8]">{item.workbook || "release note"}</span></div><p className="mt-2 text-sm leading-6 text-[#cbd5e1]">{item.reason || item.note || "Rejected as weak evidence."}</p>{item.matched_changed_fields?.length ? <p className="mt-2 text-xs text-[#f5c400]">Field hits: {item.matched_changed_fields.join(", ")}</p> : null}</div>)}
-                {!rejectedReleaseNotes.length ? <p className="text-sm text-muted-foreground">No rejected release-note matches were returned.</p> : null}
-              </div>
-            </div>
-
-            <div className="rounded-sm border border-[#252a33] bg-[#05080d] p-4">
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#687386]">Release-note evidence</p>
-                <Badge variant="outline">{finalReportReleaseNotes.length} linked rows</Badge>
-              </div>
-              <div className="grid max-h-80 gap-2 overflow-y-auto pr-1 md:grid-cols-2">
-                {finalReportReleaseNotes.map((note, index) => (
-                  <div key={`${note.workbook || "workbook"}-${note.sheet || "sheet"}-${note.jira_id || index}`} className="rounded-sm border border-[#252a33] bg-[#080b10] p-3">
+                <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#687386]">Linked release-note evidence</p>
+                <div className="grid min-h-[18rem] max-h-[36rem] content-start gap-3 overflow-y-auto pr-2">
+                {finalReportReleaseNotes.slice(0, 6).map((note, index) => (
+                  <div key={`${note.workbook || "workbook"}-${note.sheet || "sheet"}-${note.jira_id || index}`} className="rounded-sm border border-[#252a33] bg-[#080b10] p-4">
                     <div className="flex flex-wrap items-center gap-2"><Badge variant="secondary">{note.jira_id || `Match ${index + 1}`}</Badge><span className="text-xs text-[#8c96a8]">{note.sheet || "-"}</span></div>
                     <p className="mt-2 text-sm font-medium text-[#f2f4f7]">{note.workbook || "Unknown workbook"}</p>
                     {note.matched_fields?.length ? <div className="mt-2 flex flex-wrap gap-1.5">{note.matched_fields.map((field) => <Badge key={`${note.jira_id || index}-${field}`} variant="outline" className="rounded-sm text-[11px]">{field}</Badge>)}</div> : null}
                     {note.solution_description ? <p className="mt-2 text-xs leading-5 text-[#cbd5e1]">{note.solution_description}</p> : null}
                   </div>
                 ))}
-                {!finalReportReleaseNotes.length ? <p className="text-sm text-muted-foreground">No release-note evidence was linked.</p> : null}
+                {!finalReportReleaseNotes.length ? <p className="text-sm text-muted-foreground">-</p> : null}
+                </div>
               </div>
             </div>
           </CardContent>
         </Card>
       </div>}
       {!result && !loading && <p className="text-sm text-muted-foreground">Choose two executions and an output field to generate a structured root-cause analysis.</p>}
+      <div className="rootcause-progress-dock fixed bottom-4 left-72 right-24 z-40 rounded-xl border border-[#2d3542]/90 bg-[#111820]/90 px-4 py-3 shadow-[0_12px_32px_rgba(0,0,0,0.28)] backdrop-blur-xl md:px-6">
+        <div className="mx-auto flex w-full max-w-7xl items-center gap-4">
+          <div className="min-w-0 flex-1">
+            <div className="mb-2 flex items-center justify-between gap-3 text-xs">
+              <span className={`flex min-w-0 items-center gap-2 font-semibold ${reviewPaused ? "text-amber-300" : result ? "text-emerald-400" : "text-[#f2f4f7]"}`}>
+                <span className={`h-2 w-2 shrink-0 rounded-full ${reviewPaused || postRunSubmitting ? "bg-amber-400" : result ? "bg-emerald-400" : "bg-[#f5c400]"}`} />
+                <span key={progressLabel} className="rootcause-progress-copy truncate">{progressLabel}</span>
+              </span>
+            </div>
+            <div className="rootcause-progress-track h-2.5 overflow-hidden rounded-full border border-[#2d3542]/80 bg-[#080c11]/90" role="progressbar" aria-label="RootCause AI Agents progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progressPercent)}>
+              <div className={`rootcause-progress-fill relative h-full rounded-full transition-[width] duration-[1200ms] ease-[cubic-bezier(0.32,0.72,0,1)] ${reviewPaused || postRunSubmitting ? "bg-amber-400" : result ? "bg-emerald-500" : "bg-[#f5c400]"}`} style={{ width: `${progressPercent}%` }} />
+            </div>
+            {completedAgentSteps.length > 0 ? (
+              <div className="mt-2 flex items-center gap-2 overflow-x-auto whitespace-nowrap [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" aria-label="Completed agents">
+                <span className="shrink-0 text-[9px] font-semibold uppercase tracking-[0.16em] text-[#687386]">Completed</span>
+                {completedAgentSteps.map((step, index) => (
+                  <span key={step.name} className="rootcause-completed-step inline-flex shrink-0 items-center gap-1.5 text-[11px] text-[#aeb8c7]" title={`${step.name} completed`}>
+                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" aria-hidden="true" />
+                    <span>{AGENT_PROGRESS_LABELS[step.name] || step.name}</span>
+                    {index < completedAgentSteps.length - 1 ? <span className="ml-1 text-[#3d4857]">/</span> : null}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </div>
+      <style jsx>{`
+        .rootcause-progress-copy {
+          animation: rootcause-copy-arrival 420ms cubic-bezier(0.32, 0.72, 0, 1) both;
+        }
+
+        .post-run-loader-rail {
+          animation: post-run-loader-slide 1.4s ease-in-out infinite;
+        }
+
+        .rootcause-review-button::after {
+          content: "";
+          position: absolute;
+          top: -40%;
+          bottom: -40%;
+          left: -34%;
+          width: 22%;
+          background: rgba(255, 255, 255, 0.42);
+          filter: blur(5px);
+          transform: skewX(-16deg);
+          animation: rootcause-review-sheen 3.8s cubic-bezier(0.32, 0.72, 0, 1) infinite;
+          pointer-events: none;
+        }
+
+        .rootcause-review-button {
+          background-size: 220% 100%;
+          animation: rootcause-review-gradient 5.5s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+        }
+
+        .rootcause-review-button:hover {
+          animation-duration: 1.8s;
+          filter: saturate(1.12) brightness(1.04);
+        }
+
+        .rootcause-completed-step {
+          animation: rootcause-step-arrival 420ms cubic-bezier(0.32, 0.72, 0, 1) both;
+        }
+
+        .rootcause-progress-dock {
+          animation: rootcause-dock-arrival 700ms cubic-bezier(0.32, 0.72, 0, 1) both;
+        }
+
+        .rootcause-progress-fill::after {
+          content: "";
+          position: absolute;
+          top: -4px;
+          bottom: -4px;
+          left: -24%;
+          width: 16%;
+          border-radius: 999px;
+          background: rgba(255, 255, 255, 0.62);
+          box-shadow: 0 0 10px rgba(255, 255, 255, 0.5), 0 0 20px rgba(245, 196, 0, 0.4);
+          filter: blur(4px);
+          animation: rootcause-progress-glide 3.6s cubic-bezier(0.32, 0.72, 0, 1) infinite;
+        }
+
+        .rootcause-progress-track:has(.bg-emerald-500) .rootcause-progress-fill::after {
+          animation-duration: 2.4s;
+          background: rgba(209, 255, 229, 0.72);
+          box-shadow: 0 0 10px rgba(209, 255, 229, 0.6), 0 0 20px rgba(52, 211, 153, 0.4);
+        }
+
+        @keyframes rootcause-copy-arrival {
+          from { opacity: 0; transform: translateY(3px); filter: blur(2px); }
+          to { opacity: 1; transform: translateY(0); filter: blur(0); }
+        }
+
+        @keyframes rootcause-dock-arrival {
+          from { opacity: 0; transform: translateY(12px) scale(0.985); }
+          to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+
+        @keyframes rootcause-step-arrival {
+          from { opacity: 0; transform: translateX(-5px); }
+          to { opacity: 1; transform: translateX(0); }
+        }
+
+        @keyframes post-run-loader-slide {
+          0%, 100% { transform: translateX(-100%); opacity: 0.55; }
+          50% { transform: translateX(100%); opacity: 1; }
+        }
+
+        @keyframes rootcause-review-sheen {
+          0%, 30% { transform: translateX(0) skewX(-16deg); opacity: 0; }
+          42% { opacity: 0.7; }
+          62%, 100% { transform: translateX(620%) skewX(-16deg); opacity: 0; }
+        }
+
+        @keyframes rootcause-review-gradient {
+          0%, 100% { background-position: 0% 50%; }
+          50% { background-position: 100% 50%; }
+        }
+
+        @keyframes rootcause-progress-glide {
+          0% { transform: translateX(0) scaleX(0.7); opacity: 0; }
+          18% { opacity: 0.58; }
+          62% { opacity: 0.28; }
+          100% { transform: translateX(760%) scaleX(1.2); opacity: 0; }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .rootcause-progress-dock,
+          .rootcause-progress-copy,
+          .rootcause-review-button,
+          .rootcause-review-button::after,
+          .rootcause-progress-fill::after,
+          .post-run-loader-rail { animation: none; }
+        }
+      `}</style>
     </div>
   );
 }
