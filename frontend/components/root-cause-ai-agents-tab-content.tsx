@@ -94,6 +94,7 @@ type RootCauseResult = {
     uncertainty_notes?: string[];
     uncertainty_summary?: string;
     validation_plan?: string[];
+    human_report_instruction?: string;
     rows?: RootCauseTableRow[];
     detail_rows?: RootCauseTableRow[];
   };
@@ -1093,9 +1094,9 @@ export function RootCauseAIAgentsTabContent() {
             </div>
             <div className="rounded-lg border border-[#f5c400]/40 bg-[#0b0f15] p-4 md:p-6">
               <div className="mb-5 rounded-md border border-[#f5c400]/25 bg-[#f5c400]/5 p-4">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#f5c400]">Primary cause override</p>
-                <p className="mt-1 text-xs leading-5 text-[#8c96a8]">The final report will use this human wording as its primary-cause anchor.</p>
-                <Textarea value={postRunPrimaryCause} onChange={(event) => setPostRunPrimaryCause(event.target.value)} className="mt-3 min-h-24" placeholder="Enter the primary cause you want the final report to explain..." />
+                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#f5c400]">Final report instruction</p>
+                <p className="mt-1 text-xs leading-5 text-[#8c96a8]">Describe exactly how the completed report should change; the instruction is applied across the final conclusion and position explanations.</p>
+                <Textarea value={postRunPrimaryCause} onChange={(event) => setPostRunPrimaryCause(event.target.value)} className="mt-3 min-h-24" placeholder="Describe the changes required in the final report and position explanations..." />
               </div>
               <div className="space-y-3">
                 <div>
@@ -1193,6 +1194,7 @@ export function RootCauseAIAgentsTabContent() {
 
             <div className="rounded-sm border border-[#252a33] bg-[#05080d] p-4">
               <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#f5c400]">Executive conclusion</p>
+              {result.analysis.human_report_instruction ? <div className="mt-3 border-l-2 border-[#f5c400] bg-[#f5c400]/5 px-3 py-2 text-xs leading-5 text-[#f5c400]">Post-run instruction applied: {result.analysis.human_report_instruction}</div> : null}
               <p className="mt-3 whitespace-pre-line text-sm leading-6 text-[#f2f4f7]">{result.analysis.root_cause || "-"}</p>
               {result.analysis.explanation && result.analysis.explanation !== result.analysis.root_cause ? <p className="mt-3 whitespace-pre-line border-t border-[#252a33] pt-3 text-sm leading-6 text-[#cbd5e1]">{result.analysis.explanation}</p> : null}
             </div>

@@ -23,10 +23,11 @@ from langgraph.types import Command, interrupt
 import database as db
 
 
-RESULTS_DIR = Path(os.environ.get("RESULTS_DIR", str(Path(__file__).parent / "results")))
-CODE_DIR = Path(os.environ.get("CODE_DIR", str(Path(__file__).parent / "uploads" / "code")))
+APP_DATA_ROOT = Path(os.environ.get("APP_DATA_ROOT", "."))
+RESULTS_DIR = Path(os.environ.get("RESULTS_DIR", str(APP_DATA_ROOT / "results")))
+CODE_DIR = Path(os.environ.get("CODE_DIR", str(APP_DATA_ROOT / "uploads" / "code")))
 RELEASE_NOTES_DIR = Path(
-    os.environ.get("RELEASE_NOTES_DIR", str(Path(__file__).parent / "uploads" / "release_notes"))
+    os.environ.get("RELEASE_NOTES_DIR", str(APP_DATA_ROOT / "uploads" / "release_notes"))
 )
 
 
@@ -766,12 +767,12 @@ def _llm_client_response(messages: List[Dict[str, str]]) -> Optional[Dict[str, A
     try:
         from openai import OpenAI
 
-        client = OpenAI(api_key=api_key, timeout=60.0, max_retries=1)
+        client = OpenAI(api_key=api_key, timeout=120.0, max_retries=0)
         response = client.chat.completions.create(
             model=model,
             messages=messages,
             temperature=0.1,
-            max_tokens=4200,
+            max_tokens=3200,
             response_format={"type": "json_object"},
         )
         return _parse_json_object(response.choices[0].message.content or "{}")
@@ -779,6 +780,11 @@ def _llm_client_response(messages: List[Dict[str, str]]) -> Optional[Dict[str, A
         status_code = getattr(exc, "status_code", None)
         body = getattr(exc, "body", None)
         message = f"OpenAI request failed for OPENAI_MODEL={model}: {exc}"
+        if status_code == 401:
+            message = (
+                "OpenAI authentication failed: OPENAI_API_KEY is invalid, expired, revoked, or not the key expected by this environment. "
+                "Create a new OpenAI API key, update the backend environment, and restart the backend."
+            )
         if status_code == 404:
             message = f"OpenAI model not found or unavailable for OPENAI_MODEL={model}. Check that this exact model name is enabled for the API key. Original error: {exc}"
         return {"llm_error": message, "llm_status_code": status_code, "llm_body": body}
@@ -852,6 +858,47 @@ def _report_quality_violations(report: Dict[str, Any], position_facts: List[Dict
     return sorted(set(violations))[:12]
 
 
+def _report_contract_error(report: Dict[str, Any], positions: List[str]) -> Optional[str]:
+    if not isinstance(report, dict) or not report:
+        return "OpenAI returned an empty JSON report"
+    if report.get("llm_error"):
+        return str(report["llm_error"])
+    missing = [field for field in ("root_cause", "explanation", "rows") if not report.get(field)]
+    if missing:
+        return f"OpenAI returned an incomplete report; missing: {', '.join(missing)}"
+    rows = report.get("rows")
+    if not isinstance(rows, list):
+        return "OpenAI returned rows in an invalid format"
+    returned_positions = {str(row.get("position")) for row in rows if isinstance(row, dict)}
+    missing_positions = [position for position in positions if position not in returned_positions]
+    if missing_positions:
+        return f"OpenAI report omitted positions: {', '.join(missing_positions)}"
+    return None
+
+
+def _merge_post_run_report(previous: Dict[str, Any], update: Dict[str, Any]) -> Dict[str, Any]:
+    merged = dict(previous)
+    for key, value in update.items():
+        if value not in (None, "", [], {}):
+            merged[key] = value
+    for collection_name, identity_key in (("rows", "position"),):
+        previous_rows = previous.get(collection_name)
+        update_rows = update.get(collection_name)
+        if not isinstance(previous_rows, list) or not isinstance(update_rows, list):
+            continue
+        updates_by_identity = {
+            str(row.get(identity_key)): row
+            for row in update_rows
+            if isinstance(row, dict) and row.get(identity_key) is not None
+        }
+        merged[collection_name] = [
+            {**row, **updates_by_identity.get(str(row.get(identity_key)), {})}
+            if isinstance(row, dict) else row
+            for row in previous_rows
+        ]
+    return merged
+
+
 def llm_rootcause_report_node(state: AgentState) -> AgentState:
     stage_warnings = [stage["agent"] for stage in state.get("stages", []) if stage.get("status") in {"warning", "limited", "no evidence"}]
     classification = "Confirmed Cause" if not stage_warnings and state.get("input_changes") else "Likely Cause" if state.get("input_changes") else "Unresolved Issue"
@@ -898,6 +945,7 @@ def llm_rootcause_report_node(state: AgentState) -> AgentState:
         "merged_evidence": merged_evidence,
         "human_review": state.get("human_review", {}),
         "human_overrides": state.get("human_overrides", {}),
+        "previous_final_report": state.get("llm_report", {}) if state.get("human_overrides") else {},
     }
     messages = [
         {
@@ -921,7 +969,10 @@ def llm_rootcause_report_node(state: AgentState) -> AgentState:
                 "root_cause muss 2 bis 4 dichte Absaetze enthalten: erst die Hauptursache, dann die wichtigsten Treiber, dann Release-Note-Unterstuetzung, dann Unsicherheit. "
                 "explanation muss technisch sein und die Kette von geaenderten Feldern ueber die Lineage bis zum Output erklaeren. "
                 "primary_cause muss ein kurzer deutscher Ursachen-Satz sein, nicht nur ein Feldname. "
-                "Wenn human_overrides.primary_cause_override vorhanden ist, uebernimm diese menschliche Formulierung als primaere Ursache und richte root_cause, explanation und die Positions-Erklaerungen daran aus. "
+                "Wenn human_overrides.primary_cause_override vorhanden ist, ist dieser Text eine verbindliche menschliche Post-Run-Anweisung fuer den gesamten Final Rootcause Report, nicht nur ein Label. "
+                "Fuehre diese Anweisung sichtbar in root_cause, explanation, primary_cause, key_evidence, driver_summaries und jeder positionsbezogenen Erklaerung aus. "
+                "Nutze previous_final_report als Ausgangspunkt und aendere genau die Teile, die die menschliche Anweisung betrifft; gib trotzdem das vollstaendige JSON zurueck. "
+                "Die menschliche Anweisung darf nicht nur zitiert oder als Vorsatz wiederholt werden: ihre geforderte Wirkung muss im Berichtstext und in den Zeilen erkennbar sein. "
                 "Wenn human_overrides.release_note_decisions vorhanden ist, beruecksichtige nur akzeptierte oder teilweise akzeptierte Release-Note-Kandidaten; abgelehnte Kandidaten duerfen nicht als Unterstuetzung erscheinen. "
                 "Die human_review-Entscheidungen und Kommentare sind verbindliche menschliche Korrekturen. Ignoriere keine Entscheidung: akzeptierte und teilweise akzeptierte Kandidaten duerfen verwendet werden, abgelehnte Kandidaten muessen vollstaendig ausgeschlossen werden. "
                 "key_evidence muss 4 bis 7 deutsche Evidenzsaetze enthalten. Jeder Satz muss eine konkrete Beobachtung enthalten. Keine JSON-Strings als Text. "
@@ -951,10 +1002,15 @@ def llm_rootcause_report_node(state: AgentState) -> AgentState:
         },
         {"role": "user", "content": json.dumps(_json_safe(evidence_payload), ensure_ascii=True)},
     ]
+    previous_report = state.get("llm_report", {})
     report = _llm_client_response(messages)
-    if not report or report.get("llm_error"):
-        report = {"llm_error": report.get("llm_error") if report else "OpenAI is not configured"}
-        status = "fallback"
+    is_post_run_review = bool(state.get("human_overrides")) and bool(previous_report)
+    if is_post_run_review and isinstance(report, dict) and not report.get("llm_error"):
+        report = _merge_post_run_report(previous_report, report)
+    report_error = _report_contract_error(report or {}, [str(row.get("key")) for row in state.get("comparison", {}).get("comparison_data", [])])
+    if report_error:
+        error_message = report_error
+        raise RuntimeError(f"Final Rootcause Report LLM call failed: {error_message}")
     else:
         report = _normalize_report_fields(report)
         violations = _report_quality_violations(report, position_facts)
@@ -973,19 +1029,15 @@ def llm_rootcause_report_node(state: AgentState) -> AgentState:
             if retry_report and not retry_report.get("llm_error"):
                 report = _normalize_report_fields(retry_report)
                 violations = _report_quality_violations(report, position_facts)
+                retry_error = _report_contract_error(report, [str(row.get("key")) for row in state.get("comparison", {}).get("comparison_data", [])])
+                if retry_error:
+                    raise RuntimeError(f"Final Rootcause Report quality retry failed: {retry_error}")
             if violations:
                 report["quality_warnings"] = violations
         human_overrides = state.get("human_overrides", {})
         primary_override = str(human_overrides.get("primary_cause_override") or "").strip()
         if primary_override:
-            report["primary_cause"] = primary_override
-            root_cause_text = str(report.get("root_cause") or "").strip()
-            explanation_text = str(report.get("explanation") or "").strip()
-            override_marker = "Menschlich festgelegte Hauptursache:"
-            if primary_override.casefold() not in root_cause_text.casefold():
-                report["root_cause"] = f"{override_marker} {primary_override}\n\n{root_cause_text}" if root_cause_text else f"{override_marker} {primary_override}"
-            if primary_override.casefold() not in explanation_text.casefold():
-                report["explanation"] = f"{override_marker} {primary_override}\n\n{explanation_text}" if explanation_text else f"{override_marker} {primary_override}"
+            report["human_report_instruction"] = primary_override
             report["human_override_applied"] = True
         if state.get("human_review") or human_overrides:
             report["human_review_applied"] = True
@@ -1203,6 +1255,7 @@ def _format_success_response(final_state: AgentState, review_id: Optional[str] =
             "validation_plan": validation_plan,
             "human_review_applied": bool(final_state.get("human_review") or final_state.get("human_overrides")),
             "human_override_applied": bool(report.get("human_override_applied")),
+            "human_report_instruction": report.get("human_report_instruction", ""),
             "rows": rows,
             "detail_rows": details,
         },

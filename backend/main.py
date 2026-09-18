@@ -2642,7 +2642,13 @@ def _rootcause_parse_json_object(content: str) -> Dict[str, Any]:
     raise ValueError("Model returned non-JSON or malformed JSON content")
 
 
-def _rootcause_llm(prompt: str) -> Dict[str, Any]:
+def _rootcause_llm(
+    prompt: str,
+    post_run_review: bool = False,
+    review_judge: bool = False,
+    edit_planner: bool = False,
+    requirement_extractor: bool = False,
+) -> Dict[str, Any]:
     api_key = os.environ.get("OPENAI_API_KEY")
     azure_key = os.environ.get("AZURE_OPENAI_API_KEY")
     endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
@@ -2661,8 +2667,78 @@ def _rootcause_llm(prompt: str) -> Dict[str, Any]:
             "role": "system",
             "content": "Schreibe alle natuerlichsprachlichen Inhalte ausschliesslich auf Deutsch, insbesondere explanation, root_cause, evidence, next_checks sowie rows[].explanation. Verwende die Jira-ID und die Solution Description aus den Evidenzdaten unverfaelscht und binde die Solution Description natuerlich in die Begruendung ein.",
         },
+        *([{
+            "role": "system",
+            "content": (
+                "POST-RUN HUMAN REVIEW MODUS: Die menschliche Anweisung ist die hoechste Prioritaet fuer die dargestellte Root-Cause-Ausgabe. "
+                "Die normalen Vorgaben zu Laenge, Detailgrad und unveraenderten Feldern gelten nicht, wenn sie der menschlichen Anweisung widersprechen. "
+                "Fuehre jeden geforderten Umbau vollstaendig durch: Zusammenfassung, Evidenz, Next Checks, Release-Note-Links, jede rows- und detail_rows-Erklaerung sowie dargestellte Lineage-, Output- und Abweichungswerte. "
+                "Wenn der Mensch eine Tabellenweite Aenderung fordert, gib ALLE rows und ALLE detail_rows zurueck. "
+                "Wenn der Mensch eine maximale Satzanzahl nennt, halte sie fuer jede betroffene Erklaerung strikt ein. "
+                "Wenn der Mensch Release-Note-Links entfernt, behalte oder entferne die geforderten Links konsequent in release_note_links, rows[].release_note und detail_rows[].release_note. "
+                "Gib ein vollstaendiges JSON mit root_cause, explanation, confidence, evidence, changed_fields, release_note_links, next_checks, rows und detail_rows zurueck."
+            ),
+        }] if post_run_review else []),
         {"role": "user", "content": prompt},
     ]
+    if post_run_review:
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "Du bist ein Post-Run-Editor fuer einen Root-Cause-Bericht. Die menschliche Anweisung ist die einzige redaktionelle Spezifikation und hat hoechste Prioritaet. "
+                    "Fuehre jede Anforderung vollstaendig und exakt aus, unabhaengig davon ob sie Zusammenfassung, Erklaerungen, alle Tabellenzeilen, Lineage, Output-Darstellung, Abweichungen, Confidence, Evidenz, Release-Note-Links oder Detailzeilen betrifft. "
+                    "Gib ein vollstaendiges JSON mit root_cause, explanation, confidence, evidence, changed_fields, release_note_links, next_checks, rows und detail_rows zurueck. "
+                    "Gib alle vorhandenen rows und detail_rows zurueck. Positionen und ihre Zuordnung muessen erhalten bleiben. Antworte ausschliesslich mit JSON."
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ]
+    elif review_judge:
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "Du bist ein strenger Post-Run-Review-Judge. Pruefe, ob proposed_report jede einzelne Forderung aus user_instruction exakt erfuellt. "
+                    "Bewerte nur die dargestellte Ausgabe, nicht Absichten. Antworte ausschliesslich als JSON: "
+                    "{\"approved\": boolean, \"violations\": [string], \"correction\": string}. "
+                    "approved darf nur true sein, wenn jede Forderung vollstaendig erfuellt ist."
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ]
+    elif edit_planner:
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a RootCause post-run edit planner. Convert the user's entire instruction into an executable JSON edit plan for the supplied report. "
+                    "The user instruction is highest priority. Return JSON only as {\"acceptance_criteria\":[...],\"operations\":[...]}. "
+                    "acceptance_criteria must contain one testable criterion for every distinct user requirement, with no omissions. "
+                    "Each operation has target, where, set, and satisfies. satisfies is a non-empty array of extracted requirement IDs implemented by that operation. target is one of analysis, stages, analysis.rows, analysis.detail_rows. "
+                    "where is optional for analysis/stages; for rows/detail_rows it selects existing records using fields such as position and output, or {\"position\":\"*\"} for all. "
+                    "set is an object containing every requested field value. Use [] or \"\" when the user requests removal. "
+                    "Plan every requested change, including summaries, explanations, lineage, output display, deviations, confidence, evidence, next checks, release-note links, rows, and detail rows. "
+                    "Never return an empty operations array. Do not return prose or a rewritten report; return only acceptance_criteria and operations. "
+                    "Example: {\"acceptance_criteria\":[\"Every summary row has confidence 70\",\"No release-note links remain\"],\"operations\":[{\"target\":\"analysis.rows\",\"where\":{\"position\":\"*\"},\"set\":{\"confidence\":70},\"satisfies\":[\"confidence\"]},{\"target\":\"analysis\",\"set\":{\"release_note_links\":[]},\"satisfies\":[\"release_notes\"]}]}."
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ]
+    elif requirement_extractor:
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a RootCause post-run requirement extractor. Convert the user's complete instruction into a precise, exhaustive, machine-readable requirement specification. "
+                    "Return JSON only: {\"requirements\":[{\"id\":string,\"scope\":[string],\"instruction\":string,\"acceptance_test\":string}],\"protected_facts\":[string]}. "
+                    "Create one requirement for every independently testable user request, preserving quantities, exclusions, scope, and ordering exactly. "
+                    "Valid scopes include analysis, stages, rows, detail_rows, release_notes, lineage, explanations, confidence, evidence, and presentation. "
+                    "Protected facts are only immutable underlying identifiers and source facts, unless the user explicitly requests display-only changes."
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ]
     try:
         if api_key:
             from openai import OpenAI
@@ -2671,7 +2747,7 @@ def _rootcause_llm(prompt: str) -> Dict[str, Any]:
                 model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
                 messages=messages,
                 temperature=0.1,
-                max_tokens=2400,
+                max_tokens=2400 if requirement_extractor else 4000 if edit_planner else 8000 if post_run_review else 2400,
                 response_format={"type": "json_object"},
             )
         else:
@@ -2685,13 +2761,15 @@ def _rootcause_llm(prompt: str) -> Dict[str, Any]:
                 model=os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o"),
                 messages=messages,
                 temperature=0.1,
-                max_tokens=2400,
+                max_tokens=2400 if requirement_extractor else 4000 if edit_planner else 8000 if post_run_review else 2400,
                 response_format={"type": "json_object"},
             )
         content = (response.choices[0].message.content or "{}").strip()
         try:
             parsed = _rootcause_parse_json_object(content)
         except Exception:
+            if post_run_review or edit_planner or requirement_extractor:
+                raise HTTPException(502, "Post-run RootCause editor returned malformed JSON")
             parsed = {
                 "explanation": "",
                 "root_cause": "",
@@ -2713,6 +2791,134 @@ def _rootcause_llm(prompt: str) -> Dict[str, Any]:
         raise HTTPException(502, f"Root-cause analysis failed: {exc}") from exc
 
 
+def _normalize_post_run_edit_plan(plan: Dict[str, Any]) -> List[Dict[str, Any]]:
+    if not isinstance(plan, dict):
+        return []
+    raw_operations = plan.get("operations") or plan.get("edits") or plan.get("patches")
+    if isinstance(raw_operations, list):
+        operations = raw_operations
+    else:
+        operations = []
+        for source_key, target in (("analysis", "analysis"), ("report", "analysis"), ("stages", "stages")):
+            if isinstance(plan.get(source_key), dict):
+                operations.append({"target": target, "set": plan[source_key]})
+        for source_key, target in (("rows", "analysis.rows"), ("detail_rows", "analysis.detail_rows")):
+            source_rows = plan.get(source_key)
+            if isinstance(source_rows, list):
+                for row in source_rows:
+                    if not isinstance(row, dict):
+                        continue
+                    where = {key: row[key] for key in ("position", "output") if key in row}
+                    changes = {key: value for key, value in row.items() if key not in {"position", "output"}}
+                    if where and changes:
+                        operations.append({"target": target, "where": where, "set": changes})
+
+    normalized: List[Dict[str, Any]] = []
+    aliases = {
+        "report": "analysis",
+        "root_cause": "analysis",
+        "rows": "analysis.rows",
+        "table": "analysis.rows",
+        "detail_rows": "analysis.detail_rows",
+        "details": "analysis.detail_rows",
+        "release_notes": "stages",
+    }
+    for operation in operations:
+        if not isinstance(operation, dict):
+            continue
+        target = aliases.get(str(operation.get("target") or ""), operation.get("target"))
+        changes = operation.get("set") or operation.get("changes") or operation.get("patch")
+        where = operation.get("where") or operation.get("selector") or {}
+        if target in {"analysis", "stages", "analysis.rows", "analysis.detail_rows"} and isinstance(changes, dict):
+            satisfies = operation.get("satisfies") or operation.get("requirement_ids") or []
+            normalized.append({
+                "target": target,
+                "where": where if isinstance(where, dict) else {},
+                "set": changes,
+                "satisfies": [str(item) for item in satisfies] if isinstance(satisfies, list) else [],
+            })
+    return normalized
+
+
+def _post_run_acceptance_criteria(plan: Dict[str, Any]) -> List[str]:
+    if not isinstance(plan, dict):
+        return []
+    criteria = plan.get("acceptance_criteria") or plan.get("criteria") or plan.get("requirements")
+    return [str(item).strip() for item in criteria if isinstance(item, str) and item.strip()] if isinstance(criteria, list) else []
+
+
+def _extract_post_run_requirements(instruction: str) -> Dict[str, Any]:
+    specification = _rootcause_llm(instruction, requirement_extractor=True)
+    requirements = specification.get("requirements") if isinstance(specification, dict) else None
+    if not isinstance(requirements, list) or not requirements:
+        raise ValueError("Requirement extractor returned no requirements")
+    normalized: List[Dict[str, Any]] = []
+    for index, requirement in enumerate(requirements, start=1):
+        if not isinstance(requirement, dict):
+            raise ValueError("Requirement extractor returned an invalid requirement")
+        instruction_text = str(requirement.get("instruction") or "").strip()
+        acceptance_test = str(requirement.get("acceptance_test") or "").strip()
+        scopes = requirement.get("scope")
+        if not instruction_text or not acceptance_test or not isinstance(scopes, list) or not scopes:
+            raise ValueError("Requirement extractor omitted instruction, scope, or acceptance test")
+        normalized.append({
+            "id": str(requirement.get("id") or f"requirement_{index}"),
+            "scope": [str(scope) for scope in scopes],
+            "instruction": instruction_text,
+            "acceptance_test": acceptance_test,
+        })
+    return {
+        "requirements": normalized,
+        "protected_facts": specification.get("protected_facts", []) if isinstance(specification.get("protected_facts"), list) else [],
+    }
+
+
+def _apply_post_run_edit_plan(report: Dict[str, Any], plan: Dict[str, Any]) -> Dict[str, Any]:
+    updated = json.loads(json.dumps(report, default=str))
+    operations = _normalize_post_run_edit_plan(plan)
+    if not operations:
+        raise ValueError("Post-run edit planner returned no operations")
+    for operation in operations:
+        if not isinstance(operation, dict):
+            raise ValueError("Post-run edit plan contains an invalid operation")
+        target = operation["target"]
+        where = operation.get("where") or {}
+        changes = operation["set"]
+        if target in {"analysis", "stages"}:
+            updated.setdefault(target, {}).update(changes)
+            continue
+        collection_name = target.split(".", 1)[1]
+        collection = updated.setdefault("analysis", {}).get(collection_name)
+        if not isinstance(collection, list):
+            raise ValueError(f"Post-run report has no {collection_name} collection")
+        matched = 0
+        for item in collection:
+            if not isinstance(item, dict):
+                continue
+            if all(str(item.get(key)) == str(value) or str(value) == "*" for key, value in where.items()):
+                item.update(changes)
+                matched += 1
+        if not matched:
+            raise ValueError(f"Post-run edit plan selector matched no {collection_name} records")
+    return updated
+
+
+def _post_run_llm_review(instruction: str, original_report: Dict[str, Any], proposed_report: Dict[str, Any], requirements: List[Dict[str, Any]]) -> Dict[str, Any]:
+    review_prompt = json.dumps({
+        "task": "Review whether the proposed RootCause report follows the user's instruction exactly.",
+        "user_instruction": instruction,
+        "extracted_requirements": requirements,
+        "original_report": original_report,
+        "proposed_report": proposed_report,
+        "required_output": {"approved": "boolean", "requirements": [{"id": "requirement id", "approved": "boolean", "reason": "specific evidence"}], "violations": ["specific unmet requirement"], "correction": "precise instruction for the planner"},
+    }, ensure_ascii=True, default=str)
+    review = _rootcause_llm(
+        "Return JSON only. Act as a strict post-run review judge. Do not rewrite the report. Return one requirement verdict for every extracted requirement. Approve only when every part of user_instruction is reflected in proposed_report. " + review_prompt,
+        review_judge=True,
+    )
+    return review if isinstance(review, dict) else {"approved": False, "violations": ["Reviewer returned invalid JSON"]}
+
+
 @app.post("/api/rootcause/analyze")
 def analyze_root_cause(request: RootCauseRequest):
     if request.review_id and request.human_review and request.human_review.get("review_type") == "post_run":
@@ -2726,67 +2932,79 @@ def analyze_root_cause(request: RootCauseRequest):
         if primary_cause:
             analysis = refreshed.setdefault("analysis", {})
             current_rows = analysis.get("rows") or []
-            instruction_prompt = (
-                "Du fuehrst eine Post-Run-Ueberarbeitung einer normalen Root-Cause-Analyse durch. "
-                "Die menschliche Eingabe ist eine verbindliche redaktionelle Anweisung fuer den Bericht. "
-                "Ueberarbeite root_cause und explanation entsprechend dieser Anweisung. "
-                "Wenn die Anweisung die Tabelle, jede Position, Row-Erklaerungen oder die Ursachenbewertung der Positionen betrifft, "
-                "ueberarbeite rows[].explanation fuer jede Position entsprechend. Wenn sie nur den Berichtstext betrifft, "
-                "lasse die sachlichen Row-Erklaerungen unveraendert. Aendere niemals position, output, value_a, value_b, difference, lineage oder input. "
-                "Schreibe auf Deutsch und bleibe strikt bei den gelieferten Fakten. Gib valides JSON mit root_cause, explanation, confidence und rows zurueck.\n\n"
-                "Menschliche Anweisung:\n" + primary_cause + "\n\n"
-                "Aktueller Bericht:\n" + json.dumps({
-                    "root_cause": analysis.get("root_cause", ""),
-                    "explanation": analysis.get("explanation", ""),
-                    "confidence": analysis.get("confidence", 0),
-                    "rows": current_rows,
-                }, ensure_ascii=True, default=str)
-            )
-            try:
-                rewritten = _rootcause_llm(instruction_prompt)
-            except Exception:
-                rewritten = {}
-            table_rows = current_rows
-            changed_fields = sorted({
-                str(field).strip()
-                for row in table_rows
-                for field in str(row.get("input") or "").split(",")
-                if str(field).strip() and str(field).strip() != "-"
-            })
-            movement_lines = [
-                f"{row.get('position')}: {row.get('output')} von {row.get('value_a')} auf {row.get('value_b')} ({'B - A = ' + str(row.get('difference'))})."
-                for row in table_rows
-            ]
-            table_grounded_summary = (
-                f"Die Tabelle zeigt Abweichungen im Feld {request.output_column.strip()} für {len(table_rows)} Positionen. "
-                + (f"Als geänderte Tabellenfelder sind {', '.join(changed_fields)} erkennbar. " if changed_fields else "Die Tabelle weist keine eindeutigen geänderten Eingabefelder aus. ")
-                + "Die beobachteten Bewegungen sind: "
-                + " ".join(movement_lines[:6])
-                + " Die Ursachenbewertung wurde anhand der angezeigten Werte, Eingabefelder und Lineage vorgenommen."
-            )
-            if isinstance(rewritten, dict):
-                rewritten_root_cause = str(rewritten.get("root_cause") or "").strip()
-                rewritten_explanation = str(rewritten.get("explanation") or "").strip()
-                echoed_instruction = rewritten_root_cause.casefold() == primary_cause.casefold()
-                analysis["root_cause"] = rewritten_root_cause if rewritten_root_cause and not echoed_instruction else table_grounded_summary
-                analysis["explanation"] = rewritten_explanation if rewritten_explanation and rewritten_explanation.casefold() != primary_cause.casefold() else table_grounded_summary
-                analysis["primary_cause"] = primary_cause
-                rewritten_rows = {
-                    str(row.get("position")): row
-                    for row in (rewritten.get("rows") or [])
-                    if isinstance(row, dict) and row.get("position") is not None
+            original_report = {
+                "analysis": analysis,
+                "stages": refreshed.get("stages", {}),
+            }
+            specification = _extract_post_run_requirements(primary_cause)
+            requirements = specification["requirements"]
+            editor_prompt = json.dumps({
+                "user_instruction": primary_cause,
+                "extracted_requirements": requirements,
+                "protected_facts": specification["protected_facts"],
+                "current_report": original_report,
+                "instruction": "Return the complete executable edit plan that fulfills every extracted requirement exactly. Return at least one operation for every requirement.",
+            }, ensure_ascii=True, default=str)
+            review: Dict[str, Any] = {}
+            rewritten: Dict[str, Any] = {}
+            candidate: Dict[str, Any] = {}
+            for _ in range(8):
+                plan = _rootcause_llm(editor_prompt, edit_planner=True)
+                criteria = _post_run_acceptance_criteria(plan)
+                operations = _normalize_post_run_edit_plan(plan)
+                required_ids = {str(requirement["id"]) for requirement in requirements}
+                covered_ids = {requirement_id for operation in operations for requirement_id in operation.get("satisfies", [])}
+                if not criteria or len(criteria) < len(requirements) or not required_ids.issubset(covered_ids):
+                    review = {
+                        "approved": False,
+                        "violations": [f"The plan did not implement requirement IDs: {', '.join(sorted(required_ids - covered_ids))}."],
+                        "correction": "Return one acceptance criterion and at least one concrete operation with satisfies:[requirement_id] for every extracted requirement.",
+                    }
+                    editor_prompt += "\n\nPlanner correction:\n" + json.dumps(review, ensure_ascii=True)
+                    continue
+                try:
+                    candidate = _apply_post_run_edit_plan(original_report, plan)
+                except ValueError as exc:
+                    review = {"approved": False, "violations": [str(exc)], "correction": "Return valid executable operations only."}
+                    editor_prompt += "\n\nPlanner correction:\n" + json.dumps(review, ensure_ascii=True)
+                    continue
+                review = _post_run_llm_review(primary_cause, original_report, candidate, requirements)
+                requirement_verdicts = review.get("requirements") if isinstance(review.get("requirements"), list) else []
+                approved_ids = {
+                    str(verdict.get("id"))
+                    for verdict in requirement_verdicts
+                    if isinstance(verdict, dict) and verdict.get("approved") is True
                 }
-                for row in current_rows:
-                    rewritten_row = rewritten_rows.get(str(row.get("position")))
-                    if rewritten_row and isinstance(rewritten_row.get("explanation"), str) and rewritten_row["explanation"].strip():
-                        row["explanation"] = rewritten_row["explanation"].strip()
-                    if rewritten_row and rewritten_row.get("confidence") is not None:
-                        row["confidence"] = rewritten_row["confidence"]
-                analysis["rows"] = current_rows
-            else:
-                analysis["root_cause"] = table_grounded_summary
-                analysis["explanation"] = table_grounded_summary
-                analysis["primary_cause"] = primary_cause
+                if review.get("approved") is True and required_ids.issubset(approved_ids):
+                    rewritten = candidate.get("analysis", {})
+                    refreshed["stages"] = candidate.get("stages", refreshed.get("stages", {}))
+                    break
+                editor_prompt = json.dumps({
+                    "user_instruction": primary_cause,
+                    "extracted_requirements": requirements,
+                    "protected_facts": specification["protected_facts"],
+                    "current_report": original_report,
+                    "previous_plan": plan,
+                    "review_feedback": {
+                    "violations": review.get("violations", []),
+                    "correction": review.get("correction", ""),
+                    },
+                    "instruction": "Return a corrected complete executable edit plan only.",
+                }, ensure_ascii=True, default=str)
+            if not rewritten:
+                if not candidate:
+                    raise HTTPException(502, "Post-run RootCause planner could not produce an executable edit plan")
+                rewritten = candidate.get("analysis", {})
+                refreshed["stages"] = candidate.get("stages", refreshed.get("stages", {}))
+            rewritten["extracted_requirements"] = requirements
+            rewritten["protected_facts"] = specification["protected_facts"]
+            rewritten["requirement_review"] = {
+                "approved": review.get("approved") is True,
+                "requirements": review.get("requirements", []),
+                "violations": review.get("violations", []),
+            }
+            rewritten["primary_cause"] = primary_cause
+            refreshed["analysis"] = rewritten
         refreshed["review_id"] = request.review_id
         refreshed["post_run_review_available"] = True
         return refreshed

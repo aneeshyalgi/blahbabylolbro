@@ -36,6 +36,12 @@ type RootCauseTableRow = {
   explanation: string;
   confidence: number;
 };
+type ExtractedRequirement = {
+  id: string;
+  scope: string[];
+  instruction: string;
+  acceptance_test: string;
+};
 type RootCauseResult = {
   review_id?: string;
   post_run_review_available?: boolean;
@@ -56,6 +62,8 @@ type RootCauseResult = {
     next_checks?: string[];
     rows?: RootCauseTableRow[];
     detail_rows?: RootCauseTableRow[];
+    extracted_requirements?: ExtractedRequirement[];
+    protected_facts?: string[];
   };
 };
 
