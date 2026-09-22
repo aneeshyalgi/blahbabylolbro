@@ -31,9 +31,10 @@ const LOCALE_LABELS: Record<Locale, string> = {
 
 interface AppHeaderProps {
   title?: string;
+  isRootCausePremium?: boolean;
 }
 
-export function AppHeader({ title }: AppHeaderProps) {
+export function AppHeader({ title, isRootCausePremium = false }: AppHeaderProps) {
   const t = useTranslations("header");
   const tLang = useTranslations("language");
   const { locale, setLocale } = useLocale();
@@ -49,7 +50,10 @@ export function AppHeader({ title }: AppHeaderProps) {
 
   return (
     <>
-      <header className="border-b border-[#252a33] bg-[#0b0f15] px-4 py-4 sm:px-6">
+      <header className={isRootCausePremium
+        ? "border-b border-[#f5c400]/20 bg-[radial-gradient(circle_at_top_left,_rgba(245,196,0,0.17),_transparent_34%),linear-gradient(135deg,#0a0f16_0%,#111b26_100%)] px-4 py-4 shadow-[0_8px_26px_rgba(0,0,0,0.24)] sm:px-6"
+        : "border-b border-[#252a33] bg-[#0b0f15] px-4 py-4 sm:px-6"}
+      >
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
             {/* <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#f5c400]">EY RegData</p> */}

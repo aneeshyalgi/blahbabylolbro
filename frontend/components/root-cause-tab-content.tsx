@@ -268,7 +268,7 @@ export function RootCauseTabContent() {
 
   const openPostRunReview = () => {
     if (!result) return;
-    setPostRunPrimaryCause(result.analysis.root_cause || "");
+    setPostRunPrimaryCause("");
     setPostRunReviewOpen(true);
   };
 
@@ -350,7 +350,7 @@ export function RootCauseTabContent() {
               <span>Structured root-cause results</span>
               <div className="flex items-center gap-2">
                 <Badge variant={confidence >= 75 ? "default" : "outline"}>{confidence}% overall confidence</Badge>
-                {result.review_id ? <Tooltip><TooltipTrigger asChild><Button size="sm" variant="outline" className="normal-post-run-review-button relative overflow-hidden border-amber-300 bg-gradient-to-r from-amber-300 via-yellow-400 to-amber-500 px-3 font-semibold text-[#16120a] shadow-[0_0_0_1px_rgba(251,191,36,0.22),0_5px_18px_rgba(245,158,11,0.24)]" onClick={openPostRunReview} disabled={postRunSubmitting}><Eye className="mr-2 h-4 w-4" />Post-run human review</Button></TooltipTrigger><TooltipContent side="bottom" sideOffset={8} className="max-w-sm leading-5">Edit the human instruction for the completed normal RootCause report. The backend regenerates the summary and, when your instruction requests it, the row explanations too, while preserving deterministic values, differences, lineage, positions, and inputs. The analysis pipeline itself is not rerun.</TooltipContent></Tooltip> : null}
+                {result.review_id && resultView === "summary" ? <Tooltip><TooltipTrigger asChild><Button size="sm" variant="outline" className="normal-post-run-review-button relative overflow-hidden border-amber-300 bg-gradient-to-r from-amber-300 via-yellow-400 to-amber-500 px-3 font-semibold text-[#16120a] shadow-[0_0_0_1px_rgba(251,191,36,0.22),0_5px_18px_rgba(245,158,11,0.24)]" onClick={openPostRunReview} disabled={postRunSubmitting}><Eye className="mr-2 h-4 w-4" />Post-run human review</Button></TooltipTrigger><TooltipContent side="bottom" sideOffset={8} className="max-w-sm leading-5">Edit the human instruction for the completed normal RootCause report. The backend regenerates the summary and, when your instruction requests it, the row explanations too, while preserving deterministic values, differences, lineage, positions, and inputs. The analysis pipeline itself is not rerun.</TooltipContent></Tooltip> : null}
               </div>
             </CardTitle>
             <p className="text-sm text-muted-foreground">The rows below combine result deviations, code lineage, changed source inputs, release-note matches, and the LLM explanation.</p>

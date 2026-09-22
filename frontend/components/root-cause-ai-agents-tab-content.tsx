@@ -67,7 +67,7 @@ type PendingReleaseNoteReview = {
   agent_stages?: AgentStage[];
   agent_architecture?: RootCauseResult["agent_architecture"] & { human_in_the_loop?: string; paused_node?: string };
 };
-type ReviewDecision = { decision: "accept" | "partial" | "reject"; comment: string };
+type ReviewDecision = { decision: "accept" | "reject" };
 type RootCauseResult = {
   review_id?: string;
   post_run_review_available?: boolean;
@@ -109,7 +109,7 @@ type RootCauseResult = {
   };
 };
 type RootCauseApiResponse = RootCauseResult | PendingReleaseNoteReview;
-type PostRunReleaseNoteDecision = { decision: "accept" | "partial" | "reject"; comment: string };
+type PostRunReleaseNoteDecision = { decision: "accept" | "reject" };
 
 const AGENT_STEPS = [
   {
@@ -344,7 +344,11 @@ type PersistedRootCauseState = {
   result: RootCauseResult | null;
 };
 
-export function RootCauseAIAgentsTabContent() {
+interface RootCauseAIAgentsTabContentProps {
+  onRunStateChange?: (locked: boolean) => void;
+}
+
+export function RootCauseAIAgentsTabContent({ onRunStateChange }: RootCauseAIAgentsTabContentProps) {
   const storageKey = ROOT_CAUSE_AGENTS_STORAGE_KEY;
   const { baseClusterId, comparisonClusterId } = useClusterSelection();
   const [clusters, setClusters] = useState<Cluster[]>([]);
@@ -500,11 +504,17 @@ export function RootCauseAIAgentsTabContent() {
     return () => window.cancelAnimationFrame(frame);
   }, [postRunSubmitting]);
 
+  useEffect(() => {
+    const shouldLock = loading || Boolean(pendingReview) || reviewSubmitting || postRunSubmitting;
+    onRunStateChange?.(shouldLock);
+  }, [loading, pendingReview, reviewSubmitting, postRunSubmitting, onRunStateChange]);
+
   const analyze = async () => {
     if (!executionA || !executionB || !outputColumn.trim()) {
       toast({ title: "Select both executions and an output field", variant: "destructive" });
       return;
     }
+    onRunStateChange?.(true);
     setLoading(true);
     setTraceExpanded(true);
     setResult(null);
@@ -537,7 +547,7 @@ export function RootCauseAIAgentsTabContent() {
         const review = data as PendingReleaseNoteReview;
         setPendingReview(review);
         setReviewDecisions(Object.fromEntries(
-          review.release_note_candidates.map((candidate) => [candidate.candidate_id, { decision: "accept", comment: "" } satisfies ReviewDecision]),
+          review.release_note_candidates.map((candidate) => [candidate.candidate_id, { decision: "accept" } satisfies ReviewDecision]),
         ));
         setTraceExpanded(true);
         return;
@@ -553,11 +563,13 @@ export function RootCauseAIAgentsTabContent() {
       toast({ title: "Root-cause analysis failed", description: error instanceof Error ? error.message : "Request failed", variant: "destructive" });
     } finally {
       setLoading(false);
+      onRunStateChange?.(Boolean(pendingReview) || reviewSubmitting || postRunSubmitting);
     }
   };
 
   const submitReleaseNoteReview = async () => {
     if (!pendingReview) return;
+    onRunStateChange?.(true);
     setReviewSubmitting(true);
     setReviewFullscreenOpen(false);
     setLoading(true);
@@ -581,7 +593,7 @@ export function RootCauseAIAgentsTabContent() {
               workbook: candidate.workbook,
               sheet: candidate.sheet,
               decision: reviewDecisions[candidate.candidate_id]?.decision || "accept",
-              comment: reviewDecisions[candidate.candidate_id]?.comment || "",
+              comment: "",
             })),
           },
         }),
@@ -611,6 +623,7 @@ export function RootCauseAIAgentsTabContent() {
     } finally {
       setReviewSubmitting(false);
       setLoading(false);
+      onRunStateChange?.(Boolean(pendingReview) || reviewSubmitting || postRunSubmitting);
     }
   };
 
@@ -618,13 +631,14 @@ export function RootCauseAIAgentsTabContent() {
     if (!result) return;
     setPostRunPrimaryCause(result.analysis.primary_cause || "");
     setPostRunDecisions(Object.fromEntries(
-      (result.stages?.release_notes || []).map((_, index) => [String(index), { decision: "accept", comment: "" } satisfies PostRunReleaseNoteDecision]),
+      (result.stages?.release_notes || []).map((_, index) => [String(index), { decision: "accept" } satisfies PostRunReleaseNoteDecision]),
     ));
     setPostRunReviewOpen(true);
   };
 
   const submitPostRunReview = async () => {
     if (!result?.review_id) return;
+    onRunStateChange?.(true);
     setPostRunSubmitting(true);
     setPostRunReviewOpen(false);
     try {
@@ -643,7 +657,7 @@ export function RootCauseAIAgentsTabContent() {
             release_note_decisions: Object.entries(postRunDecisions).map(([index, decision]) => ({
               index,
               decision: decision.decision,
-              comment: decision.comment,
+              comment: "",
             })),
           },
         }),
@@ -669,6 +683,7 @@ export function RootCauseAIAgentsTabContent() {
       toast({ title: "Post-run review failed", description: error instanceof Error ? error.message : "Request failed", variant: "destructive" });
     } finally {
       setPostRunSubmitting(false);
+      onRunStateChange?.(Boolean(pendingReview) || reviewSubmitting || postRunSubmitting);
     }
   };
 
@@ -732,24 +747,79 @@ export function RootCauseAIAgentsTabContent() {
         : [];
 
   return (
-    <div className="space-y-6 pb-20">
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2"><GitBranch className="h-5 w-5" /> RootCause analysis</CardTitle>
-          <p className="text-sm text-muted-foreground">Explain a result deviation using execution data, technical lineage, changed source fields, and release notes. All deviations are calculated as B - A.</p>
+    <div className="rootcause-ai-premium relative -m-5 min-h-[calc(100vh-7rem)] overflow-hidden bg-[radial-gradient(circle_at_top_left,_rgba(245,196,0,0.15),_transparent_34%),radial-gradient(circle_at_bottom_right,_rgba(245,196,0,0.08),_transparent_30%),linear-gradient(135deg,#0a0f16_0%,#101923_48%,#090d13_100%)] p-5 sm:-m-6 sm:p-6">
+      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(120deg,transparent_0%,rgba(245,196,0,0.03)_45%,transparent_70%)]" />
+      <div className="relative space-y-6 pb-20">
+      <Card className="relative overflow-hidden border border-[#f5c400]/20 bg-[radial-gradient(circle_at_top_left,_rgba(245,196,0,0.14),_transparent_30%),linear-gradient(135deg,#0d1117_0%,#101923_42%,#090d13_100%)] shadow-[0_24px_60px_rgba(0,0,0,0.35),0_0_28px_rgba(245,196,0,0.08)]">
+        <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(120deg,transparent,rgba(245,196,0,0.03),transparent)]" />
+        <CardHeader className="relative">
+          <div className="flex items-start justify-between gap-3">
+            <div className="space-y-2">
+              <div className="inline-flex items-center gap-2 rounded-full border border-[#f5c400]/30 bg-[#f5c400]/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-[#f5c400]">
+                <GitBranch className="h-3.5 w-3.5" />
+                RootCause AI agents
+              </div>
+            </div>
+            <div className="rounded-lg border border-[#f5c400]/20 bg-[#f5c400]/5 px-3 py-2 text-right text-[10px] uppercase tracking-[0.18em] text-[#f5c400]">
+              B - A
+              <div className="mt-1 text-[11px] normal-case tracking-normal text-[#8c96a8]">Deviation model</div>
+            </div>
+          </div>
+          <p className="relative mt-3 max-w-3xl text-sm leading-6 text-[#b8c1ce]">Explain a result deviation using execution data, technical lineage, changed source fields, and release notes. The agent system synthesizes the evidence before generating the final report.</p>
         </CardHeader>
-        <CardContent className="grid gap-4 md:grid-cols-2">
-          <div className="space-y-2"><Label>Cluster A (Base)</Label><Select value={clusterAId} onValueChange={setClusterAId}><SelectTrigger><SelectValue placeholder="Select base cluster" /></SelectTrigger><SelectContent>{clusters.map((cluster) => <SelectItem key={cluster.id} value={cluster.id}>{cluster.name}</SelectItem>)}</SelectContent></Select></div>
-          <div className="space-y-2"><Label>Cluster B (Compare)</Label><Select value={clusterBId} onValueChange={setClusterBId}><SelectTrigger><SelectValue placeholder="Select comparison cluster" /></SelectTrigger><SelectContent>{clusters.map((cluster) => <SelectItem key={cluster.id} value={cluster.id}>{cluster.name}</SelectItem>)}</SelectContent></Select></div>
-          <div className="space-y-2"><Label>Execution A</Label><Select value={executionA} onValueChange={setExecutionA}><SelectTrigger><SelectValue placeholder="Select execution" /></SelectTrigger><SelectContent>{executionsA.map((execution) => <SelectItem key={execution.execution_id} value={execution.execution_id}>{dateValue(execution.executed_date)}{execution.code_filename ? ` - ${execution.code_filename}` : ""}</SelectItem>)}</SelectContent></Select></div>
-          <div className="space-y-2"><Label>Execution B</Label><Select value={executionB} onValueChange={setExecutionB}><SelectTrigger><SelectValue placeholder="Select execution" /></SelectTrigger><SelectContent>{executionsB.map((execution) => <SelectItem key={execution.execution_id} value={execution.execution_id}>{dateValue(execution.executed_date)}{execution.code_filename ? ` - ${execution.code_filename}` : ""}</SelectItem>)}</SelectContent></Select></div>
-          <div className="space-y-2"><Label>Output field</Label><input className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={outputColumn} onChange={(event) => setOutputColumn(event.target.value)} placeholder="Carrying Amount" /></div>
-          <div className="space-y-2"><Label>Position</Label><Select value={position} onValueChange={setPosition}><SelectTrigger><SelectValue placeholder="All positions" /></SelectTrigger><SelectContent><SelectItem value="all">All positions</SelectItem>{positions.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}</SelectContent></Select></div>
-          <div className="md:col-span-2"><Button onClick={() => void analyze()} disabled={loading || reviewSubmitting}><Sparkles className="mr-2 h-4 w-4" />{loading ? "Analyzing..." : "Generate root cause analysis"}</Button></div>
+        <CardContent className="relative grid gap-4 md:grid-cols-2">
+          <div className="group rounded-2xl border border-[#2b3340] bg-[#0a1017]/90 p-3.5 transition-all duration-200 hover:border-[#f5c400]/35 hover:shadow-[0_0_0_1px_rgba(245,196,0,0.12)]">
+            <div className="mb-2 flex items-center justify-between">
+              <Label className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#8c96a8]">Cluster A</Label>
+              <span className="rounded-full border border-[#f5c400]/25 bg-[#f5c400]/8 px-2 py-0.5 text-[9px] font-medium text-[#f5c400]">Base</span>
+            </div>
+            <Select value={clusterAId} onValueChange={setClusterAId}><SelectTrigger className="h-11 border-[#2b3340] bg-[#121b26] text-[#f2f4f7] shadow-inner shadow-black/10"><SelectValue placeholder="Select base cluster" /></SelectTrigger><SelectContent>{clusters.map((cluster) => <SelectItem key={cluster.id} value={cluster.id}>{cluster.name}</SelectItem>)}</SelectContent></Select>
+          </div>
+          <div className="group rounded-2xl border border-[#2b3340] bg-[#0a1017]/90 p-3.5 transition-all duration-200 hover:border-[#f5c400]/35 hover:shadow-[0_0_0_1px_rgba(245,196,0,0.12)]">
+            <div className="mb-2 flex items-center justify-between">
+              <Label className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#8c96a8]">Cluster B</Label>
+              <span className="rounded-full border border-[#f5c400]/25 bg-[#f5c400]/8 px-2 py-0.5 text-[9px] font-medium text-[#f5c400]">Compare</span>
+            </div>
+            <Select value={clusterBId} onValueChange={setClusterBId}><SelectTrigger className="h-11 border-[#2b3340] bg-[#121b26] text-[#f2f4f7] shadow-inner shadow-black/10"><SelectValue placeholder="Select comparison cluster" /></SelectTrigger><SelectContent>{clusters.map((cluster) => <SelectItem key={cluster.id} value={cluster.id}>{cluster.name}</SelectItem>)}</SelectContent></Select>
+          </div>
+          <div className="group rounded-2xl border border-[#2b3340] bg-[#0a1017]/90 p-3.5 transition-all duration-200 hover:border-[#f5c400]/35 hover:shadow-[0_0_0_1px_rgba(245,196,0,0.12)]">
+            <div className="mb-2 flex items-center justify-between">
+              <Label className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#8c96a8]">Execution A</Label>
+              <span className="text-[9px] text-[#687386]">Snapshot</span>
+            </div>
+            <Select value={executionA} onValueChange={setExecutionA}><SelectTrigger className="h-11 border-[#2b3340] bg-[#121b26] text-[#f2f4f7] shadow-inner shadow-black/10"><SelectValue placeholder="Select execution" /></SelectTrigger><SelectContent>{executionsA.map((execution) => <SelectItem key={execution.execution_id} value={execution.execution_id}>{dateValue(execution.executed_date)}{execution.code_filename ? ` - ${execution.code_filename}` : ""}</SelectItem>)}</SelectContent></Select>
+          </div>
+          <div className="group rounded-2xl border border-[#2b3340] bg-[#0a1017]/90 p-3.5 transition-all duration-200 hover:border-[#f5c400]/35 hover:shadow-[0_0_0_1px_rgba(245,196,0,0.12)]">
+            <div className="mb-2 flex items-center justify-between">
+              <Label className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#8c96a8]">Execution B</Label>
+              <span className="text-[9px] text-[#687386]">Snapshot</span>
+            </div>
+            <Select value={executionB} onValueChange={setExecutionB}><SelectTrigger className="h-11 border-[#2b3340] bg-[#121b26] text-[#f2f4f7] shadow-inner shadow-black/10"><SelectValue placeholder="Select execution" /></SelectTrigger><SelectContent>{executionsB.map((execution) => <SelectItem key={execution.execution_id} value={execution.execution_id}>{dateValue(execution.executed_date)}{execution.code_filename ? ` - ${execution.code_filename}` : ""}</SelectItem>)}</SelectContent></Select>
+          </div>
+          <div className="group rounded-2xl border border-[#2b3340] bg-[#0a1017]/90 p-3.5 transition-all duration-200 hover:border-[#f5c400]/35 hover:shadow-[0_0_0_1px_rgba(245,196,0,0.12)] md:col-span-1">
+            <div className="mb-2 flex items-center justify-between">
+              <Label className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#8c96a8]">Output field</Label>
+              <span className="text-[9px] text-[#687386]">Target</span>
+            </div>
+            <input className="flex h-11 w-full rounded-md border border-[#2b3340] bg-[#121b26] px-3 py-2 text-sm text-[#f2f4f7] shadow-inner shadow-black/10 outline-none transition-colors placeholder:text-[#687386] focus:border-[#f5c400]/50 focus:ring-2 focus:ring-[#f5c400]/20" value={outputColumn} onChange={(event) => setOutputColumn(event.target.value)} placeholder="Carrying Amount" />
+          </div>
+          <div className="group rounded-2xl border border-[#2b3340] bg-[#0a1017]/90 p-3.5 transition-all duration-200 hover:border-[#f5c400]/35 hover:shadow-[0_0_0_1px_rgba(245,196,0,0.12)] md:col-span-1">
+            <div className="mb-2 flex items-center justify-between">
+              <Label className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#8c96a8]">Position</Label>
+              <span className="text-[9px] text-[#687386]">Filter</span>
+            </div>
+            <Select value={position} onValueChange={setPosition}><SelectTrigger className="h-11 border-[#2b3340] bg-[#121b26] text-[#f2f4f7] shadow-inner shadow-black/10"><SelectValue placeholder="All positions" /></SelectTrigger><SelectContent><SelectItem value="all">All positions</SelectItem>{positions.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}</SelectContent></Select>
+          </div>
+          <div className="md:col-span-2 flex justify-end pt-1">
+            <Button onClick={() => void analyze()} disabled={loading || reviewSubmitting} className="relative overflow-hidden border border-[#f5c400]/40 bg-gradient-to-r from-[#f5c400] via-[#f3d159] to-[#d8ad00] px-5 py-2.5 text-sm font-semibold text-[#16120a] shadow-[0_0_0_1px_rgba(251,191,36,0.25),0_14px_34px_rgba(245,196,0,0.22)] transition-all hover:scale-[1.01] hover:shadow-[0_0_0_1px_rgba(251,191,36,0.35),0_18px_38px_rgba(245,196,0,0.28)] disabled:cursor-not-allowed disabled:opacity-60">
+              <Sparkles className="mr-2 h-4 w-4" />
+              {loading ? "Analyzing..." : "Generate root cause analysis"}
+            </Button>
+          </div>
         </CardContent>
       </Card>
 
-      {(loading || result || pendingReview) && <Card className="border-[#f5c400]/25 bg-[#0b0f15]">
+      {(loading || result || pendingReview) && <Card className="rootcause-ai-surface relative overflow-hidden border-[#f5c400]/25 bg-[radial-gradient(circle_at_top_right,_rgba(245,196,0,0.10),_transparent_30%),linear-gradient(135deg,#0e151e_0%,#0a1017_100%)] shadow-[0_20px_52px_rgba(0,0,0,0.30),0_0_28px_rgba(245,196,0,0.06)]">
         <CardHeader>
           <CardTitle className="flex items-center justify-between gap-3 text-base">
             <span className="flex items-center gap-2"><Bot className="h-5 w-5 text-[#f5c400]" /> Agent reasoning trace</span>
@@ -786,10 +856,12 @@ export function RootCauseAIAgentsTabContent() {
                   <div className="flex shrink-0 items-center gap-2">
                     <Badge className={requiresReview ? "border-amber-400/60 bg-amber-400/15 text-amber-200" : undefined} variant={status === "completed" ? "default" : status === "running" ? "outline" : "secondary"}>{status}</Badge>
                     {requiresReview && pendingReview ? (
-                      <Button size="sm" variant="outline" className="rootcause-review-button relative overflow-hidden border-amber-300 bg-gradient-to-r from-amber-300 via-yellow-400 to-amber-500 px-3 font-semibold text-[#16120a] shadow-[0_0_0_1px_rgba(251,191,36,0.22),0_5px_18px_rgba(245,158,11,0.24)] transition-[transform,box-shadow,filter] duration-300 hover:scale-[1.03] hover:border-yellow-200 hover:bg-gradient-to-r hover:from-amber-200 hover:via-yellow-300 hover:to-amber-400 hover:text-[#16120a] hover:shadow-[0_0_0_1px_rgba(253,224,71,0.38),0_8px_24px_rgba(245,158,11,0.34)] focus-visible:ring-2 focus-visible:ring-amber-300 focus-visible:ring-offset-2 focus-visible:ring-offset-[#111820]" onClick={() => setReviewFullscreenOpen(true)} disabled={reviewSubmitting}>
-                        <Eye className="mr-2 h-4 w-4" />
-                        Review
-                      </Button>
+                      <span className="rootcause-review-pulse">
+                        <Button size="sm" variant="outline" className="rootcause-review-button relative overflow-hidden border-amber-300 bg-gradient-to-r from-amber-300 via-yellow-400 to-amber-500 px-3 font-semibold text-[#16120a] shadow-[0_0_0_1px_rgba(251,191,36,0.22),0_5px_18px_rgba(245,158,11,0.24)] transition-[transform,box-shadow,filter] duration-300 hover:scale-[1.03] hover:border-yellow-200 hover:bg-gradient-to-r hover:from-amber-200 hover:via-yellow-300 hover:to-amber-400 hover:text-[#16120a] hover:shadow-[0_0_0_1px_rgba(253,224,71,0.38),0_8px_24px_rgba(245,158,11,0.34)] focus-visible:ring-2 focus-visible:ring-amber-300 focus-visible:ring-offset-2 focus-visible:ring-offset-[#111820]" onClick={() => setReviewFullscreenOpen(true)} disabled={reviewSubmitting}>
+                          <Eye className="mr-2 h-4 w-4" />
+                          Review
+                        </Button>
+                      </span>
                     ) : null}
                   </div>
                 </div>
@@ -825,25 +897,22 @@ export function RootCauseAIAgentsTabContent() {
           })}
         </CardContent> : null}
       </Card>}
-      {pendingReview && reviewFullscreenOpen && !loading && <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-background/95 p-4 backdrop-blur-sm md:p-8">
-        <div className="my-auto flex w-full max-w-7xl flex-col gap-4">
-          <div className="sticky top-0 z-10 flex items-center justify-between gap-4 border-b border-border bg-background/95 pb-4 backdrop-blur-sm">
+      {pendingReview && reviewFullscreenOpen && !loading && <div className="fixed inset-0 z-50 flex items-center justify-center overflow-hidden bg-background/95 p-4 backdrop-blur-sm md:p-8">
+        <div className="flex h-full w-full max-w-7xl flex-col gap-4">
+          <div className="flex shrink-0 items-center justify-between gap-4 border-b border-border bg-background/95 pb-4 backdrop-blur-sm">
             <div className="min-w-0 flex-1">
               <h3 className="truncate text-xl font-semibold text-foreground md:text-2xl">Release-note human review</h3>
               <p className="mt-1 text-sm text-muted-foreground">Review links proposed by the Release-Note Agent before the LangGraph run continues.</p>
             </div>
-            <button type="button" onClick={() => setReviewFullscreenOpen(false)} className="rounded-lg border border-border bg-card p-2 text-muted-foreground transition-all hover:bg-accent hover:text-foreground md:p-3" aria-label="Close release-note review">
-              <X className="h-5 w-5" />
-            </button>
           </div>
-          <div className="rounded-lg border border-[#f5c400]/40 bg-[#0b0f15] p-4 md:p-6">
-            <div className="mb-5 flex items-start gap-3 rounded-md border border-[#f5c400]/25 bg-[#f5c400]/5 p-4">
+          <div className="flex min-h-0 flex-1 flex-col rounded-lg border border-[#f5c400]/40 bg-[#0b0f15] p-4 md:p-6">
+            <div className="mb-5 shrink-0 flex items-start gap-3 rounded-md border border-[#f5c400]/25 bg-[#f5c400]/5 p-4">
               <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-[#f5c400]" />
-              <p className="text-sm leading-6 text-[#f2f4f7]">{pendingReview.message || "Approve, reject, or mark release-note links as partial before the LangGraph run continues."}</p>
+              <p className="text-sm leading-6 text-[#f2f4f7]">{pendingReview.message || "Accept or reject each proposed release-note link before the LangGraph run continues."}</p>
             </div>
-            <div className="space-y-3">
+            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-2">
               {pendingReview.release_note_candidates.map((candidate) => {
-                const decision = reviewDecisions[candidate.candidate_id] || { decision: "accept", comment: "" };
+                const decision = reviewDecisions[candidate.candidate_id] || { decision: "accept" };
                 return (
                   <div key={candidate.candidate_id} className="rounded-md border border-[#252a33] bg-[#05080d] p-3">
                     <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -863,30 +932,29 @@ export function RootCauseAIAgentsTabContent() {
                           <SelectTrigger><SelectValue /></SelectTrigger>
                           <SelectContent>
                             <SelectItem value="accept">Accept link</SelectItem>
-                            <SelectItem value="partial">Mark partial</SelectItem>
                             <SelectItem value="reject">Reject link</SelectItem>
                           </SelectContent>
                         </Select>
-                        <Textarea value={decision.comment} onChange={(event) => setReviewDecisions((current) => ({ ...current, [candidate.candidate_id]: { ...decision, comment: event.target.value } }))} placeholder="Optional review note" className="min-h-20" />
                       </div>
                     </div>
                   </div>
                 );
               })}
             </div>
-            <div className="mt-6 flex flex-wrap justify-end gap-2 border-t border-border pt-4">
-              <Button variant="outline" onClick={() => setReviewFullscreenOpen(false)} disabled={reviewSubmitting}>Close</Button>
-              <Button onClick={() => void submitReleaseNoteReview()} disabled={reviewSubmitting}>
-                {reviewSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}
-                Continue LangGraph run
-              </Button>
+            <div className="mt-5 flex shrink-0 flex-wrap justify-end gap-2 border-t border-border bg-[#0b0f15] pt-4">
+              <span className="rootcause-review-pulse">
+                <Button size="sm" variant="outline" className="rootcause-review-button relative overflow-hidden border-amber-300 bg-gradient-to-r from-amber-300 via-yellow-400 to-amber-500 px-3 font-semibold text-[#16120a] shadow-[0_0_0_1px_rgba(251,191,36,0.22),0_5px_18px_rgba(245,158,11,0.24)] transition-[transform,box-shadow,filter] duration-300 hover:scale-[1.03] hover:border-yellow-200 hover:bg-gradient-to-r hover:from-amber-200 hover:via-yellow-300 hover:to-amber-400 hover:text-[#16120a] hover:shadow-[0_0_0_1px_rgba(253,224,71,0.38),0_8px_24px_rgba(245,158,11,0.34)] focus-visible:ring-2 focus-visible:ring-amber-300 focus-visible:ring-offset-2 focus-visible:ring-offset-[#111820]" onClick={() => void submitReleaseNoteReview()} disabled={reviewSubmitting}>
+                  {reviewSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}
+                  Continue LangGraph run
+                </Button>
+              </span>
             </div>
           </div>
         </div>
       </div>}
-      {loading && <Card><CardContent className="space-y-3 p-6"><Skeleton className="h-5 w-1/3" /><Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" /></CardContent></Card>}
+      {loading && <Card className="rootcause-ai-surface border-[#f5c400]/20 bg-[linear-gradient(135deg,#0e151e_0%,#0a1017_100%)] shadow-[0_20px_52px_rgba(0,0,0,0.30)]"><CardContent className="space-y-3 p-6"><Skeleton className="h-5 w-1/3" /><Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" /></CardContent></Card>}
       {result && !loading && <div className="flex flex-col gap-6">
-        <Card className={`relative order-2 overflow-hidden transition-[filter,opacity] duration-500 ${postRunSubmitting ? "pointer-events-none opacity-45 grayscale-[0.35]" : ""}`}>
+        <Card className={`rootcause-ai-surface relative order-2 overflow-hidden border-[#f5c400]/20 bg-[radial-gradient(circle_at_top_right,_rgba(245,196,0,0.09),_transparent_30%),linear-gradient(135deg,#0e151e_0%,#0a1017_100%)] shadow-[0_20px_52px_rgba(0,0,0,0.30),0_0_26px_rgba(245,196,0,0.05)] transition-[filter,opacity] duration-500 ${postRunSubmitting ? "pointer-events-none opacity-45 grayscale-[0.35]" : ""}`}>
           <CardHeader>
             <CardTitle className="flex items-center justify-between text-base">
               <span>Structured root-cause results</span>
@@ -901,24 +969,7 @@ export function RootCauseAIAgentsTabContent() {
                 Showing {displayedRows.length} of {summaryRows.length} positions
               </span>
             </div>
-            <div className="mt-3 flex w-fit max-w-fit self-start rounded-lg border border-border/80 bg-background p-1 shadow-sm">
-              <Button
-                size="sm"
-                variant={resultView === "summary" ? "default" : "ghost"}
-                onClick={() => setResultView("summary")}
-                className="h-8 rounded-md px-3 text-xs font-semibold"
-              >
-                Summary
-              </Button>
-              <Button
-                size="sm"
-                variant={resultView === "lineage" ? "default" : "ghost"}
-                onClick={() => setResultView("lineage")}
-                className="h-8 rounded-md px-3 text-xs font-semibold"
-              >
-                Lineage breakdown
-              </Button>
-            </div>
+
           </CardHeader>
           {postRunSubmitting ? <div className="absolute inset-0 z-20 flex min-h-[520px] items-center justify-center bg-[#080b10]/70 p-6 backdrop-blur-[3px]" aria-hidden="true">
             <div className="flex min-w-[min(360px,calc(100vw-48px))] flex-col items-center gap-5 rounded-2xl border border-[#f5c400]/45 bg-[#111820]/98 px-10 py-9 text-center shadow-[0_20px_60px_rgba(0,0,0,0.58),0_0_40px_rgba(245,196,0,0.1)]">
@@ -936,9 +987,9 @@ export function RootCauseAIAgentsTabContent() {
             </div>
           </div> : null}
           {resultView === "summary" && <CardContent>
-            <div className="w-full overflow-hidden rounded-md border border-border [&_[data-slot=table-container]]:overflow-x-hidden">
+            <div className="w-full overflow-hidden rounded-xl border border-[#f5c400]/18 bg-[#080d13] shadow-[inset_0_0_0_1px_rgba(245,196,0,0.03)] [&_[data-slot=table-container]]:overflow-x-hidden">
               <Table className="w-full table-fixed">
-                <TableHeader className="bg-muted/80">
+                <TableHeader className="bg-[#141e2a]">
                   <TableRow>
                     <TableHead className="w-[9%] whitespace-normal break-words">Deviation</TableHead>
                     <TableHead className="w-[9%] whitespace-normal break-words">Output (B - A)</TableHead>
@@ -988,61 +1039,7 @@ export function RootCauseAIAgentsTabContent() {
             </div>
             {!displayedRows.length && <p className="py-6 text-sm text-muted-foreground">No changed final-output rows were returned.</p>}
           </CardContent>}
-          {resultView === "lineage" && <CardContent>
-              <p className="mb-4 text-sm text-muted-foreground">Detailed dependency rows for the positions shown above.</p>
-              <div className="w-full overflow-hidden rounded-md border border-border [&_[data-slot=table-container]]:overflow-x-hidden">
-                <Table className="w-full table-fixed">
-                  <TableHeader className="bg-muted/80">
-                    <TableRow>
-                      <TableHead className="w-[9%] whitespace-normal break-words">Deviation</TableHead>
-                      <TableHead className="w-[9%] whitespace-normal break-words">Output (B - A)</TableHead>
-                      <TableHead className="w-[14%] whitespace-normal break-words">Lineage</TableHead>
-                      <TableHead className="w-[12%] whitespace-normal break-words">Input</TableHead>
-                      <TableHead className="w-[8%] whitespace-normal break-words">Release Note</TableHead>
-                      <TableHead className="w-[9%] whitespace-normal break-words">Expectation Status</TableHead>
-                      <TableHead className="w-[28%] whitespace-normal break-words">Explanation</TableHead>
-                      <TableHead className="w-[5%] whitespace-normal break-words text-right">Score</TableHead>
-                      <TableHead className="w-[6%] whitespace-normal break-words text-center">View</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {detailRows
-                      .filter((row) => showUnchanged || changedRows.some((summary) => summary.position === row.position))
-                      .map((row, index) => (
-                        <TableRow key={`${row.position}-${row.output}-${index}`}>
-                          <TableCell className="min-w-0 whitespace-normal break-words align-top font-medium">{row.position}</TableCell>
-                          <TableCell className="min-w-0 whitespace-normal break-words align-top">{row.output}<div className={`text-xs ${differenceClassName(row.difference)}`}>{displayDifference(row.difference)}</div></TableCell>
-                          <TableCell className="min-w-0 whitespace-normal break-words align-top">{displayLineage(row.lineage, row.input, row.output) || "-"}</TableCell>
-                          <TableCell className="min-w-0 whitespace-normal break-words align-top">{row.input || "-"}</TableCell>
-                          <TableCell className="min-w-0 whitespace-normal break-words align-top">{row.release_note || "-"}</TableCell>
-                          <TableCell className="min-w-0 whitespace-normal break-words align-top">
-                            {(() => {
-                              const status = expectationStatus(row.release_note);
-                              const StatusIcon = status.icon;
-                              return <span className={`inline-flex items-center gap-1.5 text-xs font-semibold ${status.className}`} title={status.label}><StatusIcon className="h-4 w-4" aria-hidden="true" /><span className="sr-only">{status.label}</span></span>;
-                            })()}
-                          </TableCell>
-                          <TableCell className="min-w-0 whitespace-pre-line break-words align-top text-sm leading-5">{formatExplanation(row.explanation)}</TableCell>
-                          <TableCell className="min-w-0 whitespace-normal break-words align-top text-right font-semibold">{Math.round(row.confidence)}%</TableCell>
-                          <TableCell className="align-top text-center">
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon-sm"
-                              className="text-muted-foreground hover:bg-[#f5c400]/10 hover:text-[#f5c400]"
-                              title={`View details for ${row.position} ${row.output}`}
-                              aria-label={`View details for ${row.position} ${row.output}`}
-                              onClick={() => setSelectedRow(row)}
-                            >
-                              <Eye className="h-4 w-4" />
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                  </TableBody>
-                </Table>
-              </div>
-            </CardContent>}
+
         </Card>
         <Dialog open={selectedRow !== null} onOpenChange={(open) => !open && setSelectedRow(null)}>
           <DialogContent className="max-h-[85vh] overflow-y-auto border-[#303845] bg-[#0f141c] text-[#f2f4f7] sm:max-w-2xl">
@@ -1093,18 +1090,20 @@ export function RootCauseAIAgentsTabContent() {
               </button>
             </div>
             <div className="rounded-lg border border-[#f5c400]/40 bg-[#0b0f15] p-4 md:p-6">
+              {/*
               <div className="mb-5 rounded-md border border-[#f5c400]/25 bg-[#f5c400]/5 p-4">
                 <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#f5c400]">Final report instruction</p>
                 <p className="mt-1 text-xs leading-5 text-[#8c96a8]">Describe exactly how the completed report should change; the instruction is applied across the final conclusion and position explanations.</p>
                 <Textarea value={postRunPrimaryCause} onChange={(event) => setPostRunPrimaryCause(event.target.value)} className="mt-3 min-h-24" placeholder="Describe the changes required in the final report and position explanations..." />
               </div>
+              */}
               <div className="space-y-3">
                 <div>
                   <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#f5c400]">Release-note matches</p>
-                  <p className="mt-1 text-xs text-[#8c96a8]">Accept, mark partial, or reject each linked release note before regeneration.</p>
+                  <p className="mt-1 text-xs text-[#8c96a8]">Accept or reject each linked release note before regeneration.</p>
                 </div>
                 {finalReportReleaseNotes.map((note, index) => {
-                  const decision = postRunDecisions[String(index)] || { decision: "accept", comment: "" };
+                  const decision = postRunDecisions[String(index)] || { decision: "accept" };
                   return (
                     <div key={`${note.workbook || "workbook"}-${note.sheet || "sheet"}-${note.jira_id || index}`} className="rounded-md border border-[#252a33] bg-[#05080d] p-3">
                       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -1122,11 +1121,9 @@ export function RootCauseAIAgentsTabContent() {
                             <SelectTrigger><SelectValue /></SelectTrigger>
                             <SelectContent>
                               <SelectItem value="accept">Accept link</SelectItem>
-                              <SelectItem value="partial">Mark partial</SelectItem>
                               <SelectItem value="reject">Reject link</SelectItem>
                             </SelectContent>
                           </Select>
-                          <Textarea value={decision.comment} onChange={(event) => setPostRunDecisions((current) => ({ ...current, [String(index)]: { ...decision, comment: event.target.value } }))} placeholder="Optional review note" className="min-h-20" />
                         </div>
                       </div>
                     </div>
@@ -1144,7 +1141,7 @@ export function RootCauseAIAgentsTabContent() {
             </div>
           </div>
         </div>}
-        <Card ref={finalReportRef} className="relative order-1 scroll-mt-6 overflow-hidden border-[#f5c400]/25 bg-[#0b0f15]">
+        <Card ref={finalReportRef} className="rootcause-ai-surface relative order-1 scroll-mt-6 overflow-hidden border-[#f5c400]/28 bg-[radial-gradient(circle_at_top_right,_rgba(245,196,0,0.14),_transparent_30%),linear-gradient(135deg,#0f1721_0%,#0a1017_100%)] shadow-[0_22px_58px_rgba(0,0,0,0.34),0_0_30px_rgba(245,196,0,0.07)]">
           <CardHeader>
             <CardTitle className="flex items-center justify-between gap-3 text-base">
               <span className="flex items-center gap-2"><Sparkles className="h-5 w-5 text-[#f5c400]" /> Final Rootcause Report</span>
@@ -1290,6 +1287,30 @@ export function RootCauseAIAgentsTabContent() {
         </div>
       </div>
       <style jsx>{`
+        .rootcause-ai-surface::before {
+          content: "";
+          position: absolute;
+          inset: 0;
+          pointer-events: none;
+          background: linear-gradient(120deg, rgba(255,255,255,0.025), transparent 34%, rgba(245,196,0,0.025));
+        }
+
+        .rootcause-ai-premium .rootcause-ai-surface [data-slot="card-header"],
+        .rootcause-ai-premium .rootcause-ai-surface [data-slot="card-content"] {
+          position: relative;
+        }
+
+        .rootcause-ai-premium .rounded-sm.border {
+          border-color: rgba(245, 196, 0, 0.15);
+          background: linear-gradient(135deg, rgba(14, 21, 30, 0.96), rgba(8, 13, 20, 0.96));
+          box-shadow: inset 0 0 0 1px rgba(245, 196, 0, 0.025), 0 10px 24px rgba(0, 0, 0, 0.14);
+        }
+
+        .rootcause-ai-premium .rounded-md.border {
+          border-color: rgba(245, 196, 0, 0.2);
+          box-shadow: inset 0 0 0 1px rgba(245, 196, 0, 0.03), 0 12px 28px rgba(0, 0, 0, 0.16);
+        }
+
         .rootcause-progress-copy {
           animation: rootcause-copy-arrival 420ms cubic-bezier(0.32, 0.72, 0, 1) both;
         }
@@ -1320,6 +1341,33 @@ export function RootCauseAIAgentsTabContent() {
         .rootcause-review-button:hover {
           animation-duration: 1.8s;
           filter: saturate(1.12) brightness(1.04);
+        }
+
+        .rootcause-review-pulse {
+          position: relative;
+          display: inline-flex;
+          isolation: isolate;
+        }
+
+        .rootcause-review-pulse::before,
+        .rootcause-review-pulse::after {
+          content: "";
+          position: absolute;
+          inset: -5px;
+          z-index: 0;
+          border: 1px solid rgba(253, 224, 71, 0.72);
+          border-radius: 0.65rem;
+          box-shadow: 0 0 16px rgba(245, 196, 0, 0.26);
+          animation: rootcause-review-pulse 2.8s cubic-bezier(0.32, 0.72, 0, 1) infinite;
+          pointer-events: none;
+        }
+
+        .rootcause-review-pulse .rootcause-review-button {
+          z-index: 1;
+        }
+
+        .rootcause-review-pulse::after {
+          animation-delay: 1.4s;
         }
 
         .rootcause-completed-step {
@@ -1381,6 +1429,12 @@ export function RootCauseAIAgentsTabContent() {
           50% { background-position: 100% 50%; }
         }
 
+        @keyframes rootcause-review-pulse {
+          0% { opacity: 0; transform: scale(0.94); }
+          24% { opacity: 0.68; }
+          72%, 100% { opacity: 0; transform: scale(1.16); }
+        }
+
         @keyframes rootcause-progress-glide {
           0% { transform: translateX(0) scaleX(0.7); opacity: 0; }
           18% { opacity: 0.58; }
@@ -1393,10 +1447,13 @@ export function RootCauseAIAgentsTabContent() {
           .rootcause-progress-copy,
           .rootcause-review-button,
           .rootcause-review-button::after,
+          .rootcause-review-pulse::before,
+          .rootcause-review-pulse::after,
           .rootcause-progress-fill::after,
           .post-run-loader-rail { animation: none; }
         }
       `}</style>
+      </div>
     </div>
   );
 }

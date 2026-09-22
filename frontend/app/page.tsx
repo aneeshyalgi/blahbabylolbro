@@ -47,6 +47,8 @@ const tabLabels: Record<string, string> = {
 
 export default function HomePage() {
   const [activeTab, setActiveTab] = useState("code");
+  const [isRootCauseAgentsNavigationLocked, setIsRootCauseAgentsNavigationLocked] = useState(false);
+  const isRootCausePremium = activeTab === "rootcause-ai-agents";
 
   useEffect(() => {
     const saved = typeof window !== "undefined" ? localStorage.getItem(TAB_STORAGE_KEY) : null;
@@ -56,6 +58,7 @@ export default function HomePage() {
   }, []);
 
   const handleTabChange = (tab: string) => {
+    if (isRootCauseAgentsNavigationLocked) return;
     setActiveTab(tab);
     if (typeof window !== "undefined") localStorage.setItem(TAB_STORAGE_KEY, tab);
   };
@@ -75,7 +78,7 @@ export default function HomePage() {
       case "root-cause":
         return <RootCauseTabContent key="normal-rootcause" />;
       case "rootcause-ai-agents":
-        return <RootCauseAIAgentsTabContent />;
+        return <RootCauseAIAgentsTabContent onRunStateChange={setIsRootCauseAgentsNavigationLocked} />;
       case "content-lineage":
         return <LineageTabContent variant="content" />;
       case "technical-lineage":
@@ -93,10 +96,15 @@ export default function HomePage() {
 
   return (
     <div className="flex min-h-screen bg-background">
-      <TabNavigation activeTab={activeTab} onTabChange={handleTabChange} />
+      <TabNavigation
+        activeTab={activeTab}
+        onTabChange={handleTabChange}
+        isNavigationLocked={isRootCauseAgentsNavigationLocked}
+        isRootCausePremium={isRootCausePremium}
+      />
 
       <div className="flex min-w-0 flex-1 flex-col ml-72">
-        <AppHeader title={tabLabels[activeTab] || activeTab} />
+        <AppHeader title={tabLabels[activeTab] || activeTab} isRootCausePremium={isRootCausePremium} />
         <main className="flex-1 overflow-auto bg-[#0d1117] p-5 sm:p-6">
           <div className="mx-auto max-w-[1600px] min-w-[1000px]">{renderTabContent()}</div>
         </main>
