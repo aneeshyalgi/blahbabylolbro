@@ -386,15 +386,14 @@ export function RootCauseTabContent() {
               <Table className="w-full table-fixed">
                 <TableHeader className="bg-muted/80">
                   <TableRow>
-                    <TableHead className="w-[9%] whitespace-normal break-words">Deviation</TableHead>
-                    <TableHead className="w-[9%] whitespace-normal break-words">Output (B - A)</TableHead>
-                    <TableHead className="w-[14%] whitespace-normal break-words">Lineage</TableHead>
-                    <TableHead className="w-[12%] whitespace-normal break-words">Input</TableHead>
-                    <TableHead className="w-[8%] whitespace-normal break-words">Release Note</TableHead>
-                    <TableHead className="w-[9%] whitespace-normal break-words">Expectation Status</TableHead>
-                    <TableHead className="w-[28%] whitespace-normal break-words">Explanation</TableHead>
-                    <TableHead className="w-[5%] whitespace-normal break-words text-right">Score</TableHead>
-                    <TableHead className="w-[6%] whitespace-normal break-words text-center">View</TableHead>
+                    <TableHead className="w-[12%] whitespace-normal break-words">Deviation</TableHead>
+                    <TableHead className="w-[12%] whitespace-normal break-words">Output (B - A)</TableHead>
+                    <TableHead className="w-[18%] whitespace-normal break-words">Lineage</TableHead>
+                    <TableHead className="w-[16%] whitespace-normal break-words">Input</TableHead>
+                    <TableHead className="w-[11%] whitespace-normal break-words">Release Note</TableHead>
+                    <TableHead className="w-[13%] whitespace-normal break-words">Expectation Status</TableHead>
+                    <TableHead className="w-[10%] whitespace-normal break-words text-right">Score</TableHead>
+                    <TableHead className="w-[8%] whitespace-normal break-words text-center">View</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -412,7 +411,6 @@ export function RootCauseTabContent() {
                           return <span className={`inline-flex items-center gap-1.5 text-xs font-semibold ${status.className}`} title={status.label}><StatusIcon className="h-4 w-4" aria-hidden="true" /><span className="sr-only">{status.label}</span></span>;
                         })()}
                       </TableCell>
-                      <TableCell className="min-w-0 whitespace-pre-line break-words align-top text-sm leading-5">{formatExplanation(row.explanation)}</TableCell>
                       <TableCell className="min-w-0 whitespace-normal break-words align-top text-right font-semibold">{Math.round(row.confidence)}%</TableCell>
                       <TableCell className="align-top text-center">
                         <Button
@@ -440,15 +438,14 @@ export function RootCauseTabContent() {
                 <Table className="w-full table-fixed">
                   <TableHeader className="bg-muted/80">
                     <TableRow>
-                      <TableHead className="w-[9%] whitespace-normal break-words">Deviation</TableHead>
-                      <TableHead className="w-[9%] whitespace-normal break-words">Output (B - A)</TableHead>
-                      <TableHead className="w-[14%] whitespace-normal break-words">Lineage</TableHead>
-                      <TableHead className="w-[12%] whitespace-normal break-words">Input</TableHead>
-                      <TableHead className="w-[8%] whitespace-normal break-words">Release Note</TableHead>
-                      <TableHead className="w-[9%] whitespace-normal break-words">Expectation Status</TableHead>
-                      <TableHead className="w-[28%] whitespace-normal break-words">Explanation</TableHead>
-                      <TableHead className="w-[5%] whitespace-normal break-words text-right">Score</TableHead>
-                      <TableHead className="w-[6%] whitespace-normal break-words text-center">View</TableHead>
+                      <TableHead className="w-[12%] whitespace-normal break-words">Deviation</TableHead>
+                      <TableHead className="w-[12%] whitespace-normal break-words">Output (B - A)</TableHead>
+                      <TableHead className="w-[18%] whitespace-normal break-words">Lineage</TableHead>
+                      <TableHead className="w-[16%] whitespace-normal break-words">Input</TableHead>
+                      <TableHead className="w-[11%] whitespace-normal break-words">Release Note</TableHead>
+                      <TableHead className="w-[13%] whitespace-normal break-words">Expectation Status</TableHead>
+                      <TableHead className="w-[10%] whitespace-normal break-words text-right">Score</TableHead>
+                      <TableHead className="w-[8%] whitespace-normal break-words text-center">View</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -468,7 +465,6 @@ export function RootCauseTabContent() {
                               return <span className={`inline-flex items-center gap-1.5 text-xs font-semibold ${status.className}`} title={status.label}><StatusIcon className="h-4 w-4" aria-hidden="true" /><span className="sr-only">{status.label}</span></span>;
                             })()}
                           </TableCell>
-                          <TableCell className="min-w-0 whitespace-pre-line break-words align-top text-sm leading-5">{formatExplanation(row.explanation)}</TableCell>
                           <TableCell className="min-w-0 whitespace-normal break-words align-top text-right font-semibold">{Math.round(row.confidence)}%</TableCell>
                           <TableCell className="align-top text-center">
                             <Button
