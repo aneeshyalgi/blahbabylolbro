@@ -70,6 +70,8 @@ export const API_ENDPOINTS = {
 
   // Release notes workbooks
   releaseNotes: `${API_BASE_URL}/api/release-notes`,
+  releaseNotesFromUpload: `${API_BASE_URL}/api/release-notes/from-upload`,
+  uploadChunk: (uploadId: string, index: number) => `${API_BASE_URL}/api/uploads/${uploadId}/chunks/${index}`,
   releaseNoteSheet: (id: string, sheetIndex: number) =>
     `${API_BASE_URL}/api/release-notes/${id}/sheets/${sheetIndex}`,
   releaseNoteFile: (id: string) => `${API_BASE_URL}/api/release-notes/${id}/file`,

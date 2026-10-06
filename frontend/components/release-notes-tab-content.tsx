@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Download, FileSpreadsheet, FileText, Loader2, RefreshCw, Trash2, Upload } from "lucide-react";
 import { API_ENDPOINTS } from "@/lib/api-config";
+import { uploadInChunks } from "@/lib/chunked-upload";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -30,6 +31,7 @@ type Workbook = {
 };
 
 const isPdf = (workbook: Workbook | null) => workbook?.kind === "pdf";
+const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 
 const SPECIAL_RELEASE_NOTE_FILENAME = "iref release notes_1.xlsm";
 const SPECIAL_RELEASE_NOTE_VISIBLE_SHEET = "rwa release notes";
@@ -55,6 +57,7 @@ export function PatchNotesTabContent() {
   const [loading, setLoading] = useState(true);
   const [loadingSheet, setLoadingSheet] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Workbook | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -113,13 +116,18 @@ export function PatchNotesTabContent() {
   }, [activeSheet, selectedVisibleSheets.length]);
 
   const uploadWorkbook = async (file: File) => {
-    const form = new FormData();
-    form.append("file", file);
+    if (file.size > MAX_UPLOAD_BYTES) {
+      toast({ title: "Upload failed", description: "Release notes files must be 25 MB or smaller.", variant: "destructive" });
+      if (inputRef.current) inputRef.current.value = "";
+      return;
+    }
     setUploading(true);
+    setUploadProgress(0);
     try {
-      const response = await fetch(API_ENDPOINTS.releaseNotes, { method: "POST", body: form });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.detail || "Upload failed.");
+      const payload = await uploadInChunks<Workbook>(file, API_ENDPOINTS.releaseNotesFromUpload, {
+        onProgress: setUploadProgress,
+        fallbackError: "Upload failed",
+      });
       await fetchWorkbooks(payload.id);
       setActiveSheet(0);
       toast({ title: "Release notes uploaded", description: payload.filename });
@@ -127,6 +135,7 @@ export function PatchNotesTabContent() {
       toast({ title: "Upload failed", description: requestError instanceof Error ? requestError.message : "Could not upload file.", variant: "destructive" });
     } finally {
       setUploading(false);
+      setUploadProgress(0);
       if (inputRef.current) inputRef.current.value = "";
     }
   };
@@ -161,7 +170,7 @@ export function PatchNotesTabContent() {
         <div className="flex gap-2">
           <input ref={inputRef} type="file" accept=".xlsx,.xlsm,.pdf" className="hidden" onChange={(event) => event.target.files?.[0] && void uploadWorkbook(event.target.files[0])} />
           <Button variant="outline" size="icon" onClick={() => void fetchWorkbooks()} aria-label="Refresh"><RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} /></Button>
-          <Button onClick={() => inputRef.current?.click()} disabled={uploading}>{uploading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}Upload Excel or PDF</Button>
+          <Button onClick={() => inputRef.current?.click()} disabled={uploading}>{uploading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}{uploading ? `Uploading ${Math.round(uploadProgress * 100)}%` : "Upload Excel or PDF"}</Button>
         </div>
       </div>
 

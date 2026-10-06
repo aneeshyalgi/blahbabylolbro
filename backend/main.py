@@ -17,6 +17,7 @@ import ast
 import re
 import base64
 import mimetypes
+import shutil
 import time
 from datetime import date, datetime
 from io import BytesIO
@@ -4148,18 +4149,95 @@ def _create_release_note_metadata_for_existing_file(workbook_path: Path) -> None
         return
 
 
+# Chunked uploads. The hosted frontend proxies API calls through Vercel, which rejects any request body
+# over 4.5 MB, so the browser sends larger files in parts and the backend reassembles them.
+UPLOAD_PARTS_DIR = APP_DATA_ROOT / "uploads" / "parts"
+UPLOAD_CHUNK_MAX_BYTES = 4 * 1024 * 1024
+UPLOAD_MAX_CHUNKS = 64
+UPLOAD_PARTS_MAX_AGE_SECONDS = 3600
+RELEASE_NOTES_MAX_BYTES = 25 * 1024 * 1024
+_UPLOAD_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
+
+
+class ChunkedUploadRequest(PydanticBaseModel):
+    upload_id: str
+    filename: str
+    total_chunks: int
+
+
+def _upload_parts_dir(upload_id: str) -> Path:
+    if not _UPLOAD_ID_PATTERN.match(upload_id or ""):
+        raise HTTPException(400, "Invalid upload id")
+    return UPLOAD_PARTS_DIR / upload_id
+
+
+def _remove_stale_upload_parts() -> None:
+    """Drop parts of uploads that were abandoned (e.g. the browser tab was closed mid-upload)."""
+    if not UPLOAD_PARTS_DIR.exists():
+        return
+    cutoff = time.time() - UPLOAD_PARTS_MAX_AGE_SECONDS
+    for parts_dir in UPLOAD_PARTS_DIR.iterdir():
+        try:
+            if parts_dir.is_dir() and parts_dir.stat().st_mtime < cutoff:
+                shutil.rmtree(parts_dir, ignore_errors=True)
+        except OSError:
+            continue
+
+
+def _assemble_upload(upload_id: str, total_chunks: int, max_bytes: int) -> bytes:
+    """Join the parts of a chunked upload in order and delete them; fails if a part is missing."""
+    parts_dir = _upload_parts_dir(upload_id)
+    if not 1 <= total_chunks <= UPLOAD_MAX_CHUNKS:
+        raise HTTPException(400, "Invalid number of upload parts")
+    try:
+        parts = [parts_dir / f"{index:05d}.part" for index in range(total_chunks)]
+        missing = [index for index, part in enumerate(parts) if not part.exists()]
+        if missing:
+            raise HTTPException(400, f"Upload is incomplete; missing part {missing[0] + 1} of {total_chunks}")
+        if sum(part.stat().st_size for part in parts) > max_bytes:
+            raise HTTPException(413, f"The file must be {max_bytes // (1024 * 1024)} MB or smaller")
+        return b"".join(part.read_bytes() for part in parts)
+    finally:
+        shutil.rmtree(parts_dir, ignore_errors=True)
+
+
+@app.post("/api/uploads/{upload_id}/chunks/{index}")
+async def upload_chunk(upload_id: str, index: int, chunk: UploadFile = File(...)):
+    """Store one part of a chunked upload. Parts are combined by the endpoint the upload is meant for."""
+    parts_dir = _upload_parts_dir(upload_id)
+    if not 0 <= index < UPLOAD_MAX_CHUNKS:
+        raise HTTPException(400, "Invalid upload part number")
+    content = await chunk.read(UPLOAD_CHUNK_MAX_BYTES + 1)
+    if len(content) > UPLOAD_CHUNK_MAX_BYTES:
+        raise HTTPException(413, "Upload parts must be 4 MB or smaller")
+    _remove_stale_upload_parts()
+    parts_dir.mkdir(parents=True, exist_ok=True)
+    (parts_dir / f"{index:05d}.part").write_bytes(content)
+    return {"upload_id": upload_id, "index": index, "size": len(content)}
+
+
+@app.post("/api/release-notes/from-upload")
+def complete_release_notes_upload(request: ChunkedUploadRequest):
+    """Create a release-notes file from a finished chunked upload."""
+    content = _assemble_upload(request.upload_id, request.total_chunks, RELEASE_NOTES_MAX_BYTES)
+    return _store_release_note(request.filename, content)
+
+
 @app.post("/api/release-notes")
 async def upload_release_notes(file: UploadFile = File(...)):
-    original_filename = Path(file.filename or "").name
+    return _store_release_note(file.filename or "", await file.read())
+
+
+def _store_release_note(filename: str, content: bytes) -> Dict[str, Any]:
+    original_filename = Path(filename).name
     extension = Path(original_filename).suffix.lower()
     if extension not in (".xlsx", ".xlsm", ".pdf"):
         raise HTTPException(400, "Only .xlsx, .xlsm and .pdf files are supported")
     is_pdf = extension == ".pdf"
 
-    content = await file.read()
     if not content:
         raise HTTPException(400, "The uploaded file is empty")
-    if len(content) > 25 * 1024 * 1024:
+    if len(content) > RELEASE_NOTES_MAX_BYTES:
         raise HTTPException(413, "Release notes files must be 25 MB or smaller")
 
     release_note_id = str(uuid.uuid4())
