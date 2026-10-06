@@ -36,6 +36,7 @@ export const API_ENDPOINTS = {
   agentTemplates: `${API_BASE_URL}/api/agents/templates`,
   agentContextOptions: `${API_BASE_URL}/api/agents/context-options`,
   generateAgent: `${API_BASE_URL}/api/agents/generate`,
+  agentTranscribe: `${API_BASE_URL}/api/agents/transcribe`,
   agentConversations: (agentId: string) => `${API_BASE_URL}/api/agents/${agentId}/conversations`,
   agentConversation: (conversationId: string) => `${API_BASE_URL}/api/agents/conversations/${conversationId}`,
   // Streams through a Next route handler so server-sent events are not buffered by the rewrite proxy.
@@ -72,6 +73,7 @@ export const API_ENDPOINTS = {
   releaseNoteSheet: (id: string, sheetIndex: number) =>
     `${API_BASE_URL}/api/release-notes/${id}/sheets/${sheetIndex}`,
   releaseNoteFile: (id: string) => `${API_BASE_URL}/api/release-notes/${id}/file`,
+  releaseNoteView: (id: string) => `${API_BASE_URL}/api/release-notes/${id}/file?inline=true`,
   releaseNoteDelete: (id: string) => `${API_BASE_URL}/api/release-notes/${id}`,
 
   // Health check

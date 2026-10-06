@@ -26,7 +26,7 @@ from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -810,9 +810,12 @@ _RELEASE_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
 _STOPWORDS = {"the", "and", "for", "with", "from", "that", "this", "der", "die", "das", "und", "mit", "für", "von", "ein", "eine"}
 
 
-def _release_note_contexts() -> List[Dict[str, Any]]:
+def _release_note_contexts(ids: Optional[set] = None) -> List[Dict[str, Any]]:
+    """Parsed release-note files: the 12 most recent, or exactly the files in ``ids``."""
+    workbooks = _platform("list_release_note_workbooks")()
+    workbooks = [item for item in workbooks if str(item.get("id")) in ids] if ids else workbooks[:12]
     contexts = []
-    for workbook in _platform("list_release_note_workbooks")()[:12]:
+    for workbook in workbooks:
         stored = str(workbook.get("stored_filename") or "")
         path = RELEASE_NOTES_DIR / stored
         try:
@@ -838,6 +841,29 @@ def _record_field(record: Dict[str, Any], *needles: str) -> str:
     return ""
 
 
+def _searchable_release_notes(sources: List[str], requested: Any) -> List[Dict[str, Any]]:
+    """Release-note files a search may read: the agent's selected sources, narrowed by the files argument."""
+    contexts = _release_note_contexts(set(sources) if sources else None)
+    if sources and not contexts:
+        raise ToolError(
+            "None of the release-note files selected for this agent are available any more. "
+            "Tell the user to update the agent's release-note sources."
+        )
+    if isinstance(requested, str):
+        requested = [requested]
+    wanted = {str(item).strip().casefold() for item in (requested or []) if str(item).strip()}
+    if not wanted:
+        return contexts
+    chosen = [
+        context for context in contexts
+        if str(context.get("id")).casefold() in wanted or str(context.get("filename") or "").strip().casefold() in wanted
+    ]
+    if not chosen:
+        available = ", ".join(repr(context.get("filename")) for context in contexts)
+        raise ToolError(f"No release-note file matches {sorted(wanted)}. Files this agent can search: {available or 'none'}.")
+    return chosen
+
+
 def _tool_search_release_notes(args: Dict[str, Any]) -> ToolResult:
     query = str(args.get("query") or "").strip()
     if not query:
@@ -846,8 +872,9 @@ def _tool_search_release_notes(args: Dict[str, Any]) -> ToolResult:
     terms = [term for term in phrase.split() if (len(term) > 2 or term.isdigit()) and term not in _STOPWORDS]
     if not terms:
         terms = [phrase]
+    contexts = _searchable_release_notes(args.get("_release_note_sources") or [], args.get("files"))
     candidates = []
-    for context in _release_note_contexts():
+    for context in contexts:
         for sheet in context.get("sheets", []):
             for record in sheet.get("records", []):
                 text = _normalize_text(json.dumps(record, ensure_ascii=False, default=str))
@@ -874,6 +901,7 @@ def _tool_search_release_notes(args: Dict[str, Any]) -> ToolResult:
     return {
         "query": query,
         "terms": terms,
+        "searched_files": [context.get("filename") for context in contexts],
         "total_matches": len(candidates),
         "matches": candidates[:limit],
     }, _summary(f"{len(candidates)} matching release-note rows", f"{len(candidates)} passende Release-Note-Zeilen")
@@ -1035,10 +1063,18 @@ TOOLS: Dict[str, ToolSpec] = {
         ),
         ToolSpec(
             "search_release_notes", "Search release notes", "Evidence", "file-search",
-            "Search uploaded release-note workbooks for a field, position, topic or Jira id. Returns ranked rows with Jira id, problem and solution descriptions.",
+            "Search uploaded release notes (Excel workbooks and PDFs) for a field, position, topic or Jira id. Returns ranked rows (workbook rows, or PDF passages with their page) with Jira id, problem and solution descriptions.",
             {
                 "type": "object",
-                "properties": {"query": {"type": "string"}, "limit": {"type": "integer", "description": "1-20, default 8."}},
+                "properties": {
+                    "query": {"type": "string"},
+                    "files": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional file names (or release-note ids) to search, e.g. when the user names a specific release. Default: every file this agent may search.",
+                    },
+                    "limit": {"type": "integer", "description": "1-20, default 8."},
+                },
                 "required": ["query"],
             },
             _tool_search_release_notes,
@@ -1126,6 +1162,10 @@ def normalize_definition(raw: Any) -> Dict[str, Any]:
         "color": raw.get("color") if raw.get("color") in AGENT_COLORS else "amber",
         "max_steps": _clamp_int(raw.get("max_steps"), 8, 1, 12),
         "temperature": round(max(0.0, min(1.0, temperature)), 2),
+        # Release-note file ids search_release_notes is limited to; empty means every uploaded file.
+        "release_note_sources": [
+            source for source in _clean_list(raw.get("release_note_sources"), 20, 64) if _ID_PATTERN.match(source)
+        ],
     }
     if not definition["name"]:
         raise ValueError("Agent name is required")
@@ -1230,7 +1270,7 @@ TEMPLATES: List[Dict[str, Any]] = [
             "purpose": "Show which observed changes are expected by documented releases and which are not.",
             "instructions": (
                 "1. Get the changed columns and positions with compare_executions.\n"
-                "2. For each changed field, search_release_notes with the field name, then with the position context.\n"
+                "2. For each changed field, search_release_notes with the field name, then with the position context. If the user names specific release-note files, pass them in files.\n"
                 "3. Grade every candidate as supports / partially supports / unrelated, quoting the Jira id and solution description.\n"
                 "4. List changes with no documented release note as 'unexpected'."
             ),
@@ -1240,7 +1280,11 @@ TEMPLATES: List[Dict[str, Any]] = [
                 "Find release notes about Assessment Base.",
                 "List unexpected changes that have no release note.",
             ],
-            "guardrails": ["Quote the Jira id and solution description for every match.", "Never invent Jira ids."],
+            "guardrails": [
+                "Quote the Jira id and solution description for every match.",
+                "Never invent Jira ids.",
+                "Name the release-note file (and PDF page) behind every match.",
+            ],
             "output_format": "Table: changed field, positions, Jira id, grade, reasoning; then a list of unexpected changes.",
             "icon": "file-text",
             "color": "violet",
@@ -1383,7 +1427,7 @@ TEMPLATE_TRANSLATIONS: Dict[str, Dict[str, Dict[str, Any]]] = {
             "purpose": "Zeigen, welche beobachteten Veränderungen durch dokumentierte Releases erwartet sind und welche nicht.",
             "instructions": (
                 "1. Mit compare_executions die geänderten Spalten und Positionen ermitteln.\n"
-                "2. Für jedes geänderte Feld search_release_notes mit dem Feldnamen und anschließend mit dem Positionskontext ausführen.\n"
+                "2. Für jedes geänderte Feld search_release_notes mit dem Feldnamen und anschließend mit dem Positionskontext ausführen. Nennt der Nutzer bestimmte Release-Note-Dateien, diese in files übergeben.\n"
                 "3. Jeden Kandidaten als unterstützt / teilweise unterstützt / ohne Bezug bewerten und Jira-ID sowie Lösungsbeschreibung zitieren.\n"
                 "4. Veränderungen ohne dokumentierte Release Note als „unerwartet“ auflisten."
             ),
@@ -1392,7 +1436,11 @@ TEMPLATE_TRANSLATIONS: Dict[str, Dict[str, Dict[str, Any]]] = {
                 "Finde Release Notes zur Assessment Base.",
                 "Liste unerwartete Veränderungen ohne Release Note auf.",
             ],
-            "guardrails": ["Für jeden Treffer Jira-ID und Lösungsbeschreibung zitieren.", "Niemals Jira-IDs erfinden."],
+            "guardrails": [
+                "Für jeden Treffer Jira-ID und Lösungsbeschreibung zitieren.",
+                "Niemals Jira-IDs erfinden.",
+                "Für jeden Treffer die Release-Note-Datei (und PDF-Seite) nennen.",
+            ],
             "output_format": "Tabelle: geändertes Feld, Positionen, Jira-ID, Bewertung, Begründung; danach eine Liste unerwarteter Veränderungen.",
         },
         "portfolio-reporter": {
@@ -1510,6 +1558,24 @@ _LANGUAGE_RULES = {
 }
 
 
+def _release_note_scope_text(sources: List[str]) -> str:
+    try:
+        names = {str(item.get("id")): item.get("filename") for item in _platform("list_release_note_workbooks")()}
+    except Exception:
+        names = {}
+    files = [names[source] for source in sources if names.get(source)]
+    if not files:
+        return (
+            "Release-note scope: the release-note files selected for this agent are no longer available, so "
+            "search_release_notes will fail. Tell the user to choose the release-note sources again."
+        )
+    return (
+        "Release-note scope: the agent designer limited search_release_notes to these files: "
+        + ", ".join(f"'{name}'" for name in files)
+        + ". Only cite release notes from these files."
+    )
+
+
 def build_system_prompt(definition: Dict[str, Any], language: str = "en") -> str:
     enabled = [TOOLS[name] for name in definition["tools"] if name in TOOLS]
     sections = [
@@ -1535,6 +1601,8 @@ def build_system_prompt(definition: Dict[str, Any], language: str = "en") -> str
         )
     else:
         sections.append("You have no tools. Answer from the conversation only and say when data would be needed.")
+    if definition.get("release_note_sources") and "search_release_notes" in definition["tools"]:
+        sections.append(_release_note_scope_text(definition["release_note_sources"]))
     sections.append(
         "Non-negotiable operating rules:\n"
         "- Never invent ids, values, rows, formulas or Jira tickets. Every number you state must come from a tool result or the calculator.\n"
@@ -1612,7 +1680,12 @@ def _history_for_llm(messages: List[Dict[str, Any]]) -> List[Dict[str, str]]:
     return history
 
 
-def _execute_tool(name: str, raw_arguments: str, allowed: set) -> Tuple[Dict[str, Any], Any]:
+def _execute_tool(
+    name: str,
+    raw_arguments: str,
+    allowed: set,
+    release_note_sources: Optional[List[str]] = None,
+) -> Tuple[Dict[str, Any], Any]:
     """Run a tool; returns (payload for the model, summary as a str or {en, de} dict)."""
     try:
         arguments = json.loads(raw_arguments or "{}")
@@ -1625,6 +1698,10 @@ def _execute_tool(name: str, raw_arguments: str, allowed: set) -> Tuple[Dict[str
     if name not in allowed or name not in TOOLS:
         message = f"Tool '{name}' is not enabled for this agent."
         return {"ok": False, "error": message}, message
+    # Underscore arguments are set by the runtime only, so the model cannot widen its own scope.
+    arguments = {key: value for key, value in arguments.items() if not str(key).startswith("_")}
+    if name == "search_release_notes":
+        arguments["_release_note_sources"] = list(release_note_sources or [])
     try:
         data, summary = TOOLS[name].handler(arguments)
         return {"ok": True, "result": _safe(data)}, summary
@@ -1772,7 +1849,9 @@ def run_turn(
                 }
                 yield {"type": "step_start", "step": dict(step)}
                 step_started = time.monotonic()
-                payload, summary = _execute_tool(call["name"], call["arguments"], allowed)
+                payload, summary = _execute_tool(
+                    call["name"], call["arguments"], allowed, definition.get("release_note_sources")
+                )
                 result_text = json.dumps(payload, ensure_ascii=False, default=str)
                 if len(result_text) > MAX_TOOL_RESULT_CHARS:
                     result_text = result_text[:MAX_TOOL_RESULT_CHARS] + " ...[truncated; narrow the request with filters, columns or limit]"
@@ -1889,6 +1968,16 @@ def context_options():
     return {"clusters": clusters, "datasets": datasets}
 
 
+def _unwrap_agent(raw: Any) -> Dict[str, Any]:
+    """Models sometimes echo the request's wrapper (e.g. {"current_agent": {...}}); return the agent itself."""
+    if not isinstance(raw, dict):
+        return {}
+    if "name" in raw or "instructions" in raw:
+        return raw
+    nested = [value for value in raw.values() if isinstance(value, dict) and ("name" in value or "instructions" in value)]
+    return nested[0] if nested else raw
+
+
 @router.post("/generate")
 def generate_agent(request: GeneratePayload):
     prompt = request.prompt.strip()
@@ -1917,12 +2006,15 @@ def generate_agent(request: GeneratePayload):
             if _language(request.language) == "de"
             else "Write every natural-language value in English. "
         )
-        + "Return valid JSON only."
+        + "Return valid JSON only, with the agent's keys at the top level of the object (not nested under another key)."
     )
     if request.base_definition:
         user = json.dumps(
             {"current_agent": request.base_definition, "requested_change": prompt,
-             "task": "Revise the current agent to satisfy the requested change. Keep everything else that still fits. Return the complete revised agent."},
+             "task": "Revise the current agent to satisfy the requested change. The change must be visible in the fields it "
+                     "concerns (for example a request about answer style or length changes output_format, a new rule changes "
+                     "guardrails or instructions). Keep everything else that still fits. "
+                     "Return the complete revised agent itself as the top-level JSON object, not wrapped in current_agent."},
             ensure_ascii=False,
         )
     else:
@@ -1935,7 +2027,15 @@ def generate_agent(request: GeneratePayload):
             max_tokens=3000,
             response_format={"type": "json_object"},
         )
-        raw = json.loads(response.choices[0].message.content or "{}")
+        raw = _unwrap_agent(json.loads(response.choices[0].message.content or "{}"))
+        if request.base_definition:
+            # A refinement only has to return what changed; anything it leaves out keeps its current value.
+            raw = {
+                **request.base_definition,
+                **{key: value for key, value in raw.items() if value not in (None, "", [], {})},
+            }
+            # File choices are made by the user in the editor; a refinement keeps them.
+            raw["release_note_sources"] = request.base_definition.get("release_note_sources") or []
         definition = normalize_definition(raw)
         if not definition["tools"]:
             definition["tools"] = list(DEFAULT_TOOLS)
@@ -2001,6 +2101,84 @@ def delete_conversation(conversation_id: str):
     if not db.delete_ai_agent_conversation(conversation_id):
         raise HTTPException(404, "Conversation not found")
     return {"message": "Conversation deleted", "id": conversation_id}
+
+
+# Voice input: the studio records speech in the browser and sends it here to be transcribed.
+TRANSCRIBE_MAX_BYTES = 25 * 1024 * 1024  # OpenAI's upload limit for transcription
+_AUDIO_EXTENSIONS = {"webm", "ogg", "mp4", "m4a", "mp3", "mpeg", "mpga", "wav", "flac"}
+# Matching the prompt to the spoken language and naming the domain vocabulary improves accuracy
+# for terms such as "RWA" or "Bruttobuchwert" that a general model would otherwise misspell.
+_TRANSCRIBE_PROMPTS = {
+    "en": (
+        "A user is dictating a request to an AI analyst on a regulatory reporting platform. "
+        "Expected terms: RWA, EAD, CCF, risk weight, asset class, assessment base, carrying amount, "
+        "Bruttobuchwert, Saldo, Nominal, EWB, PWB, Anteilige Zinsen, cluster, execution, dataset, "
+        "lineage, release notes, Jira, CRR, B minus A."
+    ),
+    "de": (
+        "Ein Nutzer diktiert eine Anfrage an einen KI-Analysten auf einer Plattform für das "
+        "regulatorische Meldewesen. Erwartete Begriffe: RWA, EAD, CCF, Risikogewicht, Asset Class, "
+        "Assessment Base, Carrying Amount, Bruttobuchwert, Saldo, Nominal, EWB, PWB, Anteilige Zinsen, "
+        "Cluster, Ausführung, Datensatz, Lineage, Release Notes, Jira, CRR, B minus A."
+    ),
+}
+
+
+def _audio_extension(filename: str, content_type: str) -> str:
+    suffix = Path(filename or "").suffix.lstrip(".").lower()
+    if suffix in _AUDIO_EXTENSIONS:
+        return suffix
+    subtype = content_type.split("/")[-1].lower()
+    return subtype if subtype in _AUDIO_EXTENSIONS else "webm"
+
+
+def _transcription_error(exc: Exception, language: str) -> str:
+    status = getattr(exc, "status_code", None)
+    german = language == "de"
+    if status == 401:
+        return "OpenAI hat den API-Schlüssel abgelehnt. Prüfen Sie OPENAI_API_KEY." if german else "OpenAI rejected the API key. Check OPENAI_API_KEY."
+    if status == 404:
+        return (
+            "Das Transkriptionsmodell wurde nicht gefunden. Prüfen Sie OPENAI_TRANSCRIBE_MODEL."
+            if german else "The transcription model was not found. Check OPENAI_TRANSCRIBE_MODEL."
+        )
+    if status == 429:
+        return "OpenAI begrenzt derzeit die Anfragen. Bitte versuchen Sie es gleich erneut." if german else "OpenAI is rate limiting requests. Try again in a moment."
+    return f"Die Spracherkennung ist fehlgeschlagen: {exc}" if german else f"Transcription failed: {exc}"
+
+
+@router.post("/transcribe")
+def transcribe_audio(file: UploadFile = File(...), language: str = Form("en")):
+    """Transcribe recorded speech with OpenAI in the studio's selected language (English or German)."""
+    lang = _language(language)
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        raise HTTPException(
+            503,
+            "Spracheingabe benötigt OPENAI_API_KEY im Backend." if lang == "de" else "Voice input needs OPENAI_API_KEY on the backend.",
+        )
+    audio = file.file.read(TRANSCRIBE_MAX_BYTES + 1)
+    if not audio:
+        raise HTTPException(400, "Es wurde kein Audio aufgenommen." if lang == "de" else "No audio was recorded.")
+    if len(audio) > TRANSCRIBE_MAX_BYTES:
+        raise HTTPException(413, "Die Aufnahme ist zu lang." if lang == "de" else "The recording is too long.")
+    content_type = (file.content_type or "").split(";")[0].strip()
+    extension = _audio_extension(file.filename or "", content_type)
+    from openai import OpenAI
+
+    client = OpenAI(api_key=api_key, timeout=60.0, max_retries=1)
+    try:
+        result = client.audio.transcriptions.create(
+            model=os.environ.get("OPENAI_TRANSCRIBE_MODEL", "gpt-4o-transcribe"),
+            file=(f"speech.{extension}", audio, content_type or f"audio/{extension}"),
+            language=lang,
+            prompt=_TRANSCRIBE_PROMPTS[lang],
+            response_format="json",
+        )
+    except Exception as exc:
+        traceback.print_exc()
+        raise HTTPException(502, _transcription_error(exc, lang)) from exc
+    return {"text": (getattr(result, "text", "") or "").strip(), "language": lang}
 
 
 @router.post("/runs/stream")

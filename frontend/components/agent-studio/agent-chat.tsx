@@ -23,6 +23,7 @@ import type {
   ToolInfo,
 } from "./types";
 import { AgentAvatar, ToolIcon, accentStyles } from "./visuals";
+import { VoiceInputButton, appendTranscript } from "./voice-input";
 
 type AgentChatProps = {
   definition: AgentDefinition;
@@ -59,6 +60,7 @@ export function AgentChat({
   const abortRef = useRef<AbortController | null>(null);
   const assistantIdRef = useRef<string | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const stickToBottom = useRef(true);
   const persistent = Boolean(agent) && !testMode;
   const agentId = agent?.id ?? null;
@@ -380,6 +382,7 @@ export function AgentChat({
             ) : null}
             <div data-tour="composer" className="rounded-xl border border-[#303845] bg-[#0d131b] p-2 transition-colors focus-within:border-[#f5c400]/50">
               <Textarea
+                ref={inputRef}
                 value={input}
                 onChange={(event) => setInput(event.target.value)}
                 onKeyDown={onKeyDown}
@@ -401,6 +404,14 @@ export function AgentChat({
                 </span>
                 <div className="flex items-center gap-2">
                   <span className="text-[10.5px] text-[#687386]">{t("chat.sendHint")}</span>
+                  <VoiceInputButton
+                    disabled={running}
+                    onTranscript={(text) => {
+                      // Dictation fills the box rather than sending, so the text can be checked first.
+                      setInput((current) => appendTranscript(current, text).slice(0, 8000));
+                      inputRef.current?.focus();
+                    }}
+                  />
                   {running ? (
                     <Button type="button" size="icon-sm" variant="outline" onClick={() => abortRef.current?.abort()} aria-label={t("chat.stop")}>
                       <Square className="h-3.5 w-3.5 fill-current" />

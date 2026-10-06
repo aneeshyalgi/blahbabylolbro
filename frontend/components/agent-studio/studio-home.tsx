@@ -8,6 +8,7 @@ import { useStudioText, type StudioTextKey } from "./i18n";
 import { parseProcedure } from "./procedure-editor";
 import type { AgentTemplate, ToolInfo } from "./types";
 import { AgentAvatar, ToolIcon, agentAccent } from "./visuals";
+import { VoiceInputButton, appendTranscript } from "./voice-input";
 
 const SCRATCH_IDEAS: StudioTextKey[] = ["home.idea1", "home.idea2", "home.idea3", "home.idea4"];
 const TAILOR_IDEAS: StudioTextKey[] = ["home.tailorIdea1", "home.tailorIdea2", "home.tailorIdea3", "home.tailorIdea4"];
@@ -231,6 +232,15 @@ export function StudioHome({
                   maxLength={8000}
                   disabled={generating}
                 />
+                <div className="flex justify-end px-1 pb-0.5">
+                  <VoiceInputButton
+                    disabled={generating}
+                    onTranscript={(text) => {
+                      setPrompt((current) => appendTranscript(current, text).slice(0, 8000));
+                      inputRef.current?.focus();
+                    }}
+                  />
+                </div>
               </div>
               <div className="mt-3 flex flex-wrap gap-1.5">
                 {ideas.map((idea) => (

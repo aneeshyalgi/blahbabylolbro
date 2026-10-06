@@ -33,6 +33,7 @@ import {
   type AgentDefinition,
   type AgentTemplate,
   type ContextOptions,
+  type ReleaseNoteFile,
   type SavedAgent,
   type ToolInfo,
 } from "@/components/agent-studio/types";
@@ -76,6 +77,8 @@ function AgentStudio() {
   const [deleting, setDeleting] = useState(false);
   const [contextOptions, setContextOptions] = useState<ContextOptions | null>(null);
   const [contextLoading, setContextLoading] = useState(false);
+  const [releaseNoteFiles, setReleaseNoteFiles] = useState<ReleaseNoteFile[]>([]);
+  const [releaseNoteFilesLoading, setReleaseNoteFilesLoading] = useState(true);
   // Changes whenever a different draft or agent is opened so the test bench starts a fresh conversation.
   const [editSession, setEditSession] = useState(0);
   // Foundation selected on the studio home (null = blank canvas); kept here so the guided tour can follow it.
@@ -97,10 +100,19 @@ function AgentStudio() {
     }
   }, [toast]);
 
+  const loadReleaseNoteFiles = useCallback(() => {
+    setReleaseNoteFilesLoading(true);
+    requestJson<{ workbooks: ReleaseNoteFile[] }>(API_ENDPOINTS.releaseNotes)
+      .then((payload) => setReleaseNoteFiles(payload.workbooks))
+      .catch(() => setReleaseNoteFiles([]))
+      .finally(() => setReleaseNoteFilesLoading(false));
+  }, []);
+
   useEffect(() => {
     void loadAgents();
     requestJson<{ tools: ToolInfo[] }>(API_ENDPOINTS.agentTools).then((payload) => setTools(payload.tools)).catch(() => setTools([]));
-  }, [loadAgents]);
+    loadReleaseNoteFiles();
+  }, [loadAgents, loadReleaseNoteFiles]);
 
   useEffect(() => {
     let cancelled = false;
@@ -369,6 +381,9 @@ function AgentStudio() {
               if (previousDefinition) setWorking(previousDefinition);
               setPreviousDefinition(null);
             }}
+            releaseNoteFiles={releaseNoteFiles}
+            releaseNoteFilesLoading={releaseNoteFilesLoading}
+            onReloadReleaseNoteFiles={loadReleaseNoteFiles}
           />
         </div>
         <div data-tour="save-bar" className="flex shrink-0 items-center justify-between gap-2 border-t border-[#1c222b] bg-[#080c12] px-5 py-3">

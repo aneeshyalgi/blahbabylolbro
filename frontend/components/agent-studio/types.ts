@@ -11,6 +11,18 @@ export type AgentDefinition = {
   color: string;
   max_steps: number;
   temperature: number;
+  /** Release-note file ids the search tool is limited to; empty means every uploaded file. */
+  release_note_sources: string[];
+};
+
+/** An uploaded release-note file (Excel workbook or PDF), as listed by /api/release-notes. */
+export type ReleaseNoteFile = {
+  id: string;
+  filename: string;
+  upload_date: string;
+  sheets: string[];
+  kind?: "excel" | "pdf";
+  page_count?: number;
 };
 
 export type SavedAgent = {
@@ -117,4 +129,5 @@ export const EMPTY_DEFINITION: AgentDefinition = {
   color: "amber",
   max_steps: 8,
   temperature: 0.2,
+  release_note_sources: [],
 };

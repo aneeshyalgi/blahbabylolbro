@@ -31,6 +31,7 @@ import database as db
 import web_scraper
 import auth as auth_module
 import agent_runtime
+import release_note_pdf
 
 # Static content mirrored from frontend-only tabs (Regulations hardcoded example,
 # Release notes summary) so the chatbot can answer about them regardless of the
@@ -3920,6 +3921,36 @@ def _release_note_sheet_rows_for_chat(
     return records
 
 
+def _release_note_kind(metadata: Dict[str, Any]) -> str:
+    return "pdf" if str(metadata.get("stored_filename") or "").lower().endswith(".pdf") else "excel"
+
+
+def _pdf_release_note_context(metadata: Dict[str, Any], file_path: Path) -> Optional[Dict[str, Any]]:
+    """Release-note context for a PDF: one "sheet" per page whose records are text passages."""
+    try:
+        extracted = release_note_pdf.pdf_release_note_pages(file_path)
+    except Exception:
+        return None
+    return {
+        "id": metadata.get("id"),
+        "filename": metadata.get("filename") or file_path.name,
+        "stored_filename": file_path.name,
+        "kind": "pdf",
+        "truncated": extracted["truncated"],
+        "sheets": [
+            {
+                "name": f"Page {page['page']}",
+                "range": {"page": page["page"]},
+                "truncated": False,
+                "image_count": 0,
+                "records": page["records"],
+            }
+            for page in extracted["pages"]
+            if page["records"]
+        ],
+    }
+
+
 def _chat_release_note_workbook_context(metadata: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     stored_filename = metadata.get("stored_filename")
     if not isinstance(stored_filename, str) or not stored_filename:
@@ -3928,6 +3959,9 @@ def _chat_release_note_workbook_context(metadata: Dict[str, Any]) -> Optional[Di
     file_path = RELEASE_NOTES_DIR / stored_filename
     if not file_path.exists():
         return None
+
+    if _release_note_kind(metadata) == "pdf":
+        return _pdf_release_note_context(metadata, file_path)
 
     try:
         workbook = openpyxl.load_workbook(
@@ -4062,20 +4096,30 @@ def _sync_release_note_workbook_metadata() -> None:
         if workbook_path.name in metadata_by_stored_filename:
             continue
         _create_release_note_metadata_for_existing_file(workbook_path)
+    for pdf_path in RELEASE_NOTES_DIR.glob("*.pdf"):
+        if pdf_path.name in metadata_by_stored_filename:
+            continue
+        _create_release_note_metadata_for_existing_file(pdf_path)
 
 
 def _create_release_note_metadata_for_existing_file(workbook_path: Path) -> None:
+    is_pdf = workbook_path.suffix.lower() == ".pdf"
+    page_count = None
     try:
-        workbook = openpyxl.load_workbook(
-            workbook_path,
-            read_only=True,
-            data_only=False,
-            keep_vba=workbook_path.suffix.lower() == ".xlsm",
-        )
-        sheet_names = list(workbook.sheetnames)
-        workbook.close()
-        if not sheet_names:
-            return
+        if is_pdf:
+            page_count = release_note_pdf.inspect_pdf(workbook_path)
+            sheet_names: List[str] = []
+        else:
+            workbook = openpyxl.load_workbook(
+                workbook_path,
+                read_only=True,
+                data_only=False,
+                keep_vba=workbook_path.suffix.lower() == ".xlsm",
+            )
+            sheet_names = list(workbook.sheetnames)
+            workbook.close()
+            if not sheet_names:
+                return
     except Exception:
         return
 
@@ -4092,8 +4136,11 @@ def _create_release_note_metadata_for_existing_file(workbook_path: Path) -> None
         "stored_filename": workbook_path.name,
         "size": int(stat.st_size),
         "upload_date": _german_timestamp_from_epoch(stat.st_mtime).isoformat(),
+        "kind": "pdf" if is_pdf else "excel",
         "sheets": sheet_names,
     }
+    if page_count is not None:
+        metadata["page_count"] = page_count
     metadata_path = RELEASE_NOTES_DIR / f"{release_note_id}.json"
     try:
         metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
@@ -4105,38 +4152,44 @@ def _create_release_note_metadata_for_existing_file(workbook_path: Path) -> None
 async def upload_release_notes(file: UploadFile = File(...)):
     original_filename = Path(file.filename or "").name
     extension = Path(original_filename).suffix.lower()
-    if extension not in (".xlsx", ".xlsm"):
-        raise HTTPException(400, "Only .xlsx and .xlsm Excel files are supported")
+    if extension not in (".xlsx", ".xlsm", ".pdf"):
+        raise HTTPException(400, "Only .xlsx, .xlsm and .pdf files are supported")
+    is_pdf = extension == ".pdf"
 
     content = await file.read()
     if not content:
-        raise HTTPException(400, "The uploaded workbook is empty")
+        raise HTTPException(400, "The uploaded file is empty")
     if len(content) > 25 * 1024 * 1024:
-        raise HTTPException(413, "Release notes workbooks must be 25 MB or smaller")
+        raise HTTPException(413, "Release notes files must be 25 MB or smaller")
 
     release_note_id = str(uuid.uuid4())
     stored_filename = f"{release_note_id}{extension}"
     temporary_path = RELEASE_NOTES_DIR / f"{release_note_id}.tmp{extension}"
     file_path = RELEASE_NOTES_DIR / stored_filename
+    page_count = None
     try:
         temporary_path.write_bytes(content)
-        workbook = openpyxl.load_workbook(
-            temporary_path,
-            read_only=True,
-            data_only=False,
-            keep_vba=extension == ".xlsm",
-        )
-        sheet_names = list(workbook.sheetnames)
-        workbook.close()
-        if not sheet_names:
-            raise HTTPException(400, "The workbook does not contain any sheets")
+        if is_pdf:
+            page_count = release_note_pdf.inspect_pdf(temporary_path)
+            sheet_names: List[str] = []
+        else:
+            workbook = openpyxl.load_workbook(
+                temporary_path,
+                read_only=True,
+                data_only=False,
+                keep_vba=extension == ".xlsm",
+            )
+            sheet_names = list(workbook.sheetnames)
+            workbook.close()
+            if not sheet_names:
+                raise HTTPException(400, "The workbook does not contain any sheets")
         os.replace(temporary_path, file_path)
     except HTTPException:
         temporary_path.unlink(missing_ok=True)
         raise
     except Exception as e:
         temporary_path.unlink(missing_ok=True)
-        raise HTTPException(400, f"Invalid Excel workbook: {e}") from e
+        raise HTTPException(400, f"Invalid {'PDF' if is_pdf else 'Excel workbook'}: {e}") from e
 
     metadata = {
         "id": release_note_id,
@@ -4144,8 +4197,11 @@ async def upload_release_notes(file: UploadFile = File(...)):
         "stored_filename": stored_filename,
         "size": len(content),
         "upload_date": _german_now_timestamp().isoformat(),
+        "kind": "pdf" if is_pdf else "excel",
         "sheets": sheet_names,
     }
+    if page_count is not None:
+        metadata["page_count"] = page_count
     (RELEASE_NOTES_DIR / f"{release_note_id}.json").write_text(
         json.dumps(metadata), encoding="utf-8"
     )
@@ -4159,6 +4215,7 @@ def _list_release_note_workbooks() -> List[Dict[str, Any]]:
         try:
             metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
             if (RELEASE_NOTES_DIR / metadata.get("stored_filename", "")).exists():
+                metadata.setdefault("kind", _release_note_kind(metadata))
                 workbooks.append(metadata)
         except (OSError, json.JSONDecodeError):
             continue
@@ -4274,20 +4331,25 @@ def _build_excel_sheet_view(file_path: Path, sheet_index: int) -> Dict[str, Any]
 @app.get("/api/release-notes/{release_note_id}/sheets/{sheet_index}")
 def get_release_notes_sheet(release_note_id: str, sheet_index: int):
     metadata = _release_note_metadata(release_note_id)
+    if _release_note_kind(metadata) == "pdf":
+        raise HTTPException(400, "PDF release notes have no worksheets; open the file instead")
     file_path = RELEASE_NOTES_DIR / metadata["stored_filename"]
     return _build_excel_sheet_view(file_path, sheet_index)
 
 
 @app.get("/api/release-notes/{release_note_id}/file")
-def download_release_notes(release_note_id: str):
+def download_release_notes(release_note_id: str, inline: bool = False):
     metadata = _release_note_metadata(release_note_id)
     file_path = RELEASE_NOTES_DIR / metadata["stored_filename"]
     if not file_path.exists():
-        raise HTTPException(404, "Release notes workbook file not found")
+        raise HTTPException(404, "Release notes file not found")
+    is_pdf = _release_note_kind(metadata) == "pdf"
     return FileResponse(
         file_path,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        media_type="application/pdf" if is_pdf else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         filename=metadata["filename"],
+        # Inline lets the Release notes tab show a PDF in the browser's own viewer.
+        content_disposition_type="inline" if inline and is_pdf else "attachment",
     )
 
 

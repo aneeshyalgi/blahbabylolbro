@@ -4,7 +4,7 @@
  */
 import type { StudioLocale } from "../i18n";
 
-export const TOUR_TEMPLATE_ID = "deviation-investigator";
+export const TOUR_TEMPLATE_ID = "release-note-matcher";
 
 export type DeckScreen = "language" | "welcome" | "how" | "anatomy" | "tools" | "trust" | "ready";
 export const DECK_SCREENS: DeckScreen[] = ["language", "welcome", "how", "anatomy", "tools", "trust", "ready"];
@@ -25,6 +25,7 @@ export type TourStepId =
   | "refine"
   | "procedure"
   | "tools"
+  | "sources"
   | "saveBar"
   | "testBench"
   | "pinContext"
@@ -56,6 +57,7 @@ export const TOUR_STEPS: TourStepDef[] = [
   { id: "refine", view: "workbench", target: "refine" },
   { id: "procedure", view: "workbench", target: "procedure" },
   { id: "tools", view: "workbench", target: "tools" },
+  { id: "sources", view: "workbench", target: "sources" },
   { id: "saveBar", view: "workbench", target: "save-bar" },
   { id: "testBench", view: "workbench", target: "test-bench" },
   { id: "pinContext", view: "workbench", target: "pin-context" },
@@ -326,9 +328,9 @@ const EN: OnboardingCopy = {
     checklistTitle: "In the tour you will",
     checklist: [
       "Find your way around the studio",
-      "Pick a template and read its blueprint",
+      "Pick the Release Note Matcher and read its blueprint",
       "Open it in the editor",
-      "Explore every section of the editor",
+      "Explore every section of the editor, including which release-note files it may search",
       "Learn how to test, pin context and read a run",
       "Know how to save it to your library",
     ],
@@ -372,16 +374,16 @@ const EN: OnboardingCopy = {
       chapter: "Stage 1 · Foundation",
       title: "Select a template",
       body: [
-        "We will use the Deviation Investigator. It explains why results changed between two runs — the most common question in this workspace.",
+        "We will use the Release Note Matcher. It checks which changes between two runs are documented in your uploaded release notes — Excel workbooks or PDFs — and flags the changes no release announced.",
       ],
-      action: "Click the highlighted Deviation Investigator card.",
+      action: "Click the highlighted Release Note Matcher card.",
     },
     blueprint: {
       chapter: "Stage 2 · Brief",
       title: "Read the blueprint",
       body: [
         "The blueprint previews exactly what the template contains: its purpose, its numbered procedure and the tools it is allowed to use.",
-        "Read the steps from top to bottom — this is the order in which the agent will work when you ask it a question.",
+        "The Release Note Matcher works in four steps: find what changed with compare_executions, search the release notes for every changed field with search_release_notes, grade each candidate as supporting, partially supporting or unrelated, and list the unexpected changes.",
       ],
     },
     brief: {
@@ -389,7 +391,7 @@ const EN: OnboardingCopy = {
       title: "Describe or tailor",
       body: [
         "With a template selected you have two options. “Use as-is” opens the template unchanged.",
-        "“Tailor with AI” rewrites the template around what you type here — for example “Focus only on the RWA column and answer in German”. The suggestions under the box are ready-made tailoring ideas.",
+        "“Tailor with AI” rewrites the template around what you type here — for example “Only grade changes to Carrying Amount and answer in German”. The suggestions under the box are ready-made tailoring ideas.",
         "With Blank canvas selected, this same box is where you describe a completely new agent.",
       ],
     },
@@ -405,7 +407,7 @@ const EN: OnboardingCopy = {
       chapter: "Stage 3 · Test & refine",
       title: "Your draft",
       body: [
-        "The header shows the agent's name and description. The “Draft” badge means it is not saved yet — it only exists in this browser tab until you press “Save agent”.",
+        "The header shows the agent's name and description — here, the Release Note Matcher. The “Draft” badge means it is not saved yet — it only exists in this browser tab until you press “Save agent”.",
         "Once saved, this area also shows the “Run” and “Configure” tabs and buttons to duplicate or delete the agent.",
       ],
     },
@@ -413,7 +415,7 @@ const EN: OnboardingCopy = {
       chapter: "Stage 3 · Test & refine",
       title: "The editor",
       body: [
-        "The left half is the agent's complete specification, section by section: identity, refine with AI, instructions, tools, starters, guardrails, answer format and advanced settings.",
+        "The left half is the agent's complete specification, section by section: identity, refine with AI, instructions, tools, release-note sources, starters, guardrails, answer format and advanced settings.",
         "Every change you make here is used immediately by the test bench on the right — even before you save.",
       ],
     },
@@ -421,7 +423,7 @@ const EN: OnboardingCopy = {
       chapter: "Stage 3 · Test & refine",
       title: "Refine with AI",
       body: [
-        "Describe a change in your own words, for example “Always end with a risk rating”, and press Apply. The designer rewrites the specification and keeps everything that still fits.",
+        "Describe a change in your own words, for example “Mark changes above 5% without a release note as high priority”, and press Apply. The designer rewrites the specification and keeps everything that still fits — including your release-note file selection.",
         "If you do not like the result, “Undo” restores the previous version.",
       ],
     },
@@ -429,7 +431,7 @@ const EN: OnboardingCopy = {
       chapter: "Stage 3 · Test & refine",
       title: "Purpose and procedure",
       body: [
-        "Purpose is one sentence describing the agent's job. Below it, each numbered card is one step of the procedure the agent follows.",
+        "Purpose is one sentence describing the agent's job. Below it, each numbered card is one step of the procedure the agent follows. In the Release Note Matcher, step 2 is where it calls search_release_notes once per changed field, and again with the position context.",
         "Press Enter inside a step to split it into a new step, Shift+Enter for a line break, and Backspace in an empty step to delete it. Hover a step to move it up or down.",
         "The “Insert tool” chips put a tool's exact name at your cursor, so a step always refers to a tool the agent can call. “Plain text” lets you edit all steps as one text.",
       ],
@@ -440,13 +442,23 @@ const EN: OnboardingCopy = {
       body: [
         "Each card is one tool. Cards with a coloured border and a check are switched on; faded cards are off. Click a card to switch it.",
         "The agent can only use tools that are switched on. Fewer tools make a more focused agent — but every tool named in the procedure must be on.",
+        "The Release Note Matcher uses five: workspace_overview and list_executions to find the runs, compare_executions to see what changed, search_release_notes to find the documentation, and query_data to check values on individual rows.",
+      ],
+    },
+    sources: {
+      chapter: "Stage 3 · Test & refine",
+      title: "Release-note sources",
+      body: [
+        "Because search_release_notes is switched on, this section appears. It decides which uploaded release notes — Excel workbooks or PDFs from the Release notes tab — the agent may search.",
+        "All files are ticked by default, so the agent searches every file — including ones uploaded later. Untick the files it should ignore, for example to keep only the notes of the release you are checking, and it can no longer read them: the search tool enforces the limit, the agent cannot widen it. “Use all files” ticks everything again.",
+        "During a conversation you can still narrow a single question further, e.g. “only check the R7.18 PDF”. If a selected file is later deleted, it is flagged here in red.",
       ],
     },
     saveBar: {
       chapter: "Stage 3 · Test & refine",
       title: "Saving",
       body: [
-        "This bar shows the save state. A draft must be saved before it appears in your library and before it keeps conversation history.",
+        "This bar shows the save state. A draft must be saved before it appears in your library and before it keeps conversation history. The release-note file selection is saved with the agent.",
         "For saved agents, “Discard” restores the last saved version and “Save changes” stores your edits.",
       ],
     },
@@ -463,7 +475,7 @@ const EN: OnboardingCopy = {
       title: "Pin context",
       body: [
         "“Pin context” tells the agent exactly which data you mean before it starts. You can pin executions, clusters and datasets.",
-        "For comparisons, pin the base execution first — it becomes A — and the compared execution second — it becomes B. Differences are always B − A.",
+        "The Release Note Matcher compares two runs, so pin the base execution first — it becomes A — and the compared execution second — it becomes B. Differences are always B − A.",
         "If you chose base and comparison clusters on the Cluster tab, one click pins their latest runs.",
       ],
     },
@@ -471,7 +483,7 @@ const EN: OnboardingCopy = {
       chapter: "Stage 3 · Test & refine",
       title: "Ask your first question",
       body: [
-        "Type a question and press Enter, or click one of the starter questions above. Shift+Enter adds a new line.",
+        "Type a question and press Enter, or click one of the starter questions above — for example “Which of the changes between the pinned executions are documented in release notes?”. Shift+Enter adds a new line.",
         "While the agent works, the square button stops it. The run uses your real data and the AI provider, so it can take a few seconds.",
       ],
       action: "Try it now if you like — or press Next to continue.",
@@ -482,6 +494,7 @@ const EN: OnboardingCopy = {
       body: [
         "Above each answer, “Worked for … · N tool calls” summarises the run. Click it to open the trace.",
         "Each row is one tool call: the tool, a short result, the arguments it used and how long it took. Click a row to see the exact data that was returned to the agent.",
+        "For the Release Note Matcher, open the search_release_notes rows: they list which files were searched and the matching Jira IDs with their solution descriptions, so you can check every grade in the answer.",
         "Under a finished answer you can copy it or download it as a Markdown file. When you are happy with the agent, press “Save agent” on the left.",
       ],
     },
@@ -493,6 +506,7 @@ const EN: OnboardingCopy = {
     tips: [
       "Specific, numbered steps produce the most reliable agents.",
       "Pin two executions — base first — for any comparison question.",
+      "Use “Release-note sources” to keep an agent on the release notes that matter.",
       "Open the run trace whenever you want to verify a number.",
       "Replay this tour any time with the “Guided tour” card at the top of the agent list.",
     ],
@@ -722,9 +736,9 @@ const DE: OnboardingCopy = {
     checklistTitle: "In der Tour werden Sie",
     checklist: [
       "sich im Studio zurechtfinden",
-      "eine Vorlage wählen und ihren Bauplan lesen",
-      "sie im Editor öffnen",
-      "jeden Bereich des Editors kennenlernen",
+      "den Release-Note-Abgleich wählen und seinen Bauplan lesen",
+      "ihn im Editor öffnen",
+      "jeden Bereich des Editors kennenlernen — auch, welche Release-Note-Dateien er durchsuchen darf",
       "lernen, wie man testet, Kontext fixiert und eine Ausführung liest",
       "wissen, wie man sie in der Bibliothek speichert",
     ],
@@ -768,16 +782,16 @@ const DE: OnboardingCopy = {
       chapter: "Stufe 1 · Grundlage",
       title: "Eine Vorlage auswählen",
       body: [
-        "Wir verwenden den Abweichungsanalysten. Er erklärt, warum sich Ergebnisse zwischen zwei Läufen verändert haben — die häufigste Frage in diesem Arbeitsbereich.",
+        "Wir verwenden den Release-Note-Abgleich. Er prüft, welche Veränderungen zwischen zwei Läufen in Ihren hochgeladenen Release Notes — Excel-Arbeitsmappen oder PDFs — dokumentiert sind, und markiert die Veränderungen, die kein Release angekündigt hat.",
       ],
-      action: "Klicken Sie auf die hervorgehobene Karte „Abweichungsanalyst“.",
+      action: "Klicken Sie auf die hervorgehobene Karte „Release-Note-Abgleich“.",
     },
     blueprint: {
       chapter: "Stufe 2 · Beschreibung",
       title: "Den Bauplan lesen",
       body: [
         "Der Bauplan zeigt genau, was die Vorlage enthält: ihren Zweck, ihren nummerierten Ablauf und die Tools, die sie nutzen darf.",
-        "Lesen Sie die Schritte von oben nach unten — in dieser Reihenfolge arbeitet der Agent, wenn Sie ihm eine Frage stellen.",
+        "Der Release-Note-Abgleich arbeitet in vier Schritten: mit compare_executions ermitteln, was sich geändert hat, mit search_release_notes für jedes geänderte Feld die Release Notes durchsuchen, jeden Kandidaten als unterstützt, teilweise unterstützt oder ohne Bezug bewerten und die unerwarteten Veränderungen auflisten.",
       ],
     },
     brief: {
@@ -785,7 +799,7 @@ const DE: OnboardingCopy = {
       title: "Beschreiben oder anpassen",
       body: [
         "Mit einer ausgewählten Vorlage haben Sie zwei Möglichkeiten. „Unverändert verwenden“ öffnet die Vorlage so, wie sie ist.",
-        "„Mit KI anpassen“ schreibt die Vorlage anhand Ihrer Eingabe um — zum Beispiel „Nur auf die Spalte RWA konzentrieren“. Die Vorschläge unter dem Feld sind fertige Anpassungsideen.",
+        "„Mit KI anpassen“ schreibt die Vorlage anhand Ihrer Eingabe um — zum Beispiel „Nur Veränderungen am Carrying Amount bewerten“. Die Vorschläge unter dem Feld sind fertige Anpassungsideen.",
         "Ist die leere Arbeitsfläche gewählt, beschreiben Sie in genau diesem Feld einen völlig neuen Agenten.",
       ],
     },
@@ -801,7 +815,7 @@ const DE: OnboardingCopy = {
       chapter: "Stufe 3 · Testen & verfeinern",
       title: "Ihr Entwurf",
       body: [
-        "Die Kopfzeile zeigt Name und Beschreibung des Agenten. Das Abzeichen „Entwurf“ bedeutet, dass er noch nicht gespeichert ist — er existiert nur in diesem Browser-Tab, bis Sie „Agent speichern“ wählen.",
+        "Die Kopfzeile zeigt Name und Beschreibung des Agenten — hier den Release-Note-Abgleich. Das Abzeichen „Entwurf“ bedeutet, dass er noch nicht gespeichert ist — er existiert nur in diesem Browser-Tab, bis Sie „Agent speichern“ wählen.",
         "Nach dem Speichern zeigt dieser Bereich auch die Tabs „Ausführen“ und „Konfigurieren“ sowie Schaltflächen zum Duplizieren und Löschen.",
       ],
     },
@@ -809,7 +823,7 @@ const DE: OnboardingCopy = {
       chapter: "Stufe 3 · Testen & verfeinern",
       title: "Der Editor",
       body: [
-        "Die linke Hälfte ist die vollständige Spezifikation des Agenten, Abschnitt für Abschnitt: Identität, Überarbeitung mit KI, Anweisungen, Tools, Gesprächseinstiege, Leitplanken, Antwortformat und erweiterte Einstellungen.",
+        "Die linke Hälfte ist die vollständige Spezifikation des Agenten, Abschnitt für Abschnitt: Identität, Überarbeitung mit KI, Anweisungen, Tools, Release-Note-Quellen, Gesprächseinstiege, Leitplanken, Antwortformat und erweiterte Einstellungen.",
         "Jede Änderung hier wird sofort von der Testumgebung rechts verwendet — auch vor dem Speichern.",
       ],
     },
@@ -817,7 +831,7 @@ const DE: OnboardingCopy = {
       chapter: "Stufe 3 · Testen & verfeinern",
       title: "Mit KI überarbeiten",
       body: [
-        "Beschreiben Sie eine Änderung in eigenen Worten, zum Beispiel „Immer mit einer Risikoeinstufung abschließen“, und wählen Sie „Anwenden“. Der Designer schreibt die Spezifikation um und behält alles bei, was weiterhin passt.",
+        "Beschreiben Sie eine Änderung in eigenen Worten, zum Beispiel „Veränderungen über 5 % ohne Release Note als hohe Priorität markieren“, und wählen Sie „Anwenden“. Der Designer schreibt die Spezifikation um und behält alles bei, was weiterhin passt — auch Ihre Auswahl der Release-Note-Dateien.",
         "Gefällt Ihnen das Ergebnis nicht, stellt „Rückgängig“ die vorherige Version wieder her.",
       ],
     },
@@ -825,7 +839,7 @@ const DE: OnboardingCopy = {
       chapter: "Stufe 3 · Testen & verfeinern",
       title: "Zweck und Ablauf",
       body: [
-        "Der Zweck ist ein Satz, der die Aufgabe des Agenten beschreibt. Darunter ist jede nummerierte Karte ein Schritt des Ablaufs, dem der Agent folgt.",
+        "Der Zweck ist ein Satz, der die Aufgabe des Agenten beschreibt. Darunter ist jede nummerierte Karte ein Schritt des Ablaufs, dem der Agent folgt. Beim Release-Note-Abgleich ruft er in Schritt 2 search_release_notes für jedes geänderte Feld auf und anschließend mit dem Positionskontext.",
         "Enter in einem Schritt teilt ihn in einen neuen Schritt, Umschalt+Enter fügt einen Zeilenumbruch ein, und die Rücktaste in einem leeren Schritt löscht ihn. Fahren Sie über einen Schritt, um ihn nach oben oder unten zu verschieben.",
         "Die Chips unter „Tool einfügen“ setzen den exakten Tool-Namen an Ihre Cursorposition, sodass sich ein Schritt immer auf ein aufrufbares Tool bezieht. „Freitext“ bearbeitet alle Schritte als einen Text.",
       ],
@@ -836,13 +850,23 @@ const DE: OnboardingCopy = {
       body: [
         "Jede Karte ist ein Tool. Karten mit farbigem Rand und Haken sind eingeschaltet, blasse Karten sind aus. Ein Klick schaltet um.",
         "Der Agent kann nur eingeschaltete Tools nutzen. Weniger Tools ergeben einen fokussierteren Agenten — aber jedes im Ablauf genannte Tool muss eingeschaltet sein.",
+        "Der Release-Note-Abgleich nutzt fünf: workspace_overview und list_executions, um die Läufe zu finden, compare_executions, um Veränderungen zu sehen, search_release_notes, um die Dokumentation zu finden, und query_data, um Werte einzelner Zeilen zu prüfen.",
+      ],
+    },
+    sources: {
+      chapter: "Stufe 3 · Testen & verfeinern",
+      title: "Release-Note-Quellen",
+      body: [
+        "Weil search_release_notes eingeschaltet ist, erscheint dieser Abschnitt. Er legt fest, welche hochgeladenen Release Notes — Excel-Arbeitsmappen oder PDFs aus dem Tab „Release Notes“ — der Agent durchsuchen darf.",
+        "Standardmäßig sind alle Dateien angehakt, der Agent durchsucht also jede Datei — auch später hochgeladene. Entfernen Sie die Haken bei Dateien, die er ignorieren soll, zum Beispiel um nur die Release Notes des geprüften Releases zu behalten, kann er sie nicht mehr lesen: Das Suchtool setzt die Grenze durch, der Agent kann sie nicht erweitern. „Alle Dateien verwenden“ hakt wieder alles an.",
+        "In einer Unterhaltung können Sie eine einzelne Frage weiter eingrenzen, z. B. „nur die PDF zu R7.18 prüfen“. Wird eine ausgewählte Datei später gelöscht, wird sie hier rot markiert.",
       ],
     },
     saveBar: {
       chapter: "Stufe 3 · Testen & verfeinern",
       title: "Speichern",
       body: [
-        "Diese Leiste zeigt den Speicherstatus. Ein Entwurf muss gespeichert werden, bevor er in Ihrer Bibliothek erscheint und einen Unterhaltungsverlauf behält.",
+        "Diese Leiste zeigt den Speicherstatus. Ein Entwurf muss gespeichert werden, bevor er in Ihrer Bibliothek erscheint und einen Unterhaltungsverlauf behält. Die Auswahl der Release-Note-Dateien wird mit dem Agenten gespeichert.",
         "Bei gespeicherten Agenten stellt „Verwerfen“ die zuletzt gespeicherte Version wieder her, und „Änderungen speichern“ übernimmt Ihre Bearbeitungen.",
       ],
     },
@@ -859,7 +883,7 @@ const DE: OnboardingCopy = {
       title: "Kontext fixieren",
       body: [
         "„Kontext fixieren“ teilt dem Agenten vor dem Start genau mit, welche Daten gemeint sind. Sie können Ausführungen, Cluster und Datensätze fixieren.",
-        "Fixieren Sie für Vergleiche zuerst die Basisausführung — sie wird A — und danach die Vergleichsausführung — sie wird B. Differenzen sind immer B − A.",
+        "Der Release-Note-Abgleich vergleicht zwei Läufe: Fixieren Sie daher zuerst die Basisausführung — sie wird A — und danach die Vergleichsausführung — sie wird B. Differenzen sind immer B − A.",
         "Haben Sie im Tab „Cluster“ Basis- und Vergleichscluster gewählt, fixiert ein Klick deren letzte Läufe.",
       ],
     },
@@ -867,7 +891,7 @@ const DE: OnboardingCopy = {
       chapter: "Stufe 3 · Testen & verfeinern",
       title: "Ihre erste Frage stellen",
       body: [
-        "Geben Sie eine Frage ein und drücken Sie Enter, oder klicken Sie auf einen der Gesprächseinstiege oben. Umschalt+Enter fügt eine neue Zeile ein.",
+        "Geben Sie eine Frage ein und drücken Sie Enter, oder klicken Sie auf einen der Gesprächseinstiege oben — zum Beispiel „Welche Veränderungen zwischen den fixierten Ausführungen sind in Release Notes dokumentiert?“. Umschalt+Enter fügt eine neue Zeile ein.",
         "Während der Agent arbeitet, hält ihn die quadratische Schaltfläche an. Die Ausführung nutzt Ihre echten Daten und den KI-Anbieter und kann einige Sekunden dauern.",
       ],
       action: "Probieren Sie es gern aus — oder wählen Sie „Weiter“.",
@@ -878,6 +902,7 @@ const DE: OnboardingCopy = {
       body: [
         "Über jeder Antwort fasst „… gearbeitet · N Tool-Aufrufe“ die Ausführung zusammen. Ein Klick öffnet das Protokoll.",
         "Jede Zeile ist ein Tool-Aufruf: das Tool, ein kurzes Ergebnis, die verwendeten Argumente und die Dauer. Ein Klick auf eine Zeile zeigt die exakten Daten, die an den Agenten zurückgegeben wurden.",
+        "Öffnen Sie beim Release-Note-Abgleich die Zeilen von search_release_notes: Sie zeigen, welche Dateien durchsucht wurden, und die passenden Jira-IDs mit ihren Lösungsbeschreibungen — so können Sie jede Bewertung in der Antwort prüfen.",
         "Unter einer fertigen Antwort können Sie sie kopieren oder als Markdown-Datei herunterladen. Sind Sie mit dem Agenten zufrieden, wählen Sie links „Agent speichern“.",
       ],
     },
@@ -889,6 +914,7 @@ const DE: OnboardingCopy = {
     tips: [
       "Konkrete, nummerierte Schritte ergeben die zuverlässigsten Agenten.",
       "Fixieren Sie für Vergleichsfragen zwei Ausführungen — die Basis zuerst.",
+      "Mit „Release-Note-Quellen“ beschränken Sie einen Agenten auf die relevanten Release Notes.",
       "Öffnen Sie das Ausführungsprotokoll, wann immer Sie eine Zahl überprüfen möchten.",
       "Diese Tour starten Sie jederzeit erneut über die Karte „Einführung“ oben in der Agentenliste.",
     ],

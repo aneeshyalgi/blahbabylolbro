@@ -21,6 +21,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 
 import database as db
+import release_note_pdf
 
 
 APP_DATA_ROOT = Path(os.environ.get("APP_DATA_ROOT", "."))
@@ -615,6 +616,36 @@ def input_change_agent_node(state: AgentState) -> AgentState:
     return state
 
 
+def _release_note_records(path: Path) -> Iterable[tuple[str, Dict[str, Any], str]]:
+    """Yield (sheet or page name, record, plain text) for every row of a workbook or passage of a PDF."""
+    if path.suffix.lower() == ".pdf":
+        for page in release_note_pdf.pdf_release_note_pages(path)["pages"]:
+            for record in page["records"]:
+                yield f"Page {page['page']}", record, str(record.get("Text") or "")
+        return
+    workbook = openpyxl.load_workbook(
+        path,
+        read_only=True,
+        data_only=True,
+        keep_vba=path.suffix.lower() == ".xlsm",
+    )
+    try:
+        for worksheet in workbook.worksheets:
+            worksheet_rows = list(worksheet.iter_rows(values_only=True))
+            headers = [str(value or "").strip() for value in worksheet_rows[0]] if worksheet_rows else []
+            data_rows = worksheet_rows[1:] if len(worksheet_rows) > 1 else worksheet_rows
+            for row in data_rows:
+                text = " ".join(str(value) for value in row if value is not None)
+                record = {
+                    headers[index] if index < len(headers) and headers[index] else f"Column {index + 1}": _safe_value(value)
+                    for index, value in enumerate(row)
+                    if value is not None
+                }
+                yield worksheet.title, record, text
+    finally:
+        workbook.close()
+
+
 def release_note_agent_node(state: AgentState) -> AgentState:
     dependencies = set(state.get("lineage", {}).get("ordered", [])) | {state.get("output_column", "")}
     notes: List[Dict[str, Any]] = []
@@ -624,37 +655,20 @@ def release_note_agent_node(state: AgentState) -> AgentState:
             workbook_path = RELEASE_NOTES_DIR / str(metadata.get("stored_filename", ""))
             if not workbook_path.exists():
                 continue
-            workbook = openpyxl.load_workbook(
-                workbook_path,
-                read_only=True,
-                data_only=True,
-                keep_vba=workbook_path.suffix.lower() == ".xlsm",
-            )
-            for worksheet in workbook.worksheets:
-                worksheet_rows = list(worksheet.iter_rows(values_only=True))
-                headers = [str(value or "").strip() for value in worksheet_rows[0]] if worksheet_rows else []
-                data_rows = worksheet_rows[1:] if len(worksheet_rows) > 1 else worksheet_rows
-                for row in data_rows:
-                    text = " ".join(str(value) for value in row if value is not None)
-                    normalized = _normalize_text(text)
-                    matched = sorted(field for field in dependencies if _normalize_text(field) and _normalize_text(field) in normalized)
-                    if not matched:
-                        continue
-                    record = {
-                        headers[index] if index < len(headers) and headers[index] else f"Column {index + 1}": _safe_value(value)
-                        for index, value in enumerate(row)
-                        if value is not None
-                    }
-                    notes.append({
-                        "workbook": metadata.get("filename"),
-                        "sheet": worksheet.title,
-                        "matched_fields": matched,
-                        "jira_id": _extract_jira_id(text),
-                        "solution_description": _extract_solution_description(record),
-                        "record_text": text[:2000],
-                        "record": record,
-                    })
-            workbook.close()
+            for sheet_name, record, text in _release_note_records(workbook_path):
+                normalized = _normalize_text(text)
+                matched = sorted(field for field in dependencies if _normalize_text(field) and _normalize_text(field) in normalized)
+                if not matched:
+                    continue
+                notes.append({
+                    "workbook": metadata.get("filename"),
+                    "sheet": sheet_name,
+                    "matched_fields": matched,
+                    "jira_id": _extract_jira_id(text),
+                    "solution_description": _extract_solution_description(record),
+                    "record_text": text[:2000],
+                    "record": record,
+                })
         except Exception as exc:
             state.setdefault("warnings", []).append(f"Release note read failed for {metadata_path.name}: {exc}")
 

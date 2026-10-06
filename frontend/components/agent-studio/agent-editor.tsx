@@ -1,14 +1,15 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import { Check, Loader2, Plus, Undo2, Wand2, X } from "lucide-react";
+import { Check, FileSpreadsheet, FileText, Loader2, Plus, RefreshCw, Undo2, Wand2, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { useStudioText } from "./i18n";
 import { ProcedureEditor } from "./procedure-editor";
-import type { AgentDefinition, ToolInfo } from "./types";
+import type { AgentDefinition, ReleaseNoteFile, ToolInfo } from "./types";
 import { AGENT_COLORS, AGENT_ICONS, AgentAvatar, ToolIcon, agentAccent } from "./visuals";
+import { VoiceInputButton, appendTranscript } from "./voice-input";
 
 const CATEGORY_ORDER = ["Workspace", "Data", "Analysis", "Code & lineage", "Evidence", "Utilities"];
 
@@ -79,6 +80,124 @@ function ListEditor({ values, onChange, placeholder, max }: { values: string[]; 
   );
 }
 
+/**
+ * Which uploaded release-note files the search tool may read. An empty selection means all of them
+ * (files uploaded later included), so every file shows as ticked until the user unticks one.
+ */
+function ReleaseNoteSources({
+  selected,
+  onChange,
+  files,
+  loading,
+  onReload,
+  accent,
+}: {
+  selected: string[];
+  onChange: (ids: string[]) => void;
+  files: ReleaseNoteFile[];
+  loading: boolean;
+  onReload: () => void;
+  accent: string;
+}) {
+  const { t, formatDateTime } = useStudioText();
+  const known = new Set(files.map((file) => file.id));
+  const missing = loading ? [] : selected.filter((id) => !known.has(id));
+  const allFiles = selected.length === 0;
+  const isChecked = (id: string) => allFiles || selected.includes(id);
+  const checkedIds = allFiles ? files.map((file) => file.id) : selected.filter((id) => known.has(id));
+  const availableSelected = checkedIds.length;
+  // At least one file stays ticked: an agent with the search tool but no files could never find anything.
+  const isLastChecked = (id: string) => isChecked(id) && checkedIds.length === 1;
+  const toggle = (id: string) => {
+    if (isLastChecked(id)) return;
+    if (allFiles) {
+      onChange(files.map((file) => file.id).filter((item) => item !== id));
+      return;
+    }
+    const next = selected.includes(id) ? selected.filter((item) => item !== id) : [...selected, id];
+    // Ticking every file again returns to "all files", which also covers files uploaded later.
+    onChange(files.every((file) => next.includes(file.id)) ? [] : next);
+  };
+
+  return (
+    <Section
+      tour="sources"
+      title={t("editor.sources")}
+      hint={t("editor.sourcesHint")}
+      action={
+        <div className="flex items-center gap-3 text-xs">
+          {selected.length ? (
+            <button type="button" onClick={() => onChange([])} className="text-[#8c96a8] hover:text-white">{t("editor.sourcesUseAll")}</button>
+          ) : null}
+          <button type="button" onClick={onReload} disabled={loading} className="text-[#8c96a8] hover:text-white disabled:opacity-40" aria-label={t("editor.sourcesRefresh")} title={t("editor.sourcesRefresh")}>
+            <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
+          </button>
+        </div>
+      }
+    >
+      {loading && !files.length ? (
+        <p className="flex items-center gap-2 text-xs text-[#8c96a8]"><Loader2 className="h-3.5 w-3.5 animate-spin" /> {t("common.loading")}</p>
+      ) : !files.length && !missing.length ? (
+        <p className="rounded-lg border border-dashed border-[#303845] px-3 py-3 text-xs leading-5 text-[#8c96a8]">{t("editor.sourcesEmpty")}</p>
+      ) : (
+        <div className="space-y-1.5">
+          <p className="text-[11px] font-medium" style={{ color: allFiles ? "#8c96a8" : accent }}>
+            {!allFiles
+              ? t("editor.sourcesSome", { count: availableSelected, total: files.length })
+              : t("editor.sourcesAll", { count: files.length })}
+          </p>
+          {files.map((file) => {
+            const checked = isChecked(file.id);
+            const locked = isLastChecked(file.id);
+            const pdf = file.kind === "pdf";
+            const FileIcon = pdf ? FileText : FileSpreadsheet;
+            return (
+              <button
+                key={file.id}
+                type="button"
+                onClick={() => toggle(file.id)}
+                aria-pressed={checked}
+                aria-disabled={locked}
+                title={locked ? t("editor.sourcesKeepOne") : undefined}
+                className={cn(
+                  "flex w-full items-center gap-2.5 rounded-lg border p-2.5 text-left transition-colors",
+                  checked ? "bg-white/[0.04]" : "border-[#252a33] hover:border-[#303845]",
+                  locked && "cursor-not-allowed",
+                )}
+                style={checked ? { borderColor: `${accent}55` } : undefined}
+              >
+                <span
+                  className="flex h-4 w-4 shrink-0 items-center justify-center rounded border"
+                  style={checked ? { backgroundColor: accent, borderColor: accent } : { borderColor: "#3a4352" }}
+                >
+                  {checked ? <Check className="h-3 w-3 text-black" /> : null}
+                </span>
+                <FileIcon className="h-4 w-4 shrink-0 text-[#8c96a8]" />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-xs font-semibold text-[#e5e9ef]">{file.filename}</span>
+                  <span className="block text-[11px] text-[#687386]">
+                    {pdf ? t("editor.sourcesPages", { count: file.page_count ?? 0 }) : t("editor.sourcesSheets", { count: file.sheets.length })}
+                    {" · "}
+                    {formatDateTime(file.upload_date)}
+                  </span>
+                </span>
+              </button>
+            );
+          })}
+          {missing.map((id) => (
+            <div key={id} className="flex items-center gap-2.5 rounded-lg border border-red-500/30 bg-red-500/5 p-2.5">
+              <span className="min-w-0 flex-1 text-xs text-red-300">{t("editor.sourcesMissing")}</span>
+              <button type="button" onClick={() => onChange(selected.filter((item) => item !== id))} className="text-[#8c96a8] hover:text-red-400" aria-label={t("editor.removeItem")}>
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </Section>
+  );
+}
+
 export function AgentEditor({
   definition,
   onChange,
@@ -87,6 +206,9 @@ export function AgentEditor({
   refining,
   canUndoRefine,
   onUndoRefine,
+  releaseNoteFiles,
+  releaseNoteFilesLoading,
+  onReloadReleaseNoteFiles,
 }: {
   definition: AgentDefinition;
   onChange: (definition: AgentDefinition) => void;
@@ -95,6 +217,9 @@ export function AgentEditor({
   refining: boolean;
   canUndoRefine: boolean;
   onUndoRefine: () => void;
+  releaseNoteFiles: ReleaseNoteFile[];
+  releaseNoteFilesLoading: boolean;
+  onReloadReleaseNoteFiles: () => void;
 }) {
   const { t, toolLabel, toolDescription, category: categoryLabel } = useStudioText();
   const [refineText, setRefineText] = useState("");
@@ -191,6 +316,11 @@ export function AgentEditor({
             className="min-w-0 flex-1 bg-transparent px-1 text-sm text-[#e5e9ef] outline-none placeholder:text-[#687386]"
             disabled={refining}
           />
+          <VoiceInputButton
+            disabled={refining}
+            className="h-7 w-7"
+            onTranscript={(text) => setRefineText((current) => appendTranscript(current, text))}
+          />
           <button
             type="button"
             onClick={() => void submitRefine()}
@@ -277,6 +407,17 @@ export function AgentEditor({
           ))}
         </div>
       </Section>
+
+      {definition.tools.includes("search_release_notes") ? (
+        <ReleaseNoteSources
+          selected={definition.release_note_sources ?? []}
+          onChange={(ids) => set("release_note_sources", ids)}
+          files={releaseNoteFiles}
+          loading={releaseNoteFilesLoading}
+          onReload={onReloadReleaseNoteFiles}
+          accent={accent}
+        />
+      ) : null}
 
       <Section title={t("editor.starters")} hint={t("editor.startersHint")}>
         <ListEditor values={definition.starters} onChange={(values) => set("starters", values)} placeholder={t("editor.startersAdd")} max={6} />
