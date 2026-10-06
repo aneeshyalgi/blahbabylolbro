@@ -28,6 +28,7 @@ export const TAB_LABELS: Record<string, string> = {
   "semantic-lineage": "Semantic Lineage",
   regulations: "Regulation",
   "release-notes": "Release Notes",
+  "create-ai-agents": "Create AI Agents",
 };
 
 export function getTabLabel(id: string): string {

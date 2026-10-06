@@ -13,6 +13,7 @@ import {
   Network,
   Shield,
   FileText,
+  Sparkles,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
@@ -30,6 +31,7 @@ export function TabNavigation({ activeTab, onTabChange, isNavigationLocked = fal
   const t = useTranslations("tabs");
   const { tabOrder } = useTabOrder();
   const order = tabOrder.length > 0 ? tabOrder : [...DEFAULT_TAB_ORDER];
+  const isCreateAIAgentsActive = activeTab === "create-ai-agents";
 
   const getLabel = (id: string) => {
     const key = TAB_ID_TO_MESSAGE_KEY[id];
@@ -65,6 +67,8 @@ export function TabNavigation({ activeTab, onTabChange, isNavigationLocked = fal
         return <AlertTriangle className={iconClassName} />;
       case "rootcause-ai-agents":
         return <Bot className={iconClassName} />;
+      case "create-ai-agents":
+        return <Sparkles className={iconClassName} />;
       case "semantic-lineage":
         return <Network className={iconClassName} />;
       case "regulations":
@@ -80,7 +84,9 @@ export function TabNavigation({ activeTab, onTabChange, isNavigationLocked = fal
     <aside
       className={cn(
         "fixed left-0 top-0 z-40 flex h-screen w-72 shrink-0 flex-col transition-all duration-200",
-        isRootCausePremium
+        isCreateAIAgentsActive
+          ? "studio-chrome-sidebar border-r border-[#252a33]"
+          : isRootCausePremium
           ? "border-r border-[#f5c400]/20 bg-[radial-gradient(circle_at_top_left,_rgba(245,196,0,0.16),_transparent_30%),linear-gradient(180deg,#070b12_0%,#0b121a_100%)] shadow-[8px_0_28px_rgba(0,0,0,0.24)]"
           : "border-r border-[#252a33] bg-[#080b10]"
       )}
@@ -156,6 +162,38 @@ export function TabNavigation({ activeTab, onTabChange, isNavigationLocked = fal
           })}
         </div>
       </nav>
+
+      <div className="shrink-0 border-t border-[#252a33] px-3 py-3">
+        <button
+          type="button"
+          onClick={() => {
+            if (!isNavigationLocked) onTabChange("create-ai-agents");
+          }}
+          title="Create AI Agents"
+          disabled={isNavigationLocked}
+          className={cn(
+            "relative flex w-full items-center gap-3 rounded-sm border px-3 py-2.5 text-left text-sm font-medium transition-colors",
+            activeTab === "create-ai-agents"
+              ? "border-[#f5c400]/15 bg-[#f5c400]/10 text-white before:absolute before:inset-y-1 before:left-0 before:w-0.5 before:bg-[#f5c400]"
+              : "border-transparent bg-transparent text-[#8c96a8] hover:border-[#252a33] hover:bg-[#11161e] hover:text-[#f2f4f7]",
+            isNavigationLocked && "cursor-not-allowed opacity-40"
+          )}
+          aria-current={activeTab === "create-ai-agents" ? "page" : undefined}
+          aria-label="Create AI Agents"
+        >
+          <span
+            className={cn(
+              "flex h-7 min-w-7 items-center justify-center rounded-sm border",
+              activeTab === "create-ai-agents"
+                ? "border-[#f5c400]/30 bg-[#f5c400]/10 text-[#f5c400]"
+                : "border-[#252a33] bg-[#11161e] text-[#768196]"
+            )}
+          >
+            {getNavIcon("create-ai-agents")}
+          </span>
+          <span className="truncate">Create AI Agents</span>
+        </button>
+      </div>
     </aside>
   );
 }

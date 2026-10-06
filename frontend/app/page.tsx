@@ -13,6 +13,7 @@ import { RootCauseAIAgentsTabContent } from "@/components/root-cause-ai-agents-t
 import { LineageTabContent } from "@/components/lineage-tab-content";
 import { RegulationsTabContent } from "@/components/regulations-tab-content";
 import { PatchNotesTabContent } from "@/components/release-notes-tab-content";
+import { CreateAIAgentsTabContent } from "@/components/create-ai-agents-tab-content";
 import { PlaceholderTab } from "@/components/placeholder-tab";
 import { DataAssistant } from "@/components/data-assistant";
 
@@ -21,7 +22,7 @@ const VALID_TAB_IDS = new Set([
   "code", "data-modal", "data", "clustering",
   "content-lineage", "technical-lineage", "semantic-lineage",
   "compare-clusters", "regulations", "release-notes",
-  "root-cause", "rootcause-ai-agents",
+  "root-cause", "rootcause-ai-agents", "create-ai-agents",
 ]);
 
 const tabLabels: Record<string, string> = {
@@ -41,6 +42,7 @@ const tabLabels: Record<string, string> = {
   validation: "Validation",
   regression: "Regression",
   "release-notes": "Release Notes",
+  "create-ai-agents": "Create AI Agents",
   testing: "Testing",
   forecast: "Forecast",
 };
@@ -89,6 +91,8 @@ export default function HomePage() {
         return <RegulationsTabContent />;
       case "release-notes":
         return <PatchNotesTabContent />;
+      case "create-ai-agents":
+        return <CreateAIAgentsTabContent />;
       default:
         return <PlaceholderTab tabName={tabLabels[activeTab] || activeTab} />;
     }
@@ -104,7 +108,11 @@ export default function HomePage() {
       />
 
       <div className="flex min-w-0 flex-1 flex-col ml-72">
-        <AppHeader title={tabLabels[activeTab] || activeTab} isRootCausePremium={isRootCausePremium} />
+        <AppHeader
+          title={tabLabels[activeTab] || activeTab}
+          isRootCausePremium={isRootCausePremium}
+          isCreateAIAgentsActive={activeTab === "create-ai-agents"}
+        />
         <main className="flex-1 overflow-auto bg-[#0d1117] p-5 sm:p-6">
           <div className="mx-auto max-w-[1600px] min-w-[1000px]">{renderTabContent()}</div>
         </main>

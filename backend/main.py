@@ -30,6 +30,7 @@ from models import TableRegion, ColumnInfo, ColumnDataType
 import database as db
 import web_scraper
 import auth as auth_module
+import agent_runtime
 
 # Static content mirrored from frontend-only tabs (Regulations hardcoded example,
 # Release notes summary) so the chatbot can answer about them regardless of the
@@ -99,8 +100,9 @@ NORMAL_ROOTCAUSE_SESSIONS: Dict[str, Dict[str, Any]] = {}
 # Seed default admin user on startup (idempotent)
 db.seed_default_user()
 
-# Include auth router
+# Include auth and AI agent routers
 app.include_router(auth_module.router)
+app.include_router(agent_runtime.router)
 
 PUBLIC_PATHS = {
     "/",
@@ -4338,4 +4340,13 @@ def delete_release_notes(release_note_id: str):
 #         return {"matches": results}
 #     except Exception as e:
 #         raise HTTPException(500, f"Error matching columns: {str(e)}")
+
+
+# AI agent tools reuse these platform functions (injected to avoid a circular import).
+agent_runtime.register_platform(
+    compare_executions=compare_clusters,
+    analyze_code_lineage=_analyze_code_content_lineage,
+    list_release_note_workbooks=_list_release_note_workbooks,
+    release_note_workbook_context=_chat_release_note_workbook_context,
+)
 

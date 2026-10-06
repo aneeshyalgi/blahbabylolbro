@@ -29,6 +29,17 @@ export const API_ENDPOINTS = {
   codeDelete: (id: string) => `${API_BASE_URL}/api/code/${id}`,
   generateCode: `${API_BASE_URL}/api/generate-code`,
   generateColumnInstructions: `${API_BASE_URL}/api/generate-column-instructions`,
+  // AI agents
+  agents: `${API_BASE_URL}/api/agents`,
+  agentById: (id: string) => `${API_BASE_URL}/api/agents/${id}`,
+  agentTools: `${API_BASE_URL}/api/agents/tools`,
+  agentTemplates: `${API_BASE_URL}/api/agents/templates`,
+  agentContextOptions: `${API_BASE_URL}/api/agents/context-options`,
+  generateAgent: `${API_BASE_URL}/api/agents/generate`,
+  agentConversations: (agentId: string) => `${API_BASE_URL}/api/agents/${agentId}/conversations`,
+  agentConversation: (conversationId: string) => `${API_BASE_URL}/api/agents/conversations/${conversationId}`,
+  // Streams through a Next route handler so server-sent events are not buffered by the rewrite proxy.
+  agentRunStream: `/api/agent-runs/stream`,
   chat: `${API_BASE_URL}/api/chat`,
   
   // Execution

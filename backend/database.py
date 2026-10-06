@@ -116,7 +116,41 @@ def initialize_database():
                     created_date TEXT NOT NULL
                 )
             """)
-            
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS ai_agents (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    source_prompt TEXT NOT NULL,
+                    definition TEXT NOT NULL,
+                    created_date TEXT NOT NULL,
+                    updated_date TEXT
+                )
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS ai_agent_conversations (
+                    id TEXT PRIMARY KEY,
+                    agent_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    messages TEXT NOT NULL,
+                    created_date TEXT NOT NULL,
+                    updated_date TEXT NOT NULL
+                )
+            """)
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_ai_agent_conversations_agent ON ai_agent_conversations(agent_id, updated_date)"
+            )
+
+            try:
+                cursor.execute("PRAGMA table_info(ai_agents)")
+                agent_columns = [row[1] for row in cursor.fetchall()]
+                if 'updated_date' not in agent_columns:
+                    cursor.execute("ALTER TABLE ai_agents ADD COLUMN updated_date TEXT")
+            except Exception as e:
+                print(f"Migration note for ai_agents: {e}")
+
             # Migrate existing tables - add version columns if they don't exist
             try:
                 # Check if version column exists in datasets
@@ -871,4 +905,164 @@ def seed_default_user():
         pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
         create_user(admin_username, pwd_context.hash(admin_password))
         print(f"[auth] Seeded default user '{admin_username}'")
+
+
+def store_ai_agent(agent_id: str, name: str, description: str, source_prompt: str, definition: Dict[str, Any], created_date: str):
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            """
+            INSERT INTO ai_agents (id, name, description, source_prompt, definition, created_date, updated_date)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (agent_id, name, description, source_prompt, json.dumps(definition), created_date, created_date),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def update_ai_agent(agent_id: str, name: str, description: str, definition: Dict[str, Any], updated_date: str) -> bool:
+    conn = get_db_connection()
+    try:
+        cursor = conn.execute(
+            "UPDATE ai_agents SET name = ?, description = ?, definition = ?, updated_date = ? WHERE id = ?",
+            (name, description, json.dumps(definition), updated_date, agent_id),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
+_AI_AGENT_SELECT = """
+    SELECT a.id, a.name, a.description, a.source_prompt, a.definition, a.created_date,
+           COALESCE(a.updated_date, a.created_date) AS updated_date,
+           (SELECT COUNT(*) FROM ai_agent_conversations c WHERE c.agent_id = a.id) AS conversation_count,
+           (SELECT MAX(c.updated_date) FROM ai_agent_conversations c WHERE c.agent_id = a.id) AS last_run_date
+    FROM ai_agents a
+"""
+
+
+def _ai_agent_row(row: sqlite3.Row) -> Dict[str, Any]:
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "description": row["description"],
+        "source_prompt": row["source_prompt"],
+        "definition": json.loads(row["definition"]),
+        "created_date": row["created_date"],
+        "updated_date": row["updated_date"],
+        "conversation_count": row["conversation_count"],
+        "last_run_date": row["last_run_date"],
+    }
+
+
+def get_all_ai_agents() -> List[Dict[str, Any]]:
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(_AI_AGENT_SELECT + " ORDER BY COALESCE(a.updated_date, a.created_date) DESC").fetchall()
+        return [_ai_agent_row(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def get_ai_agent(agent_id: str) -> Dict[str, Any] | None:
+    conn = get_db_connection()
+    try:
+        row = conn.execute(_AI_AGENT_SELECT + " WHERE a.id = ?", (agent_id,)).fetchone()
+        return _ai_agent_row(row) if row is not None else None
+    finally:
+        conn.close()
+
+
+def delete_ai_agent(agent_id: str) -> bool:
+    conn = get_db_connection()
+    try:
+        conn.execute("DELETE FROM ai_agent_conversations WHERE agent_id = ?", (agent_id,))
+        cursor = conn.execute("DELETE FROM ai_agents WHERE id = ?", (agent_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
+def save_ai_agent_conversation(conversation: Dict[str, Any]) -> None:
+    """Insert or replace a conversation (messages stored as a JSON list)."""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            """
+            INSERT INTO ai_agent_conversations (id, agent_id, title, messages, created_date, updated_date)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET title = excluded.title, messages = excluded.messages, updated_date = excluded.updated_date
+            """,
+            (
+                conversation["id"],
+                conversation["agent_id"],
+                conversation.get("title") or "Untitled",
+                json.dumps(conversation.get("messages") or [], default=str),
+                conversation.get("created_date") or now,
+                now,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_ai_agent_conversations(agent_id: str) -> List[Dict[str, Any]]:
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            """
+            SELECT id, agent_id, title, created_date, updated_date, json_array_length(messages) AS message_count
+            FROM ai_agent_conversations WHERE agent_id = ? ORDER BY updated_date DESC
+            """,
+            (agent_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def get_ai_agent_conversation(conversation_id: str) -> Dict[str, Any] | None:
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            "SELECT id, agent_id, title, messages, created_date, updated_date FROM ai_agent_conversations WHERE id = ?",
+            (conversation_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        conversation = dict(row)
+        conversation["messages"] = json.loads(conversation["messages"])
+        return conversation
+    finally:
+        conn.close()
+
+
+def delete_ai_agent_conversation(conversation_id: str) -> bool:
+    conn = get_db_connection()
+    try:
+        cursor = conn.execute("DELETE FROM ai_agent_conversations WHERE id = ?", (conversation_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
+def delete_stale_ai_agent_conversations(agent_id: str, older_than: str) -> int:
+    conn = get_db_connection()
+    try:
+        cursor = conn.execute(
+            "DELETE FROM ai_agent_conversations WHERE agent_id = ? AND updated_date < ?",
+            (agent_id, older_than),
+        )
+        conn.commit()
+        return cursor.rowcount
+    finally:
+        conn.close()
 
