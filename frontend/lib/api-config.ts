@@ -74,6 +74,26 @@ export const API_ENDPOINTS = {
   regulationDocument: (id: string) => `${API_BASE_URL}/api/regulations/documents/${id}`,
   regulationReindex: (id: string) => `${API_BASE_URL}/api/regulations/documents/${id}/reindex`,
 
+  // Regulation–release note matcher
+  regulationMatcherSources: `${API_BASE_URL}/api/regulation-matcher/sources`,
+  regulationMatcherRuns: `${API_BASE_URL}/api/regulation-matcher/runs`,
+  regulationMatcherRun: (id: string) => `${API_BASE_URL}/api/regulation-matcher/runs/${id}`,
+  regulationMatcherRunProgress: (id: string) => `${API_BASE_URL}/api/regulation-matcher/runs/${id}?lite=true`,
+  regulationMatcherCancel: (id: string) => `${API_BASE_URL}/api/regulation-matcher/runs/${id}/cancel`,
+  regulationMatcherExport: (id: string, language = "en") => `${API_BASE_URL}/api/regulation-matcher/runs/${id}/export?language=${language}`,
+  regulationMatcherProvision: (regulationId: string, unit: number) =>
+    `${API_BASE_URL}/api/regulation-matcher/provision?regulation_id=${encodeURIComponent(regulationId)}&unit=${unit}`,
+
+  // Technical lineage AI agent
+  lineageAgentSources: `${API_BASE_URL}/api/lineage-agent/sources`,
+  lineageAgentPreview: (executionId: string) => `${API_BASE_URL}/api/lineage-agent/preview?execution_id=${encodeURIComponent(executionId)}`,
+  lineageAgentRuns: `${API_BASE_URL}/api/lineage-agent/runs`,
+  lineageAgentRun: (id: string) => `${API_BASE_URL}/api/lineage-agent/runs/${id}`,
+  lineageAgentRunProgress: (id: string) => `${API_BASE_URL}/api/lineage-agent/runs/${id}?lite=true`,
+  lineageAgentCancel: (id: string) => `${API_BASE_URL}/api/lineage-agent/runs/${id}/cancel`,
+  lineageAgentExport: (id: string, format: "xlsx" | "openlineage", language: string) =>
+    `${API_BASE_URL}/api/lineage-agent/runs/${id}/export?format=${format}&language=${encodeURIComponent(language)}`,
+
   // Release notes workbooks
   releaseNotes: `${API_BASE_URL}/api/release-notes`,
   releaseNotesFromUpload: `${API_BASE_URL}/api/release-notes/from-upload`,

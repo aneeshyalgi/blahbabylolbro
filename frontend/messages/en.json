@@ -14,6 +14,7 @@
     "code": "Code",
     "dataModal": "Data",
     "technicalLineage": "Technical Lineage",
+    "technicalLineageAgent": "Technical Lineage AI Agent",
     "data": "Results",
     "clustering": "Cluster",
     "contentLineage": "Content Lineage",
@@ -21,7 +22,8 @@
     "rootCause": "Root Cause",
     "semanticLineage": "Semantic Lineage",
     "regulations": "Regulation",
-    "releaseNotes": "Release Notes"
+    "releaseNotes": "Release Notes",
+    "regulationMatcher": "Regulation–Release Note Matcher"
   },
   "reorderDialog": {
     "title": "Reorder tabs",
@@ -475,5 +477,1137 @@
     "en": "English",
     "de": "Deutsch",
     "es": "Español"
+  },
+  "matcher": {
+    "eyebrow": "Regulatory traceability",
+    "title": "Regulation–Release Note Matcher",
+    "subtitle": "Traces every release note to the regulation provisions it affects: evidence-backed links, verbatim-verified quotes from both sources, and a complete audit trail.",
+    "history": "Runs",
+    "historyTitle": "Previous runs",
+    "historyEmpty": "No runs yet.",
+    "historyLine": "{notes} notes · {links} links · {coverage}% coverage",
+    "newRun": "New run",
+    "backToResults": "Back to results",
+    "exportExcel": "Excel audit workbook",
+    "deleteRun": "Delete run",
+    "deleteTitle": "Delete this run?",
+    "deleteBody": "The run's results and audit trail are deleted permanently. The release notes and regulations are not affected.",
+    "cancel": "Cancel",
+    "meta": {
+      "duration": "Runtime {value}"
+    },
+    "tabs": {
+      "evidence": "Evidence",
+      "matrix": "Traceability matrix",
+      "provisions": "Provisions",
+      "audit": "Audit trail"
+    },
+    "toast": {
+      "completed": "Matching completed",
+      "completedBody": "{links} verified links for {notes} release notes.",
+      "failed": "Matching failed",
+      "deleted": "Run deleted"
+    },
+    "errors": {
+      "load": "Could not load the matcher data",
+      "start": "Could not start matching",
+      "cancel": "Could not cancel the run",
+      "delete": "Could not delete the run",
+      "noResult": "This run produced no result."
+    },
+    "linkType": {
+      "direct": "Direct",
+      "indirect": "Indirect"
+    },
+    "status": {
+      "linked": "Linked",
+      "review": "Needs review",
+      "no_link": "No link",
+      "failed": "Failed"
+    },
+    "approach": {
+      "standardised": "Standardised approach",
+      "irb": "IRB approach",
+      "both": "SA and IRB",
+      "not_specific": "Any approach"
+    },
+    "phase": {
+      "queued": "Queued",
+      "interpreting": "Interpreting",
+      "retrieving": "Retrieving",
+      "adjudicating": "Adjudicating",
+      "verifying": "Verifying",
+      "done": "Done",
+      "failed": "Failed",
+      "cancelled": "Cancelled",
+      "reviewing": "Reviewing",
+      "translating": "Translating"
+    },
+    "setup": {
+      "releaseNotes": "Release notes",
+      "releaseNotesHint": "Every release note in the selected files is analysed.",
+      "regulations": "Regulations",
+      "regulationsHint": "Indexed regulation PDFs to match against.",
+      "selectAll": "Select all",
+      "clear": "Clear",
+      "noReleaseNotes": "No release notes uploaded yet. Upload them in the Release Notes tab.",
+      "noRegulations": "No regulations uploaded yet. Upload regulation PDFs in the Regulation tab.",
+      "notesCount": "{count, plural, one {# release note} other {# release notes}}",
+      "articles": "{count, plural, one {# article} other {# articles}}",
+      "pages": "{count, plural, one {# page} other {# pages}}",
+      "passages": "{count} passages",
+      "semantic": "Semantic index",
+      "keywordOnly": "Keyword index",
+      "statusReady": "Ready",
+      "statusIndexing": "Indexing",
+      "statusFailed": "Index failed",
+      "steps": {
+        "interpret": {
+          "title": "Interpret",
+          "body": "Each release note is restated in regulatory terms – German business terms such as EWB or PWB are translated into the regulation's vocabulary."
+        },
+        "retrieve": {
+          "title": "Retrieve",
+          "body": "Hybrid keyword and semantic search over every article, plus provisions that name the note's concepts and the provisions they cross-reference."
+        },
+        "adjudicate": {
+          "title": "Adjudicate",
+          "body": "The model links the note only to retrieved provisions, grades each link direct or indirect and quotes both sources word for word."
+        },
+        "verify": {
+          "title": "Verify",
+          "body": "Every quote is checked verbatim; scope, empowerment clauses, shared concepts and reference chains are tested, with one self-correction round."
+        },
+        "review": {
+          "title": "Review",
+          "body": "A second, independent model call challenges every accepted link – confirm, downgrade or reject – and disagreements are escalated to you."
+        }
+      },
+      "scope": "{notes, plural, one {# release note} other {# release notes}} × {regulations, plural, one {# regulation} other {# regulations}} ({articles} articles)",
+      "selectBoth": "Select at least one release-note file and one regulation.",
+      "modelHint": "temperature 0 · JSON-schema output · deterministic checks",
+      "run": "Run matching"
+    },
+    "progress": {
+      "title": "Matching in progress",
+      "cancelling": "Cancelling…",
+      "subtitle": "{notes, plural, one {# release note} other {# release notes}} against {regulations}",
+      "elapsed": "Elapsed",
+      "llmCalls": "LLM calls",
+      "tokens": "Tokens",
+      "links": "Links",
+      "cancel": "Cancel",
+      "notesDone": "{done} of {total} release notes completed",
+      "stages": {
+        "interpret": "Interpret",
+        "retrieve": "Retrieve",
+        "adjudicate": "Adjudicate",
+        "verify": "Verify",
+        "review": "Four-eyes review",
+        "translate": "Translate"
+      },
+      "activeNotes": "{count, plural, one {# note in this step} other {# notes in this step}}",
+      "stageDone": "Completed",
+      "notes": "Release notes",
+      "linkCount": "{count, plural, =0 {no link} one {# link} other {# links}}",
+      "log": "Live log",
+      "done": "Matching completed"
+    },
+    "kpi": {
+      "notes": "Release notes",
+      "notesSub": "{files, plural, one {from # file} other {from # files}}",
+      "coverage": "Coverage",
+      "coverageSub": "{linked} linked · {review} review · {none} no link",
+      "links": "Links",
+      "linksSub": "{direct} direct · {indirect} indirect",
+      "provisions": "Provisions",
+      "provisionsSub": "{articles, plural, one {in # article} other {in # articles}}",
+      "quotes": "Quotes verified",
+      "quotesSub": "{percent}% verbatim in the source",
+      "quotesCorrected": "{count, plural, one {# aligned to exact source wording} other {# aligned to exact source wording}}",
+      "candidates": "Candidates",
+      "candidatesSub": "{rejected} dismissed with reasons",
+      "confidence": "Avg. confidence",
+      "confidenceSub": "model judgement + verified evidence"
+    },
+    "evidence": {
+      "search": "Search Jira ID, text or provision…",
+      "filterAll": "All",
+      "noMatches": "No release note matches.",
+      "releaseNote": "Release note",
+      "record": "record {number}",
+      "problem": "Problem description",
+      "solution": "Solution description",
+      "text": "Text",
+      "interpretation": "Regulatory interpretation",
+      "changeKinds": {
+        "calculation": "Calculation change",
+        "input_data": "Input data change",
+        "classification": "Classification change",
+        "reporting": "Reporting change",
+        "methodology": "Methodology change",
+        "other": "Other change"
+      },
+      "affected": "Affected",
+      "failed": "This release note could not be analysed",
+      "linked": "{count, plural, one {# linked provision} other {# linked provisions}}",
+      "noLinks": "No provision of the selected regulations governs this change",
+      "corrections": "{count, plural, one {Self-correction: # issue resolved} other {Self-correction: # issues resolved}}",
+      "correctionsHint": "issues the automatic verification sent back to the model",
+      "rejected": "{count, plural, one {# candidate dismissed} other {# candidates dismissed}}",
+      "rejectedHint": "provisions considered and why they were not linked",
+      "decidedBy": {
+        "model": "Model judgement",
+        "verification": "Failed verification",
+        "review": "Four-eyes review"
+      },
+      "retrieval": "Retrieval trace: {count} candidates from {pool} passages",
+      "retrievalHint": "queries and ranking signals",
+      "page": "p. {page}",
+      "confidenceTitle": "Confidence {value}/100",
+      "confidenceHint": "60% model assessment ({model}) and 40% evidence: quote verification, shared regulatory concept and retrieval rank.",
+      "affectedElement": "Affected element",
+      "releaseNoteQuote": "Release note",
+      "formulaWarning": "This provision contains a formula whose symbols may not have been extracted reliably; check the PDF.",
+      "crossReferences": "Refers to",
+      "hideProvision": "Hide provision text",
+      "showProvision": "Show provision text",
+      "readArticle": "Read {label}",
+      "openPdf": "PDF p. {page}",
+      "quoteStatus": {
+        "pass": "Verified verbatim",
+        "corrected": "Aligned to exact source wording",
+        "fail": "Not verified",
+        "warn": "Check",
+        "info": "Info"
+      },
+      "queries": "Search queries",
+      "hybrid": "hybrid keyword + semantic search",
+      "keywordOnly": "keyword search",
+      "table": {
+        "provision": "Provision",
+        "score": "Score",
+        "keyword": "Keyword",
+        "semantic": "Semantic",
+        "via": "Found by",
+        "decision": "Decision"
+      },
+      "via": {
+        "concept": "concept",
+        "reference": "reference from {from}",
+        "search": "search"
+      },
+      "decision": {
+        "linked": "Linked",
+        "rejected": "Dismissed",
+        "not_selected": "Not relevant"
+      }
+    },
+    "checks": {
+      "title": "Verification",
+      "regulationQuote": {
+        "pass": "Quote found verbatim in {reference}, p. {page}",
+        "corrected": "Quote matched the source at {similarity}% and was replaced by the exact source wording",
+        "fail": "Quote not found in the provision"
+      },
+      "noteQuote": {
+        "pass": "Release-note quote found verbatim",
+        "corrected": "Release-note quote matched at {similarity}% and was aligned to the exact wording",
+        "fail": "Release-note quote not found"
+      },
+      "scope": {
+        "pass": "Scope fits: the note concerns {scope}",
+        "fail": "Scope conflict: the note concerns {note}, the provision applies to {provision}",
+        "info": "No exposure class named in the note; scope not restricted"
+      },
+      "substantive": {
+        "pass": "Substantive requirement, not an empowerment clause",
+        "fail": "Empowerment clause (technical standards or delegated act)"
+      },
+      "concept": {
+        "pass": "Shared regulatory concept: {concepts}",
+        "fail": "The provision does not deal with {concepts}",
+        "info": "No glossary concept named in the note"
+      },
+      "retargeted": "Citation corrected from {from} to {to}, where the quote is",
+      "retrieval": {
+        "rank": "Retrieval rank #{rank} of {total}",
+        "keyword": "keyword #{rank}",
+        "semantic": "semantic similarity {value}",
+        "queries": "{count, plural, one {matched # query} other {matched # queries}}",
+        "concept": "names the note's concept",
+        "reference": "referenced by {from}"
+      },
+      "scopes": {
+        "credit_obligation": "loans (credit obligations)",
+        "non_credit_obligation": "other non credit-obligation assets",
+        "central_government": "central governments",
+        "regional_government": "regional governments",
+        "public_sector_entity": "public sector entities",
+        "multilateral_development_bank": "multilateral development banks",
+        "international_organisation": "international organisations",
+        "institution": "institutions",
+        "corporate": "corporates",
+        "retail": "retail exposures",
+        "immovable_property": "immovable property",
+        "default": "exposures in default",
+        "equity": "equity",
+        "covered_bond": "covered bonds",
+        "ciu": "CIUs",
+        "securitisation": "securitisations"
+      },
+      "review": {
+        "pass": "Four-eyes review confirmed: {reason}",
+        "corrected": "Four-eyes review downgraded the link to indirect: {reason}",
+        "warn": "The four-eyes reviewer disagrees – human review needed: {reason}"
+      }
+    },
+    "matrix": {
+      "title": "Traceability matrix",
+      "hint": "{notes, plural, one {# release note} other {# release notes}} × {provisions, plural, one {# provision} other {# provisions}} · select a cell to open its evidence",
+      "legendDirect": "Direct",
+      "legendIndirect": "Indirect",
+      "legendConfidence": "confidence",
+      "releaseNote": "Release note",
+      "clickToOpen": "Click to open the evidence",
+      "empty": "No links to show."
+    },
+    "provisions": {
+      "empty": "No provisions are linked.",
+      "page": "p. {page}",
+      "notes": "{count, plural, one {release note} other {release notes}}",
+      "read": "Read {label}",
+      "pdf": "PDF p. {page}"
+    },
+    "drawer": {
+      "error": "Could not load the provision.",
+      "loading": "Loading provision…",
+      "pages": "pages {from}–{to}",
+      "linked": "Linked: {reference}",
+      "openPdf": "Open {file}",
+      "page": "p. {page}",
+      "table": "table",
+      "formula": "Contains a formula; symbols may not have been extracted reliably.",
+      "footnotes": "Footnotes",
+      "references": "Cross-references"
+    },
+    "audit": {
+      "run": "Run",
+      "copy": "Copy",
+      "copied": "Copied",
+      "status": "Status",
+      "started": "Started",
+      "finished": "Finished",
+      "duration": "Runtime",
+      "model": "Model",
+      "language": "Text languages",
+      "llmCalls": "LLM calls",
+      "tokens": "Tokens in / out",
+      "sources": "Sources",
+      "notes": "{count, plural, one {# release note} other {# release notes}}",
+      "articles": "{count, plural, one {# article} other {# articles}}",
+      "controls": "Controls applied",
+      "control": {
+        "closedSet": {
+          "title": "Closed candidate set",
+          "body": "The model may only link provisions retrieved from the regulation text, by id – it cannot invent articles or paragraphs."
+        },
+        "verbatim": {
+          "title": "Verbatim quotes",
+          "body": "Every regulation and release-note quote is matched against the source text; typo-level differences are replaced by the exact wording, anything else is rejected."
+        },
+        "scope": {
+          "title": "Scope check",
+          "body": "The provision's title must apply to the exposures the note concerns (e.g. loans are not 'other non credit-obligation assets')."
+        },
+        "substantive": {
+          "title": "Substantive provisions only",
+          "body": "Empowerment clauses that only mandate technical standards or delegated acts are never accepted as links."
+        },
+        "concept": {
+          "title": "Shared regulatory concept",
+          "body": "A linked paragraph must itself deal with the concept the note changes (e.g. general vs specific credit risk adjustments)."
+        },
+        "references": {
+          "title": "Reference chains",
+          "body": "Provisions that a linked rule applies 'in accordance with' are followed and either linked or dismissed with a reason."
+        },
+        "selfCorrection": {
+          "title": "Self-correction",
+          "body": "Failed checks are sent back to the model once with the reasons; links that still fail are rejected and listed."
+        },
+        "noForcing": {
+          "title": "No forced links",
+          "body": "A note without a governing provision is reported as 'no link' – after a challenge round when candidates name its concepts."
+        },
+        "fourEyes": {
+          "title": "Four-eyes review",
+          "body": "A second, independent model call challenges every accepted link from the provision text: it confirms, downgrades it to indirect or rejects it; when it rejects every link of a note, the note is escalated as 'Needs review'."
+        }
+      },
+      "log": "Run log",
+      "allLevels": "all",
+      "statuses": {
+        "running": "Running",
+        "completed": "Completed",
+        "failed": "Failed",
+        "cancelled": "Cancelled",
+        "interrupted": "Interrupted"
+      }
+    },
+    "tour": "Guided tour",
+    "textsOnlyIn": "AI texts in {language} only",
+    "textsOnlyInHint": "This run was created before runs were written in both languages: its interpretations and rationales stay in the language it ran in. New runs are available in English and German.",
+    "languages": {
+      "en": "English",
+      "de": "German",
+      "es": "Spanish"
+    }
+  },
+  "lineageAgent": {
+    "eyebrow": "Column-level lineage · AI agent",
+    "title": "Technical Lineage AI Agent",
+    "subtitle": "Derives the column-level lineage of an execution's code by static data-flow analysis, proves it by replaying the code and probing every input column, and documents every column with a grounded, four-eyes-reviewed AI explanation.",
+    "history": "Runs",
+    "historyTitle": "Previous analyses",
+    "historyEmpty": "No analyses yet.",
+    "historyLine": "{outputs} columns · {edges} dependencies · {verified}% verified",
+    "newRun": "New analysis",
+    "backToResults": "Back to results",
+    "backToProgress": "Back to the running analysis",
+    "deleteRun": "Delete analysis",
+    "deleteTitle": "Delete this analysis?",
+    "deleteBody": "The lineage, the AI documentation and the audit trail of this analysis are deleted permanently. The execution, its code and its dataset are not affected.",
+    "cancel": "Cancel",
+    "status": {
+      "running": "Running",
+      "completed": "Completed",
+      "failed": "Failed",
+      "cancelled": "Cancelled",
+      "interrupted": "Interrupted"
+    },
+    "meta": {
+      "execution": "Execution of {date}",
+      "duration": "Runtime {value}"
+    },
+    "export": {
+      "title": "Export",
+      "excel": "Excel lineage workbook",
+      "excelHint": "Lineage, columns, transformations, cell provenance, findings, checks, probes and code.",
+      "openlineage": "OpenLineage run event (JSON)",
+      "openlineageHint": "Column-lineage facet for data catalogues such as Marquez, DataHub or Collibra.",
+      "drawio": "draw.io diagram",
+      "drawioHint": "Opens the lineage graph; export it there with the download button."
+    },
+    "tabs": {
+      "graph": "Lineage graph",
+      "columns": "Columns",
+      "code": "Code",
+      "cells": "Cell trace",
+      "mapping": "Mapping table",
+      "verification": "Verification"
+    },
+    "toast": {
+      "completed": "Lineage analysis completed",
+      "completedBody": "{outputs} output columns, {edges} column dependencies.",
+      "failed": "Lineage analysis failed",
+      "deleted": "Analysis deleted"
+    },
+    "errors": {
+      "load": "Could not load the lineage data",
+      "preview": "Could not load the execution preview",
+      "start": "Could not start the analysis",
+      "cancel": "Could not cancel the analysis",
+      "delete": "Could not delete the analysis",
+      "export": "Export failed",
+      "noResult": "This analysis produced no result."
+    },
+    "roles": {
+      "passthrough": "Pass-through",
+      "cast": "Type-converted",
+      "enriched": "Enriched",
+      "overwritten": "Overwritten",
+      "created": "Created",
+      "renamed": "Renamed",
+      "dropped": "Dropped",
+      "intermediate": "Intermediate"
+    },
+    "operations": {
+      "copy": "Copy",
+      "cast": "Type conversion",
+      "fill_missing": "Fill missing values",
+      "conditional": "Conditional rule",
+      "lookup": "Lookup",
+      "arithmetic": "Calculation",
+      "aggregation": "Aggregation",
+      "window": "Running / window value",
+      "function": "Function",
+      "string": "Text operation",
+      "date": "Date operation",
+      "rounding": "Rounding",
+      "binning": "Binning",
+      "constant": "Constant",
+      "rename": "Rename",
+      "transformation": "Transformation"
+    },
+    "subtypes": {
+      "IDENTITY": "Identity",
+      "TRANSFORMATION": "Transformation",
+      "AGGREGATION": "Aggregation",
+      "CONDITIONAL": "Condition",
+      "FILTER": "Filter",
+      "SORT": "Sort",
+      "JOIN": "Join key",
+      "GROUP_BY": "Group by",
+      "WINDOW": "Window"
+    },
+    "setup": {
+      "executionsTitle": "Choose an execution",
+      "executionsHint": "The code of the cluster and the dataset it ran on are analysed together.",
+      "search": "Search clusters, datasets, code…",
+      "loading": "Loading…",
+      "emptyTitle": "No executions yet",
+      "emptyBody": "Run a cluster in the Cluster tab first. Every execution of a cluster can then be analysed here.",
+      "reference": "Reference",
+      "reportingDate": "Reporting date {date}",
+      "noExecutions": "This cluster has no execution yet.",
+      "executedAt": "Executed {date}",
+      "rows": "{count, plural, one {# row} other {# rows}}",
+      "columns": "{count, plural, one {# column} other {# columns}}",
+      "computed": "{count} computed",
+      "previewTitle": "Review the input",
+      "previewHint": "The code and the dataset that the agent will analyse.",
+      "previewEmpty": "Select an execution to see its code and columns.",
+      "lines": "{count, plural, one {# line} other {# lines}}",
+      "syntaxValid": "Valid Python",
+      "syntaxInvalid": "Syntax error at upload",
+      "moreLines": "… and {count} more lines",
+      "inputColumns": "Input columns ({count})",
+      "statRows": "Rows",
+      "statOutputs": "Output columns",
+      "statComputed": "Values computed",
+      "methodTitle": "How the agent works",
+      "methodHint": "Five stages. The first three are deterministic and prove the lineage; the AI only explains what they established.",
+      "method": {
+        "parse": {
+          "title": "Static data-flow analysis",
+          "body": "Reads the code's syntax tree: every column write, the columns it reads, conditions, lookup tables, loops and functions."
+        },
+        "replay": {
+          "title": "Execution replay",
+          "body": "Re-runs the code statement by statement in the platform sandbox and attributes every changed cell to a line of code."
+        },
+        "probe": {
+          "title": "Dependency probes",
+          "body": "Changes, empties and fills each input column in turn and records which outputs react: lineage proven by experiment."
+        },
+        "document": {
+          "title": "AI documentation",
+          "body": "The LLM explains every derived column, citing code lines; citations outside the verified lineage are rejected."
+        },
+        "review": {
+          "title": "Four-eyes review",
+          "body": "A second AI pass checks each explanation against the code; an investigator agent resolves any disagreement."
+        }
+      },
+      "probesTitle": "Runtime dependency probes",
+      "probesBody": "Recommended. Runs the code once per probe (about three per input column) to confirm every dependency empirically. Switch off only for very slow scripts.",
+      "readyTitle": "Ready to analyse {cluster}",
+      "notReadyTitle": "Select an execution to start",
+      "notReadyBody": "The analysis needs one execution: its code, its dataset and its stored result.",
+      "noLlm": "No LLM is configured on the server (OPENAI_API_KEY or Azure OpenAI).",
+      "start": "Start lineage analysis"
+    },
+    "progress": {
+      "running": "Agent at work",
+      "failed": "Analysis failed",
+      "cancelled": "Analysis cancelled",
+      "interrupted": "Analysis interrupted",
+      "done": "Analysis finished",
+      "title": "Technical lineage of {cluster}",
+      "rows": "{count, plural, one {# row} other {# rows}}",
+      "cancel": "Cancel",
+      "new": "New analysis",
+      "step": "Stage {index}",
+      "stages": {
+        "parse": {
+          "title": "Static analysis",
+          "body": "Syntax tree → column data flow"
+        },
+        "replay": {
+          "title": "Replay",
+          "body": "Code re-run, cells attributed"
+        },
+        "probe": {
+          "title": "Dependency probes",
+          "body": "Inputs changed one by one"
+        },
+        "document": {
+          "title": "AI documentation",
+          "body": "Grounded column explanations"
+        },
+        "review": {
+          "title": "Four-eyes review",
+          "body": "Second pass and investigation"
+        }
+      },
+      "detail": {
+        "parse": "{statements} statements · {writes} writes · {edges} dependencies",
+        "replay": "{cells} cells identical · {changes} changes attributed",
+        "replayMismatch": "Replay differs from the stored result",
+        "probesOff": "Switched off",
+        "probe": "{done} / {total} probes",
+        "document": "{done} / {total} columns",
+        "review": "{done} / {total} reviewed",
+        "investigating": "investigating",
+        "translating": "translating"
+      },
+      "errorTitle": "The analysis stopped with an error",
+      "interruptedBody": "The server restarted while this analysis was running. Start a new analysis.",
+      "console": "Agent console",
+      "consoleHint": "Every step the agent takes, live"
+    },
+    "log": {
+      "run_started": "Analysis started for execution {execution} of {cluster}",
+      "code_loaded": "Loaded {file} ({lines} lines)",
+      "data_loaded": "Loaded the input table: {rows} rows × {columns} columns",
+      "static_done": "Static data-flow analysis: {statements} statements, {writes} column writes, {edges} column dependencies, {lookups} lookup table(s)",
+      "unresolved": "Line {line}: not fully resolved statically ({reason}: {detail})",
+      "outputs_mismatch": "The statically derived output columns differ from the stored execution's columns",
+      "replay_done": "Replay reproduces the stored execution: {cells} cells identical; {changes} cell changes attributed to statements ({ms} ms)",
+      "replay_mismatch": "Replay differs from the stored execution in {mismatches} of {cells} cells (the input data may have changed since)",
+      "replay_error": "Replay stopped at line {line}: {message}",
+      "replay_columns": "The code produces other columns than the stored execution (extra: {extra}; missing: {missing}): the code has probably changed since the execution",
+      "write_unexplained": "Line {line} changed [{column}] at runtime, which the static analysis did not expect",
+      "probes_start": "Running {count} dependency probes on {rows} rows (one input column changed per run)",
+      "probe_column": "[{column}] → {count, plural, =0 {no output changes} other {{affected}}}",
+      "probes_budget": "Probe time budget reached after {done} of {total} probes",
+      "probe_error": "[{column}] probe(s) {modes} raised an error: the code depends on this column's type or values",
+      "probes_done": "Dependency probes: {confirmed} of {total} static source dependencies confirmed at runtime; {runtime_only} runtime-only",
+      "probes_skipped": "{reason, select, disabled {Dependency probes are switched off for this analysis} other {Dependency probes skipped: the script fails on the probe input}}",
+      "model": "Model: {model} · temperature 0 · JSON-schema output",
+      "model_fallback": "Model {model} is not available; continuing with {fallback}",
+      "documenting": "Documenting {columns} derived column(s) in {batches} batch(es)",
+      "documented": "[{column}] documented{grounding, select, partial { – grounding partially verified} other {}}",
+      "grounding_retry": "[{column}] grounding check failed ({issues} issue(s)); sent back to the model once",
+      "reviewed": "[{column}] four-eyes review: {verdict, select, confirmed {confirmed} corrected {corrected} other {unavailable}}{applied, select, true { – correction applied} other {}}",
+      "investigation_start": "Investigating {issues} discrepancy(ies) between static and runtime lineage",
+      "tool_call": "{tool}({args})",
+      "investigation_done": "Investigation finished with {findings} finding(s)",
+      "llm_error": "AI step {step} failed: {message}",
+      "completed": "Lineage complete: {outputs} output columns, {edges} column dependencies",
+      "cancelled": "Analysis cancelled",
+      "cancel_requested": "Cancellation requested",
+      "failed": "Analysis failed: {message}",
+      "translating": "Translating the AI documentation into {languages}",
+      "translated": "AI documentation available in {language} ({columns} columns)"
+    },
+    "graph": {
+      "search": "Find a column…",
+      "lookups": "Lookup tables",
+      "indirect": "Conditions",
+      "unconnected": "Unconnected ({count})",
+      "color": {
+        "role": "Role",
+        "verification": "Runtime verification"
+      },
+      "zoomOut": "Zoom out",
+      "zoomIn": "Zoom in",
+      "fit": "Fit to view",
+      "drawio": "Download as draw.io",
+      "fullscreen": "Full screen",
+      "exitFullscreen": "Exit full screen",
+      "historical": "Uses an earlier state of the source column (it is changed later in the script).",
+      "legend": {
+        "verified": "Verified",
+        "partial": "Partly observable",
+        "discrepancy": "Discrepancy",
+        "passthrough": "Pass-through",
+        "direct": "Data",
+        "indirect": "Condition",
+        "lookup": "Lookup"
+      },
+      "about": "Column lineage",
+      "aboutBody": "Sources on the left, derived columns to the right in dependency order. Solid edges carry values; dashed edges are conditions that decide which rows a rule applies to; dotted edges come from hard-coded lookup tables.",
+      "stats": {
+        "columns": "Columns",
+        "edges": "Dependencies",
+        "lookups": "Lookup tables",
+        "layers": "Layers"
+      },
+      "tipSelect": "Click a column to highlight its full upstream (gold) and downstream (blue) lineage.",
+      "tipNavigate": "Drag the background to pan, scroll to zoom, hover an edge for its transformation and code lines.",
+      "datasetOps": "Row-level operations affecting every column",
+      "drawioTitle": "Technical lineage",
+      "lookupNode": "Lookup · {count} entries",
+      "selectedColumn": "Selected column",
+      "close": "Close",
+      "directInputs": "Direct inputs",
+      "lookupTables": "Lookup tables",
+      "usedBy": "Used by",
+      "sources": "Source input columns ({count})",
+      "lines": "Code lines",
+      "openDetails": "Open column dossier",
+      "lookupTable": "Lookup table",
+      "key": "Key",
+      "value": "Value",
+      "referenceTable": "Reference table with {columns} columns, joined into the data.",
+      "keyColumn": "Mapped column",
+      "unmapped": "{count} row(s) of {column} have values this table does not map:",
+      "tipMove": "Drag a node to rearrange the graph – its connections follow. Arrow keys move the focused node (Shift for bigger steps); Reset layout restores the automatic arrangement.",
+      "resetLayout": "Reset layout",
+      "movableNode": "movable node"
+    },
+    "columns": {
+      "search": "Find a column…",
+      "filter": {
+        "all": "All",
+        "derived": "Derived",
+        "created": "New",
+        "passthrough": "Unchanged"
+      },
+      "roleShort": {
+        "passthrough": "Taken unchanged from the input",
+        "cast": "Type conversion only",
+        "enriched": "Keeps input values, fills or adjusts",
+        "overwritten": "Input values replaced",
+        "created": "New column",
+        "renamed": "Renamed input column",
+        "dropped": "Removed by the script",
+        "intermediate": "Helper column"
+      },
+      "inputsCount": "{count, plural, one {# input} other {# inputs}}",
+      "noMatch": "No column matches.",
+      "column": "Column",
+      "inInputAndOutput": "In input and output",
+      "newColumn": "Created by the script",
+      "possible": "Selected at runtime",
+      "showInGraph": "Show in graph",
+      "showInCode": "Show in code",
+      "facts": {
+        "directInputs": "Direct inputs",
+        "sources": "Source columns",
+        "writes": "Writes",
+        "usedBy": "Used by",
+        "cellsChanged": "Rows changed",
+        "computed": "{count} filled from empty"
+      },
+      "profile": {
+        "title": "Data profile",
+        "hint": "Filled values before and after the script (replay of this execution).",
+        "input": "Input",
+        "output": "Output",
+        "notInInput": "Not in the input",
+        "notInOutput": "Not in the output",
+        "filled": "{filled} of {total} filled"
+      },
+      "runtime": {
+        "title": "Runtime verification",
+        "hint": "Input columns that were changed one at a time; did this column react?",
+        "confirmed": "Confirmed dependencies",
+        "staticOnly": "Not observable with this data",
+        "staticOnlyHint": "The code reads them, but changing them had no effect on this execution's data (e.g. a branch no row takes).",
+        "runtimeOnly": "Runtime-only dependencies",
+        "runtimeOnlyHint": "The column reacted although the static analysis found no dependency; see the investigation."
+      },
+      "findings": "Findings for this column ({count})",
+      "passthroughText": "Taken unchanged from the input dataset; the script does not write this column.",
+      "ai": {
+        "title": "AI explanation",
+        "hint": "Written from the verified lineage; every rule cites the code lines it describes.",
+        "passthrough": "This column is taken unchanged from the input; there is nothing to derive.",
+        "notDocumented": "No AI explanation for this column.",
+        "failed": "The AI explanation could not be generated for this column.",
+        "grounded": "Grounding verified",
+        "partiallyGrounded": "Grounding partial",
+        "reviewConfirmed": "Review: confirmed",
+        "reviewCorrected": "Review: corrected",
+        "formula": "Formula",
+        "rules": "Derivation rules",
+        "notes": "Notes and edge cases",
+        "correctionApplied": "The reviewer corrected this explanation; the correction passed the grounding checks and is shown.",
+        "correctionRejected": "The reviewer proposed a correction that failed the grounding checks; the original is kept.",
+        "showOriginal": "Show the author's original",
+        "showCorrected": "Show the corrected version",
+        "groundingIssues": "Citations removed by the grounding check",
+        "footer": "AI text: check it against the derivation below, which comes directly from the code.",
+        "translated": "machine-translated · original: {language} · column names and citations unchanged",
+        "rejectedBecause": "Why the reviewer's correction was not applied",
+        "issues": {
+          "no_rules": "No rules were given.",
+          "uncited_rule": "Rule {rule} cites no code line.",
+          "lines_outside": "Rule {rule} cites line(s) {lines}, which are not part of this column's lineage.",
+          "inputs_outside": "Rule {rule} lists input(s) {inputs} that this column does not depend on.",
+          "formula_name": "The formula names [{name}], which is not in this column's lineage.",
+          "missing_inputs": "The rules do not mention the direct input(s) {inputs}."
+        }
+      },
+      "derivation": {
+        "title": "Derivation from the code",
+        "hint": "Every write to this column in execution order, taken directly from the code; runtime effect from the replay.",
+        "inputValue": "Input value",
+        "passthrough": "The value comes unchanged from the input dataset.",
+        "inputUsed": "The reported input value is the starting point; the writes below fill or adjust it.",
+        "inputProfile": "({filled} of {total} rows filled in the input.)",
+        "keepsOthers": "keeps other rows",
+        "possible": "may not run",
+        "cells": "{count, plural, one {# row changed} other {# rows changed}}",
+        "noChange": "no change on this data",
+        "notReplayed": "not replayed",
+        "renamedFrom": "Renamed from {column}.",
+        "condition": {
+          "rows": "Rows where",
+          "branch": "If",
+          "loop": "Loop over"
+        },
+        "none": "No write reaches the output."
+      },
+      "lineage": {
+        "title": "Lineage",
+        "hint": "Direct inputs, the columns that use this one, and the input columns it ultimately depends on.",
+        "inputs": "Direct inputs",
+        "onlyItself": "Only its own input value",
+        "historical": "Earlier state used",
+        "usedBy": "Used by",
+        "final": "Final result (not used further)",
+        "sources": "Source input columns ({count})",
+        "mode": {
+          "direct": "Value flows into this column",
+          "indirect": "Decides which rule or rows apply (condition, filter, key)"
+        },
+        "sourcesLegend": "Solid: value flows in · dashed: condition, filter or key only"
+      },
+      "lookups": {
+        "title": "Lookup tables",
+        "hint": "Hard-coded mappings in the code that values pass through.",
+        "direct": "used directly",
+        "upstream": "via an input column",
+        "unmapped": "Values without a mapping in this execution: {values}"
+      }
+    },
+    "code": {
+      "lines": "{count, plural, one {# line} other {# lines}}",
+      "stages": "AI stages",
+      "focusNone": "Highlight a column…",
+      "stage": "Stage {index}",
+      "cells": "{count, plural, one {# cell} other {# cells}}",
+      "noChange": "no change",
+      "inspector": "Statement inspector",
+      "inspectorHint": "Click any line to see what its statement writes and reads, its runtime effect, the conditions and the lookup tables it uses.",
+      "kind": {
+        "write": "Column write",
+        "frame": "Table operation",
+        "lookup": "Lookup table",
+        "variable": "Variable / mask",
+        "function": "Function definition",
+        "import": "Import",
+        "other": "Other statement"
+      },
+      "unresolved": "{count} statement(s) could not be fully resolved statically; the runtime probes cover them.",
+      "statement": "Statement",
+      "close": "Close",
+      "runtime": "Runtime effect (replay)",
+      "runtimeNoChange": "No cell changed.",
+      "runtimeMs": "{ms} ms",
+      "rowsRemoved": "{count} rows removed",
+      "reordered": "Columns reordered",
+      "writes": "Writes",
+      "dead": "overwritten later",
+      "when": "when",
+      "reads": "Reads",
+      "defines": "Defines",
+      "lookup": "Lookup table {name}",
+      "usedBy": "Used by: {columns}",
+      "frameOp": {
+        "REORDER": "Reorders the columns",
+        "DROP": "Removes {count, plural, one {# column} other {# columns}}",
+        "RENAME": "Renames {count, plural, one {# column} other {# columns}}",
+        "FILTER": "Filters rows",
+        "SORT": "Sorts rows",
+        "JOIN": "Joins another table"
+      },
+      "unresolvedTitle": "Not fully resolved statically"
+    },
+    "cells": {
+      "title": "Result data",
+      "rows": "{count, plural, one {# row} other {# rows}}",
+      "rowsLimited": "first {shown} of {total} rows",
+      "legend": {
+        "filled": "Filled",
+        "changed": "Changed",
+        "emptied": "Emptied"
+      },
+      "onlyChanged": "Only changed columns",
+      "compare": "Show input values",
+      "pickTitle": "Pick a cell",
+      "pickBody": "Click any value of the result to see its provenance: the input value, every statement that changed it and the inputs it used.",
+      "provenance": {
+        "title": "Cell provenance",
+        "row": "Row {row}",
+        "close": "Close",
+        "finalValue": "Value in the result",
+        "inputValue": "Input value",
+        "notInInput": "Column not in the input",
+        "formula": "Evaluated with this row's values",
+        "conditionTrue": "Condition true for this row:",
+        "inputs": "Values read at this point",
+        "unchanged": "The script did not change this value; it is the input value.",
+        "neverWritten": "No statement wrote a value into this cell."
+      }
+    },
+    "mapping": {
+      "title": "Mapping table",
+      "hint": "One row per input → output dependency, with OpenLineage transformation types and runtime verification.",
+      "search": "Search columns or explanations…",
+      "type": {
+        "all": "All",
+        "DIRECT": "Direct",
+        "INDIRECT": "Indirect"
+      },
+      "hidePassthrough": "Hide pass-through columns",
+      "export": "Excel",
+      "cols": {
+        "output": "Output column",
+        "input": "Input",
+        "transformation": "Transformation",
+        "function": "Function",
+        "lines": "Lines",
+        "runtime": "Runtime"
+      },
+      "selfInput": "its input value",
+      "noInput": "no input (constant)",
+      "historical": "earlier state used",
+      "keepsInput": "keeps reported value ·",
+      "passthrough": "Pass-through",
+      "empty": "No dependency matches the filters.",
+      "count": "{rows} rows · {outputs} output columns",
+      "openLineageNote": "Types follow the OpenLineage column-lineage standard (DIRECT / INDIRECT).",
+      "runtime": {
+        "confirmed": "Confirmed",
+        "passthrough": "Confirmed",
+        "not_observable": "Not observable",
+        "confirmed_via": "Confirmed via its sources"
+      }
+    },
+    "verification": {
+      "verified": "Runtime-verified",
+      "partial": "Partly observable",
+      "discrepancy": "Discrepancy",
+      "unprobed": "Not probed",
+      "passthrough": "Pass-through",
+      "checksTitle": "Controls",
+      "checksHint": "Deterministic checks of the analysis and of the AI output.",
+      "checks": {
+        "syntax": {
+          "title": "Code parsed",
+          "body": "The script is valid Python and was analysed statement by statement.",
+          "value": "{lines} lines"
+        },
+        "outputs": {
+          "title": "Output columns match",
+          "body": "The output columns derived statically equal the stored execution's columns, in order.",
+          "value": "static {static} · stored {stored}"
+        },
+        "static_coverage": {
+          "title": "Static coverage",
+          "body": "Every statement could be resolved to column reads and writes.",
+          "value": "{statements} statements · {unresolved} unresolved"
+        },
+        "replay": {
+          "title": "Replay reproduces the execution",
+          "body": "Re-running the code on the input reproduces the stored result cell by cell.",
+          "value": "{cells} cells · {mismatches} differences"
+        },
+        "write_consistency": {
+          "title": "Runtime writes match",
+          "body": "Every cell changed at runtime was changed by a statement that the static analysis says writes that column.",
+          "value": "{unexplained} unexplained writes"
+        },
+        "cell_attribution": {
+          "title": "Computed cells attributed",
+          "body": "Every value the execution computed is traced to the line that produced it.",
+          "value": "{attributed} of {computed} attributed"
+        },
+        "dependency_agreement": {
+          "title": "Static and runtime lineage agree",
+          "body": "No output reacts to an input that the static analysis does not list as a source.",
+          "value": "{confirmed} of {total} confirmed · {runtime_only} runtime-only"
+        },
+        "ai_grounding": {
+          "title": "AI explanations grounded",
+          "body": "Every cited line and input belongs to the column's verified lineage; violations go back to the model once.",
+          "value": "{verified} of {documented} verified · {failed} failed"
+        },
+        "four_eyes": {
+          "title": "Four-eyes review",
+          "body": "A second, independent AI pass reviewed every explanation against the code.",
+          "value": "{reviewed} of {documented} reviewed · {corrected} corrected"
+        }
+      },
+      "findingsTitle": "Findings ({count})",
+      "findingsHint": "Detected deterministically from the analysis and the replay.",
+      "noFindings": "No findings: the code behaves exactly as analysed on this data.",
+      "logTitle": "Agent log ({count} entries)",
+      "logHint": "every step of the run",
+      "matrix": {
+        "title": "Dependency verification matrix",
+        "hint": "Rows: derived output columns · columns: input columns. Static analysis versus runtime probes.",
+        "disabled": "Runtime probes were switched off for this analysis.",
+        "confirmed": "Value dependency confirmed",
+        "indirectConfirmed": "Condition dependency confirmed",
+        "staticOnly": "In the code, not observable on this data",
+        "runtimeOnly": "Runtime only",
+        "outputInput": "Output ↓ · Input →"
+      },
+      "review": {
+        "title": "AI review",
+        "hint": "Grounding checks and the four-eyes verdict per column.",
+        "column": "Column",
+        "grounding": "Grounding",
+        "review": "Four-eyes",
+        "failed": "Failed",
+        "verified": "Verified",
+        "partial": "Partial",
+        "afterCorrection": "after correction",
+        "confirmed": "Confirmed",
+        "correctedApplied": "Corrected (applied)",
+        "correctedRejected": "Correction rejected"
+      },
+      "investigation": {
+        "title": "Investigation",
+        "hint": "The investigator agent examined {issues} issue(s) with {steps} tool call(s).",
+        "resolution": {
+          "static_gap": "Static analysis gap",
+          "not_exercised": "Not exercised by the data",
+          "probe_limitation": "Probe limitation",
+          "code_issue": "Code issue",
+          "input_changed": "Input changed",
+          "other": "Other"
+        }
+      },
+      "probes": {
+        "title": "Dependency probes ({count})",
+        "hint": "run on {rows} rows",
+        "disabled": "switched off",
+        "search": "Filter input columns…",
+        "column": "Input column",
+        "mode": "Probe",
+        "changed": "Output columns changed (cells)",
+        "skipped": "not applicable",
+        "none": "no output changed",
+        "modes": {
+          "perturb": "values changed",
+          "null": "emptied",
+          "fill": "gaps filled"
+        }
+      },
+      "run": {
+        "title": "Run details",
+        "runId": "Analysis",
+        "execution": "Execution",
+        "cluster": "Cluster",
+        "dataset": "Dataset",
+        "code": "Code (lines)",
+        "started": "Started",
+        "duration": "Duration",
+        "model": "Model",
+        "calls": "LLM calls",
+        "tools": "{count} tool calls",
+        "tokens": "Tokens (prompt / completion)",
+        "probes": "Runtime probes",
+        "on": "on",
+        "off": "off",
+        "language": "Language"
+      }
+    },
+    "findings": {
+      "replay_mismatch": {
+        "title": "Replay differs from the stored execution",
+        "body": "{mismatches} of {cells} cells differ. The input data has probably changed since the execution ran; the lineage still describes the code."
+      },
+      "replay_error": {
+        "title": "Replay stopped with an error",
+        "body": "{message}"
+      },
+      "replay_columns": {
+        "title": "Code no longer matches the execution",
+        "body": "Replaying the current code produces other columns than the stored execution (extra: {extra}; missing: {missing}). The code was probably changed after the execution; the lineage describes the current code."
+      },
+      "write_unexplained": {
+        "title": "Unexpected runtime write",
+        "body": "This statement changed the column at runtime ({cells} cells) although the static analysis did not expect a write."
+      },
+      "runtime_only": {
+        "title": "Dependency found only at runtime",
+        "body": "Changing {sources} changed this column, but the static analysis found no such dependency."
+      },
+      "unresolved": {
+        "title": "Statement not fully resolved",
+        "body": "The static analysis could not resolve part of this statement ({reason}: {detail}). The runtime probes cover it."
+      },
+      "import": {
+        "title": "Import outside the sandbox",
+        "body": "The import of {module} is not available in the platform sandbox; only pandas (pd) and numpy (np) are."
+      },
+      "unmapped_values": {
+        "title": "Values without a mapping",
+        "body": "{rows} row(s) have values of {column} that the lookup table {lookup} does not map: {values}. The mapped result is empty for them."
+      },
+      "coerced_to_null": {
+        "title": "Values emptied by a type conversion",
+        "body": "{count} value(s) could not be converted and became empty, e.g. {examples}."
+      },
+      "values_removed": {
+        "title": "Values emptied",
+        "body": "{count} value(s) were set to empty by this statement, e.g. {examples}."
+      },
+      "remaining_nulls": {
+        "title": "Empty values remain",
+        "body": "{count} of {total} rows have no value in this column after the script."
+      },
+      "no_effect": {
+        "title": "No effect on this data",
+        "body": "The statement changed no value of {columns} in this execution."
+      },
+      "dead_write": {
+        "title": "Overwritten write",
+        "body": "This write is overwritten later and never reaches the output."
+      },
+      "historical_read": {
+        "title": "Earlier state used",
+        "body": "{source} is read here before a later statement changes it."
+      },
+      "chained_assignment": {
+        "title": "Chained assignment",
+        "body": "Writing through a chained selection may not update the table (pandas copy semantics); check the replay effect."
+      },
+      "possible_writes": {
+        "title": "Columns selected at runtime",
+        "body": "A loop over a computed column selection may write {count} column(s); the replay shows which ones it actually changed."
+      },
+      "static_only": {
+        "title": "Dependency not observable",
+        "body": "The code depends on {sources}, but changing them had no effect on this data (e.g. a branch no row takes)."
+      },
+      "probe_error": {
+        "title": "Probe raised an error",
+        "body": "Changing this column made the script fail ({messages}): the code depends on its type or values."
+      }
+    },
+    "tour": "Guided tour",
+    "languageNames": {
+      "EN": "English",
+      "DE": "German",
+      "ES": "Spanish"
+    },
+    "reasons": {
+      "unknown_column": "Column chosen at runtime",
+      "missing_column": "Column read before it exists",
+      "unsupported": "Construct not modelled",
+      "reshape": "Table reshaped (pivot, melt, concat)",
+      "dynamic_loop": "Loop over computed columns",
+      "analysis_error": "Analysis error",
+      "import": "Import"
+    }
   }
 }

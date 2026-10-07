@@ -14,6 +14,7 @@
     "code": "Code",
     "dataModal": "Datenmodell",
     "technicalLineage": "Technische Herkunft",
+    "technicalLineageAgent": "Technische Herkunft – KI-Agent",
     "data": "Ergebnisse",
     "clustering": "Cluster",
     "contentLineage": "Inhalts-Herkunft",
@@ -21,7 +22,8 @@
     "rootCause": "RootCause",
     "semanticLineage": "Semantische Herkunft",
     "regulations": "Vorschriften",
-    "releaseNotes": "Versionshinweise"
+    "releaseNotes": "Versionshinweise",
+    "regulationMatcher": "Regulierung–Release-Note-Abgleich"
   },
   "reorderDialog": {
     "title": "Tabs sortieren",
@@ -475,5 +477,1137 @@
     "en": "English",
     "de": "Deutsch",
     "es": "Español"
+  },
+  "matcher": {
+    "eyebrow": "Regulatorische Rückverfolgbarkeit",
+    "title": "Regulierung–Release-Note-Abgleich",
+    "subtitle": "Verknüpft jede Release Note mit den Regulierungsvorschriften, die sie betrifft: belegte Bezüge, wörtlich geprüfte Zitate aus beiden Quellen und ein vollständiger Prüfpfad.",
+    "history": "Läufe",
+    "historyTitle": "Frühere Läufe",
+    "historyEmpty": "Noch keine Läufe.",
+    "historyLine": "{notes} Notes · {links} Bezüge · {coverage} % Abdeckung",
+    "newRun": "Neuer Lauf",
+    "backToResults": "Zurück zu den Ergebnissen",
+    "exportExcel": "Excel-Prüfmappe",
+    "deleteRun": "Lauf löschen",
+    "deleteTitle": "Diesen Lauf löschen?",
+    "deleteBody": "Ergebnisse und Prüfpfad des Laufs werden endgültig gelöscht. Release Notes und Regulierungen bleiben unverändert.",
+    "cancel": "Abbrechen",
+    "meta": {
+      "duration": "Laufzeit {value}"
+    },
+    "tabs": {
+      "evidence": "Nachweise",
+      "matrix": "Rückverfolgbarkeitsmatrix",
+      "provisions": "Vorschriften",
+      "audit": "Prüfpfad"
+    },
+    "toast": {
+      "completed": "Abgleich abgeschlossen",
+      "completedBody": "{links} geprüfte Bezüge für {notes} Release Notes.",
+      "failed": "Abgleich fehlgeschlagen",
+      "deleted": "Lauf gelöscht"
+    },
+    "errors": {
+      "load": "Die Daten des Abgleichs konnten nicht geladen werden",
+      "start": "Der Abgleich konnte nicht gestartet werden",
+      "cancel": "Der Lauf konnte nicht abgebrochen werden",
+      "delete": "Der Lauf konnte nicht gelöscht werden",
+      "noResult": "Dieser Lauf hat kein Ergebnis geliefert."
+    },
+    "linkType": {
+      "direct": "Direkt",
+      "indirect": "Indirekt"
+    },
+    "status": {
+      "linked": "Verknüpft",
+      "review": "Prüfen",
+      "no_link": "Kein Bezug",
+      "failed": "Fehlgeschlagen"
+    },
+    "approach": {
+      "standardised": "Standardansatz",
+      "irb": "IRB-Ansatz",
+      "both": "KSA und IRB",
+      "not_specific": "Ansatzunabhängig"
+    },
+    "phase": {
+      "queued": "Wartend",
+      "interpreting": "Interpretation",
+      "retrieving": "Suche",
+      "adjudicating": "Bewertung",
+      "verifying": "Prüfung",
+      "done": "Fertig",
+      "failed": "Fehlgeschlagen",
+      "cancelled": "Abgebrochen",
+      "reviewing": "Zweitprüfung",
+      "translating": "Übersetzung"
+    },
+    "setup": {
+      "releaseNotes": "Release Notes",
+      "releaseNotesHint": "Jede Release Note der ausgewählten Dateien wird analysiert.",
+      "regulations": "Regulierungen",
+      "regulationsHint": "Indizierte Regulierungs-PDFs, gegen die abgeglichen wird.",
+      "selectAll": "Alle auswählen",
+      "clear": "Leeren",
+      "noReleaseNotes": "Noch keine Release Notes hochgeladen. Laden Sie sie im Tab Release Notes hoch.",
+      "noRegulations": "Noch keine Regulierungen hochgeladen. Laden Sie Regulierungs-PDFs im Tab Regulierung hoch.",
+      "notesCount": "{count, plural, one {# Release Note} other {# Release Notes}}",
+      "articles": "{count, plural, one {# Artikel} other {# Artikel}}",
+      "pages": "{count, plural, one {# Seite} other {# Seiten}}",
+      "passages": "{count} Passagen",
+      "semantic": "Semantischer Index",
+      "keywordOnly": "Stichwortindex",
+      "statusReady": "Bereit",
+      "statusIndexing": "Wird indiziert",
+      "statusFailed": "Indizierung fehlgeschlagen",
+      "steps": {
+        "interpret": {
+          "title": "Interpretieren",
+          "body": "Jede Release Note wird in regulatorischen Begriffen formuliert – Fachbegriffe wie EWB oder PWB werden in das Vokabular der Regulierung übersetzt."
+        },
+        "retrieve": {
+          "title": "Suchen",
+          "body": "Hybride Stichwort- und semantische Suche über alle Artikel, dazu Vorschriften, die die Begriffe der Note nennen, und deren Querverweise."
+        },
+        "adjudicate": {
+          "title": "Bewerten",
+          "body": "Das Modell verknüpft die Note nur mit gefundenen Vorschriften, bewertet jeden Bezug als direkt oder indirekt und zitiert beide Quellen wörtlich."
+        },
+        "verify": {
+          "title": "Prüfen",
+          "body": "Jedes Zitat wird wörtlich geprüft; Anwendungsbereich, Ermächtigungsklauseln, gemeinsame Begriffe und Verweisketten werden getestet, mit einer Selbstkorrekturrunde."
+        },
+        "review": {
+          "title": "Zweitprüfung",
+          "body": "Ein zweiter, unabhängiger Modellaufruf prüft jeden akzeptierten Bezug – bestätigen, herabstufen oder verwerfen – und eskaliert Abweichungen an Sie."
+        }
+      },
+      "scope": "{notes, plural, one {# Release Note} other {# Release Notes}} × {regulations, plural, one {# Regulierung} other {# Regulierungen}} ({articles} Artikel)",
+      "selectBoth": "Wählen Sie mindestens eine Release-Note-Datei und eine Regulierung.",
+      "modelHint": "Temperatur 0 · JSON-Schema-Ausgabe · deterministische Prüfungen",
+      "run": "Abgleich starten"
+    },
+    "progress": {
+      "title": "Abgleich läuft",
+      "cancelling": "Wird abgebrochen…",
+      "subtitle": "{notes, plural, one {# Release Note} other {# Release Notes}} gegen {regulations}",
+      "elapsed": "Dauer",
+      "llmCalls": "LLM-Aufrufe",
+      "tokens": "Tokens",
+      "links": "Bezüge",
+      "cancel": "Abbrechen",
+      "notesDone": "{done} von {total} Release Notes abgeschlossen",
+      "stages": {
+        "interpret": "Interpretieren",
+        "retrieve": "Suchen",
+        "adjudicate": "Bewerten",
+        "verify": "Prüfen",
+        "review": "Vier-Augen-Prüfung",
+        "translate": "Übersetzen"
+      },
+      "activeNotes": "{count, plural, one {# Note in diesem Schritt} other {# Notes in diesem Schritt}}",
+      "stageDone": "Abgeschlossen",
+      "notes": "Release Notes",
+      "linkCount": "{count, plural, =0 {kein Bezug} one {# Bezug} other {# Bezüge}}",
+      "log": "Live-Protokoll",
+      "done": "Abgleich abgeschlossen"
+    },
+    "kpi": {
+      "notes": "Release Notes",
+      "notesSub": "{files, plural, one {aus # Datei} other {aus # Dateien}}",
+      "coverage": "Abdeckung",
+      "coverageSub": "{linked} verknüpft · {review} prüfen · {none} kein Bezug",
+      "links": "Bezüge",
+      "linksSub": "{direct} direkt · {indirect} indirekt",
+      "provisions": "Vorschriften",
+      "provisionsSub": "{articles, plural, one {in # Artikel} other {in # Artikeln}}",
+      "quotes": "Zitate bestätigt",
+      "quotesSub": "{percent} % wörtlich in der Quelle",
+      "quotesCorrected": "{count} an den exakten Quelltext angeglichen",
+      "candidates": "Kandidaten",
+      "candidatesSub": "{rejected} mit Begründung verworfen",
+      "confidence": "Ø Konfidenz",
+      "confidenceSub": "Modellurteil + geprüfte Nachweise"
+    },
+    "evidence": {
+      "search": "Jira-ID, Text oder Vorschrift suchen…",
+      "filterAll": "Alle",
+      "noMatches": "Keine Release Note gefunden.",
+      "releaseNote": "Release Note",
+      "record": "Datensatz {number}",
+      "problem": "Problembeschreibung",
+      "solution": "Lösungsbeschreibung",
+      "text": "Text",
+      "interpretation": "Regulatorische Interpretation",
+      "changeKinds": {
+        "calculation": "Berechnungsänderung",
+        "input_data": "Änderung der Eingangsdaten",
+        "classification": "Klassifizierungsänderung",
+        "reporting": "Meldeänderung",
+        "methodology": "Methodikänderung",
+        "other": "Sonstige Änderung"
+      },
+      "affected": "Betroffen",
+      "failed": "Diese Release Note konnte nicht analysiert werden",
+      "linked": "{count, plural, one {# verknüpfte Vorschrift} other {# verknüpfte Vorschriften}}",
+      "noLinks": "Keine Vorschrift der ausgewählten Regulierungen regelt diese Änderung",
+      "corrections": "{count, plural, one {Selbstkorrektur: # Punkt behoben} other {Selbstkorrektur: # Punkte behoben}}",
+      "correctionsHint": "Punkte, die die automatische Prüfung an das Modell zurückgegeben hat",
+      "rejected": "{count, plural, one {# Kandidat verworfen} other {# Kandidaten verworfen}}",
+      "rejectedHint": "geprüfte Vorschriften und warum sie nicht verknüpft wurden",
+      "decidedBy": {
+        "model": "Modellurteil",
+        "verification": "Prüfung nicht bestanden",
+        "review": "Vier-Augen-Prüfung"
+      },
+      "retrieval": "Suchspur: {count} Kandidaten aus {pool} Passagen",
+      "retrievalHint": "Suchanfragen und Ranking-Signale",
+      "page": "S. {page}",
+      "confidenceTitle": "Konfidenz {value}/100",
+      "confidenceHint": "60 % Modellbewertung ({model}) und 40 % Nachweise: Zitatprüfung, gemeinsamer regulatorischer Begriff und Suchrang.",
+      "affectedElement": "Betroffenes Element",
+      "releaseNoteQuote": "Release Note",
+      "formulaWarning": "Diese Vorschrift enthält eine Formel, deren Symbole möglicherweise nicht zuverlässig extrahiert wurden; bitte im PDF prüfen.",
+      "crossReferences": "Verweist auf",
+      "hideProvision": "Vorschriftentext ausblenden",
+      "showProvision": "Vorschriftentext anzeigen",
+      "readArticle": "{label} lesen",
+      "openPdf": "PDF S. {page}",
+      "quoteStatus": {
+        "pass": "Wörtlich bestätigt",
+        "corrected": "An exakten Quelltext angeglichen",
+        "fail": "Nicht bestätigt",
+        "warn": "Prüfen",
+        "info": "Info"
+      },
+      "queries": "Suchanfragen",
+      "hybrid": "hybride Stichwort- und semantische Suche",
+      "keywordOnly": "Stichwortsuche",
+      "table": {
+        "provision": "Vorschrift",
+        "score": "Score",
+        "keyword": "Stichwort",
+        "semantic": "Semantik",
+        "via": "Gefunden über",
+        "decision": "Entscheidung"
+      },
+      "via": {
+        "concept": "Begriff",
+        "reference": "Verweis aus {from}",
+        "search": "Suche"
+      },
+      "decision": {
+        "linked": "Verknüpft",
+        "rejected": "Verworfen",
+        "not_selected": "Nicht relevant"
+      }
+    },
+    "checks": {
+      "title": "Prüfung",
+      "regulationQuote": {
+        "pass": "Zitat wörtlich in {reference}, S. {page} gefunden",
+        "corrected": "Zitat stimmte zu {similarity} % überein und wurde durch den exakten Quelltext ersetzt",
+        "fail": "Zitat in der Vorschrift nicht gefunden"
+      },
+      "noteQuote": {
+        "pass": "Release-Note-Zitat wörtlich gefunden",
+        "corrected": "Release-Note-Zitat stimmte zu {similarity} % überein und wurde an den exakten Wortlaut angeglichen",
+        "fail": "Release-Note-Zitat nicht gefunden"
+      },
+      "scope": {
+        "pass": "Anwendungsbereich passt: die Note betrifft {scope}",
+        "fail": "Konflikt im Anwendungsbereich: die Note betrifft {note}, die Vorschrift gilt für {provision}",
+        "info": "Keine Forderungsklasse in der Note genannt; Anwendungsbereich nicht eingeschränkt"
+      },
+      "substantive": {
+        "pass": "Materielle Anforderung, keine Ermächtigungsklausel",
+        "fail": "Ermächtigungsklausel (technische Standards oder delegierter Rechtsakt)"
+      },
+      "concept": {
+        "pass": "Gemeinsamer regulatorischer Begriff: {concepts}",
+        "fail": "Die Vorschrift behandelt nicht {concepts}",
+        "info": "Kein Glossarbegriff in der Note genannt"
+      },
+      "retargeted": "Fundstelle von {from} auf {to} korrigiert, wo das Zitat steht",
+      "retrieval": {
+        "rank": "Suchrang #{rank} von {total}",
+        "keyword": "Stichwort #{rank}",
+        "semantic": "semantische Ähnlichkeit {value}",
+        "queries": "{count, plural, one {in # Suchanfrage gefunden} other {in # Suchanfragen gefunden}}",
+        "concept": "nennt den Begriff der Note",
+        "reference": "verwiesen aus {from}"
+      },
+      "scopes": {
+        "credit_obligation": "Darlehen (Kreditverpflichtungen)",
+        "non_credit_obligation": "sonstige Aktiva ohne Kreditverpflichtung",
+        "central_government": "Zentralstaaten",
+        "regional_government": "regionale Gebietskörperschaften",
+        "public_sector_entity": "öffentliche Stellen",
+        "multilateral_development_bank": "multilaterale Entwicklungsbanken",
+        "international_organisation": "internationale Organisationen",
+        "institution": "Institute",
+        "corporate": "Unternehmen",
+        "retail": "Mengengeschäft",
+        "immovable_property": "Immobilien",
+        "default": "ausgefallene Positionen",
+        "equity": "Beteiligungen",
+        "covered_bond": "gedeckte Schuldverschreibungen",
+        "ciu": "OGA",
+        "securitisation": "Verbriefungen"
+      },
+      "review": {
+        "pass": "Vier-Augen-Prüfung bestätigt: {reason}",
+        "corrected": "Vier-Augen-Prüfung hat den Bezug auf indirekt herabgestuft: {reason}",
+        "warn": "Die Zweitprüfung widerspricht – manuelle Prüfung nötig: {reason}"
+      }
+    },
+    "matrix": {
+      "title": "Rückverfolgbarkeitsmatrix",
+      "hint": "{notes, plural, one {# Release Note} other {# Release Notes}} × {provisions, plural, one {# Vorschrift} other {# Vorschriften}} · Zelle anklicken, um den Nachweis zu öffnen",
+      "legendDirect": "Direkt",
+      "legendIndirect": "Indirekt",
+      "legendConfidence": "Konfidenz",
+      "releaseNote": "Release Note",
+      "clickToOpen": "Klicken, um den Nachweis zu öffnen",
+      "empty": "Keine Bezüge vorhanden."
+    },
+    "provisions": {
+      "empty": "Keine Vorschriften verknüpft.",
+      "page": "S. {page}",
+      "notes": "{count, plural, one {Release Note} other {Release Notes}}",
+      "read": "{label} lesen",
+      "pdf": "PDF S. {page}"
+    },
+    "drawer": {
+      "error": "Die Vorschrift konnte nicht geladen werden.",
+      "loading": "Vorschrift wird geladen…",
+      "pages": "Seiten {from}–{to}",
+      "linked": "Verknüpft: {reference}",
+      "openPdf": "{file} öffnen",
+      "page": "S. {page}",
+      "table": "Tabelle",
+      "formula": "Enthält eine Formel; Symbole wurden möglicherweise nicht zuverlässig extrahiert.",
+      "footnotes": "Fußnoten",
+      "references": "Querverweise"
+    },
+    "audit": {
+      "run": "Lauf",
+      "copy": "Kopieren",
+      "copied": "Kopiert",
+      "status": "Status",
+      "started": "Gestartet",
+      "finished": "Beendet",
+      "duration": "Laufzeit",
+      "model": "Modell",
+      "language": "Textsprachen",
+      "llmCalls": "LLM-Aufrufe",
+      "tokens": "Tokens ein / aus",
+      "sources": "Quellen",
+      "notes": "{count, plural, one {# Release Note} other {# Release Notes}}",
+      "articles": "{count, plural, one {# Artikel} other {# Artikel}}",
+      "controls": "Angewandte Kontrollen",
+      "control": {
+        "closedSet": {
+          "title": "Geschlossene Kandidatenmenge",
+          "body": "Das Modell darf nur aus dem Regulierungstext gefundene Vorschriften per ID verknüpfen – es kann keine Artikel oder Absätze erfinden."
+        },
+        "verbatim": {
+          "title": "Wörtliche Zitate",
+          "body": "Jedes Regulierungs- und Release-Note-Zitat wird gegen den Quelltext geprüft; Abweichungen auf Tippfehlerniveau werden durch den exakten Wortlaut ersetzt, alles andere wird verworfen."
+        },
+        "scope": {
+          "title": "Anwendungsbereich",
+          "body": "Der Titel der Vorschrift muss für die Positionen der Note gelten (z. B. sind Darlehen keine „other non credit-obligation assets“)."
+        },
+        "substantive": {
+          "title": "Nur materielle Vorschriften",
+          "body": "Ermächtigungsklauseln, die nur technische Standards oder delegierte Rechtsakte beauftragen, werden nie als Bezug akzeptiert."
+        },
+        "concept": {
+          "title": "Gemeinsamer regulatorischer Begriff",
+          "body": "Ein verknüpfter Absatz muss selbst den Begriff behandeln, den die Note ändert (z. B. allgemeine vs. spezifische Kreditrisikoanpassungen)."
+        },
+        "references": {
+          "title": "Verweisketten",
+          "body": "Vorschriften, nach denen eine verknüpfte Regel „in accordance with“ angewendet wird, werden verfolgt und verknüpft oder begründet verworfen."
+        },
+        "selfCorrection": {
+          "title": "Selbstkorrektur",
+          "body": "Nicht bestandene Prüfungen gehen einmal mit Begründung an das Modell zurück; Bezüge, die weiterhin scheitern, werden verworfen und aufgeführt."
+        },
+        "noForcing": {
+          "title": "Keine erzwungenen Bezüge",
+          "body": "Eine Note ohne maßgebliche Vorschrift wird als „kein Bezug“ gemeldet – nach einer Gegenprüfung, wenn Kandidaten ihre Begriffe nennen."
+        },
+        "fourEyes": {
+          "title": "Vier-Augen-Prüfung",
+          "body": "Ein zweiter, unabhängiger Modellaufruf prüft jeden akzeptierten Bezug anhand des Vorschriftentexts: bestätigen, auf indirekt herabstufen oder verwerfen; verwirft er alle Bezüge einer Note, wird sie als „Prüfen“ eskaliert."
+        }
+      },
+      "log": "Laufprotokoll",
+      "allLevels": "alle",
+      "statuses": {
+        "running": "Läuft",
+        "completed": "Abgeschlossen",
+        "failed": "Fehlgeschlagen",
+        "cancelled": "Abgebrochen",
+        "interrupted": "Unterbrochen"
+      }
+    },
+    "tour": "Geführte Tour",
+    "textsOnlyIn": "KI-Texte nur auf {language}",
+    "textsOnlyInHint": "Dieser Lauf entstand, bevor Läufe in beiden Sprachen erstellt wurden: Interpretationen und Begründungen bleiben in der Sprache des Laufs. Neue Läufe liegen auf Deutsch und Englisch vor.",
+    "languages": {
+      "en": "Englisch",
+      "de": "Deutsch",
+      "es": "Spanisch"
+    }
+  },
+  "lineageAgent": {
+    "eyebrow": "Spaltenherkunft · KI-Agent",
+    "title": "Technische Herkunft – KI-Agent",
+    "subtitle": "Leitet die Herkunft jeder Spalte aus dem Code einer Ausführung per statischer Datenflussanalyse ab, belegt sie durch erneutes Ausführen des Codes und gezielte Tests jeder Eingabespalte und dokumentiert jede Spalte mit einer belegten, im Vier-Augen-Prinzip geprüften KI-Erläuterung.",
+    "history": "Analysen",
+    "historyTitle": "Frühere Analysen",
+    "historyEmpty": "Noch keine Analysen.",
+    "historyLine": "{outputs} Spalten · {edges} Abhängigkeiten · {verified} % bestätigt",
+    "newRun": "Neue Analyse",
+    "backToResults": "Zurück zu den Ergebnissen",
+    "backToProgress": "Zurück zur laufenden Analyse",
+    "deleteRun": "Analyse löschen",
+    "deleteTitle": "Diese Analyse löschen?",
+    "deleteBody": "Herkunft, KI-Dokumentation und Prüfpfad dieser Analyse werden endgültig gelöscht. Ausführung, Code und Datensatz bleiben unverändert.",
+    "cancel": "Abbrechen",
+    "status": {
+      "running": "Läuft",
+      "completed": "Abgeschlossen",
+      "failed": "Fehlgeschlagen",
+      "cancelled": "Abgebrochen",
+      "interrupted": "Unterbrochen"
+    },
+    "meta": {
+      "execution": "Ausführung vom {date}",
+      "duration": "Laufzeit {value}"
+    },
+    "export": {
+      "title": "Export",
+      "excel": "Excel-Herkunftsarbeitsmappe",
+      "excelHint": "Herkunft, Spalten, Transformationen, Zellherkunft, Befunde, Kontrollen, Tests und Code.",
+      "openlineage": "OpenLineage-Ereignis (JSON)",
+      "openlineageHint": "Column-Lineage-Facet für Datenkataloge wie Marquez, DataHub oder Collibra.",
+      "drawio": "draw.io-Diagramm",
+      "drawioHint": "Öffnet den Herkunftsgraphen; dort über die Download-Schaltfläche exportieren."
+    },
+    "tabs": {
+      "graph": "Herkunftsgraph",
+      "columns": "Spalten",
+      "code": "Code",
+      "cells": "Zellverfolgung",
+      "mapping": "Zuordnungstabelle",
+      "verification": "Verifikation"
+    },
+    "toast": {
+      "completed": "Herkunftsanalyse abgeschlossen",
+      "completedBody": "{outputs} Ausgabespalten, {edges} Spaltenabhängigkeiten.",
+      "failed": "Herkunftsanalyse fehlgeschlagen",
+      "deleted": "Analyse gelöscht"
+    },
+    "errors": {
+      "load": "Herkunftsdaten konnten nicht geladen werden",
+      "preview": "Vorschau der Ausführung konnte nicht geladen werden",
+      "start": "Analyse konnte nicht gestartet werden",
+      "cancel": "Analyse konnte nicht abgebrochen werden",
+      "delete": "Analyse konnte nicht gelöscht werden",
+      "export": "Export fehlgeschlagen",
+      "noResult": "Diese Analyse hat kein Ergebnis geliefert."
+    },
+    "roles": {
+      "passthrough": "Durchgereicht",
+      "cast": "Typkonvertiert",
+      "enriched": "Angereichert",
+      "overwritten": "Überschrieben",
+      "created": "Neu erzeugt",
+      "renamed": "Umbenannt",
+      "dropped": "Entfernt",
+      "intermediate": "Zwischenspalte"
+    },
+    "operations": {
+      "copy": "Kopie",
+      "cast": "Typkonvertierung",
+      "fill_missing": "Fehlende Werte füllen",
+      "conditional": "Bedingte Regel",
+      "lookup": "Nachschlagen (Mapping)",
+      "arithmetic": "Berechnung",
+      "aggregation": "Aggregation",
+      "window": "Laufender Wert / Fenster",
+      "function": "Funktion",
+      "string": "Textoperation",
+      "date": "Datumsoperation",
+      "rounding": "Rundung",
+      "binning": "Klassenbildung",
+      "constant": "Konstante",
+      "rename": "Umbenennung",
+      "transformation": "Transformation"
+    },
+    "subtypes": {
+      "IDENTITY": "Identität",
+      "TRANSFORMATION": "Transformation",
+      "AGGREGATION": "Aggregation",
+      "CONDITIONAL": "Bedingung",
+      "FILTER": "Filter",
+      "SORT": "Sortierung",
+      "JOIN": "Join-Schlüssel",
+      "GROUP_BY": "Gruppierung",
+      "WINDOW": "Fenster"
+    },
+    "setup": {
+      "executionsTitle": "Ausführung wählen",
+      "executionsHint": "Der Code des Clusters und der Datensatz, auf dem er lief, werden gemeinsam analysiert.",
+      "search": "Cluster, Datensätze, Code suchen…",
+      "loading": "Wird geladen…",
+      "emptyTitle": "Noch keine Ausführungen",
+      "emptyBody": "Führen Sie zuerst im Tab „Cluster“ einen Cluster aus. Jede Ausführung eines Clusters kann anschließend hier analysiert werden.",
+      "reference": "Referenz",
+      "reportingDate": "Stichtag {date}",
+      "noExecutions": "Dieser Cluster wurde noch nicht ausgeführt.",
+      "executedAt": "Ausgeführt am {date}",
+      "rows": "{count, plural, one {# Zeile} other {# Zeilen}}",
+      "columns": "{count, plural, one {# Spalte} other {# Spalten}}",
+      "computed": "{count} berechnet",
+      "previewTitle": "Eingabe prüfen",
+      "previewHint": "Code und Datensatz, die der Agent analysiert.",
+      "previewEmpty": "Wählen Sie eine Ausführung, um Code und Spalten zu sehen.",
+      "lines": "{count, plural, one {# Zeile} other {# Zeilen}}",
+      "syntaxValid": "Gültiges Python",
+      "syntaxInvalid": "Syntaxfehler beim Upload",
+      "moreLines": "… und {count} weitere Zeilen",
+      "inputColumns": "Eingabespalten ({count})",
+      "statRows": "Zeilen",
+      "statOutputs": "Ausgabespalten",
+      "statComputed": "Berechnete Werte",
+      "methodTitle": "So arbeitet der Agent",
+      "methodHint": "Fünf Stufen. Die ersten drei sind deterministisch und belegen die Herkunft; die KI erläutert nur, was sie festgestellt haben.",
+      "method": {
+        "parse": {
+          "title": "Statische Datenflussanalyse",
+          "body": "Liest den Syntaxbaum des Codes: jeden Spaltenschreibzugriff, die gelesenen Spalten, Bedingungen, Mapping-Tabellen, Schleifen und Funktionen."
+        },
+        "replay": {
+          "title": "Wiederholte Ausführung",
+          "body": "Führt den Code Anweisung für Anweisung in der Sandbox der Plattform erneut aus und ordnet jede geänderte Zelle einer Codezeile zu."
+        },
+        "probe": {
+          "title": "Abhängigkeitstests",
+          "body": "Verändert, leert und füllt nacheinander jede Eingabespalte und misst, welche Ausgaben reagieren: Herkunft experimentell belegt."
+        },
+        "document": {
+          "title": "KI-Dokumentation",
+          "body": "Das LLM erläutert jede abgeleitete Spalte mit Codezeilen; Verweise außerhalb der verifizierten Herkunft werden zurückgewiesen."
+        },
+        "review": {
+          "title": "Vier-Augen-Prüfung",
+          "body": "Ein zweiter KI-Durchlauf prüft jede Erläuterung gegen den Code; ein Untersuchungsagent klärt Abweichungen."
+        }
+      },
+      "probesTitle": "Abhängigkeitstests zur Laufzeit",
+      "probesBody": "Empfohlen. Führt den Code je Test einmal aus (etwa drei je Eingabespalte), um jede Abhängigkeit empirisch zu bestätigen. Nur bei sehr langsamen Skripten abschalten.",
+      "readyTitle": "Bereit zur Analyse von {cluster}",
+      "notReadyTitle": "Ausführung wählen, um zu starten",
+      "notReadyBody": "Die Analyse benötigt eine Ausführung: ihren Code, ihren Datensatz und ihr gespeichertes Ergebnis.",
+      "noLlm": "Auf dem Server ist kein LLM konfiguriert (OPENAI_API_KEY oder Azure OpenAI).",
+      "start": "Herkunftsanalyse starten"
+    },
+    "progress": {
+      "running": "Agent arbeitet",
+      "failed": "Analyse fehlgeschlagen",
+      "cancelled": "Analyse abgebrochen",
+      "interrupted": "Analyse unterbrochen",
+      "done": "Analyse beendet",
+      "title": "Technische Herkunft von {cluster}",
+      "rows": "{count, plural, one {# Zeile} other {# Zeilen}}",
+      "cancel": "Abbrechen",
+      "new": "Neue Analyse",
+      "step": "Stufe {index}",
+      "stages": {
+        "parse": {
+          "title": "Statische Analyse",
+          "body": "Syntaxbaum → Spaltendatenfluss"
+        },
+        "replay": {
+          "title": "Wiederholung",
+          "body": "Code erneut ausgeführt, Zellen zugeordnet"
+        },
+        "probe": {
+          "title": "Abhängigkeitstests",
+          "body": "Eingaben einzeln verändert"
+        },
+        "document": {
+          "title": "KI-Dokumentation",
+          "body": "Belegte Spaltenerläuterungen"
+        },
+        "review": {
+          "title": "Vier-Augen-Prüfung",
+          "body": "Zweiter Durchlauf und Untersuchung"
+        }
+      },
+      "detail": {
+        "parse": "{statements} Anweisungen · {writes} Schreibzugriffe · {edges} Abhängigkeiten",
+        "replay": "{cells} Zellen identisch · {changes} Änderungen zugeordnet",
+        "replayMismatch": "Wiederholung weicht vom gespeicherten Ergebnis ab",
+        "probesOff": "Abgeschaltet",
+        "probe": "{done} / {total} Tests",
+        "document": "{done} / {total} Spalten",
+        "review": "{done} / {total} geprüft",
+        "investigating": "Untersuchung läuft",
+        "translating": "Übersetzung läuft"
+      },
+      "errorTitle": "Die Analyse wurde mit einem Fehler beendet",
+      "interruptedBody": "Der Server wurde während dieser Analyse neu gestartet. Starten Sie eine neue Analyse.",
+      "console": "Agentenkonsole",
+      "consoleHint": "Jeder Schritt des Agenten, live"
+    },
+    "log": {
+      "run_started": "Analyse gestartet für Ausführung {execution} von {cluster}",
+      "code_loaded": "{file} geladen ({lines} Zeilen)",
+      "data_loaded": "Eingabetabelle geladen: {rows} Zeilen × {columns} Spalten",
+      "static_done": "Statische Datenflussanalyse: {statements} Anweisungen, {writes} Spaltenschreibzugriffe, {edges} Spaltenabhängigkeiten, {lookups} Mapping-Tabelle(n)",
+      "unresolved": "Zeile {line}: statisch nicht vollständig aufgelöst ({reason}: {detail})",
+      "outputs_mismatch": "Die statisch abgeleiteten Ausgabespalten weichen von den Spalten der gespeicherten Ausführung ab",
+      "replay_done": "Wiederholung reproduziert die gespeicherte Ausführung: {cells} Zellen identisch; {changes} Zelländerungen Anweisungen zugeordnet ({ms} ms)",
+      "replay_mismatch": "Wiederholung weicht in {mismatches} von {cells} Zellen von der gespeicherten Ausführung ab (Eingabedaten wurden vermutlich geändert)",
+      "replay_error": "Wiederholung in Zeile {line} abgebrochen: {message}",
+      "replay_columns": "Der Code erzeugt andere Spalten als die gespeicherte Ausführung (zusätzlich: {extra}; fehlend: {missing}): Der Code wurde vermutlich seit der Ausführung geändert",
+      "write_unexplained": "Zeile {line} hat [{column}] zur Laufzeit geändert, was die statische Analyse nicht erwartet hat",
+      "probes_start": "{count} Abhängigkeitstests auf {rows} Zeilen (je Lauf eine Eingabespalte verändert)",
+      "probe_column": "[{column}] → {count, plural, =0 {keine Ausgabe verändert} other {{affected}}}",
+      "probes_budget": "Zeitbudget der Tests nach {done} von {total} Tests erreicht",
+      "probe_error": "[{column}] Test(s) {modes} lösten einen Fehler aus: Der Code hängt von Typ oder Werten dieser Spalte ab",
+      "probes_done": "Abhängigkeitstests: {confirmed} von {total} statischen Quellabhängigkeiten zur Laufzeit bestätigt; {runtime_only} nur zur Laufzeit",
+      "probes_skipped": "{reason, select, disabled {Abhängigkeitstests sind für diese Analyse abgeschaltet} other {Abhängigkeitstests übersprungen: Das Skript scheitert an der Testeingabe}}",
+      "model": "Modell: {model} · Temperatur 0 · Ausgabe nach JSON-Schema",
+      "model_fallback": "Modell {model} ist nicht verfügbar; weiter mit {fallback}",
+      "documenting": "Dokumentiere {columns} abgeleitete Spalte(n) in {batches} Paket(en)",
+      "documented": "[{column}] dokumentiert{grounding, select, partial { – Belege teilweise bestätigt} other {}}",
+      "grounding_retry": "[{column}] Belegprüfung fehlgeschlagen ({issues} Problem(e)); einmal an das Modell zurückgegeben",
+      "reviewed": "[{column}] Vier-Augen-Prüfung: {verdict, select, confirmed {bestätigt} corrected {korrigiert} other {nicht verfügbar}}{applied, select, true { – Korrektur übernommen} other {}}",
+      "investigation_start": "Untersuche {issues} Abweichung(en) zwischen statischer und Laufzeit-Herkunft",
+      "tool_call": "{tool}({args})",
+      "investigation_done": "Untersuchung mit {findings} Befund(en) abgeschlossen",
+      "llm_error": "KI-Schritt {step} fehlgeschlagen: {message}",
+      "completed": "Herkunft vollständig: {outputs} Ausgabespalten, {edges} Spaltenabhängigkeiten",
+      "cancelled": "Analyse abgebrochen",
+      "cancel_requested": "Abbruch angefordert",
+      "failed": "Analyse fehlgeschlagen: {message}",
+      "translating": "KI-Dokumentation wird übersetzt: {languages}",
+      "translated": "KI-Dokumentation verfügbar auf {language} ({columns} Spalten)"
+    },
+    "graph": {
+      "search": "Spalte finden…",
+      "lookups": "Mapping-Tabellen",
+      "indirect": "Bedingungen",
+      "unconnected": "Unverbunden ({count})",
+      "color": {
+        "role": "Rolle",
+        "verification": "Laufzeitbestätigung"
+      },
+      "zoomOut": "Verkleinern",
+      "zoomIn": "Vergrößern",
+      "fit": "Einpassen",
+      "drawio": "Als draw.io herunterladen",
+      "fullscreen": "Vollbild",
+      "exitFullscreen": "Vollbild beenden",
+      "historical": "Nutzt einen früheren Stand der Quellspalte (sie wird später im Skript geändert).",
+      "legend": {
+        "verified": "Bestätigt",
+        "partial": "Teilweise beobachtbar",
+        "discrepancy": "Abweichung",
+        "passthrough": "Durchgereicht",
+        "direct": "Daten",
+        "indirect": "Bedingung",
+        "lookup": "Mapping"
+      },
+      "about": "Spaltenherkunft",
+      "aboutBody": "Quellen links, abgeleitete Spalten rechts in Abhängigkeitsreihenfolge. Durchgezogene Kanten transportieren Werte; gestrichelte Kanten sind Bedingungen, die bestimmen, für welche Zeilen eine Regel gilt; gepunktete Kanten kommen aus fest codierten Mapping-Tabellen.",
+      "stats": {
+        "columns": "Spalten",
+        "edges": "Abhängigkeiten",
+        "lookups": "Mapping-Tabellen",
+        "layers": "Ebenen"
+      },
+      "tipSelect": "Spalte anklicken, um ihre gesamte Herkunft (gold) und Verwendung (blau) hervorzuheben.",
+      "tipNavigate": "Hintergrund ziehen zum Verschieben, Scrollen zum Zoomen, Kante überfahren für Transformation und Codezeilen.",
+      "datasetOps": "Zeilenoperationen, die jede Spalte betreffen",
+      "drawioTitle": "Technische Herkunft",
+      "lookupNode": "Mapping · {count} Einträge",
+      "selectedColumn": "Ausgewählte Spalte",
+      "close": "Schließen",
+      "directInputs": "Direkte Eingaben",
+      "lookupTables": "Mapping-Tabellen",
+      "usedBy": "Verwendet von",
+      "sources": "Quell-Eingabespalten ({count})",
+      "lines": "Codezeilen",
+      "openDetails": "Spaltendossier öffnen",
+      "lookupTable": "Mapping-Tabelle",
+      "key": "Schlüssel",
+      "value": "Wert",
+      "referenceTable": "Referenztabelle mit {columns} Spalten, an die Daten angefügt.",
+      "keyColumn": "Abgebildete Spalte",
+      "unmapped": "{count} Zeile(n) von {column} haben Werte, die diese Tabelle nicht abbildet:",
+      "tipMove": "Ziehen Sie einen Knoten, um den Graph neu anzuordnen – seine Verbindungen folgen. Pfeiltasten verschieben den fokussierten Knoten (mit Umschalt in größeren Schritten); „Layout zurücksetzen“ stellt die automatische Anordnung wieder her.",
+      "resetLayout": "Layout zurücksetzen",
+      "movableNode": "verschiebbarer Knoten"
+    },
+    "columns": {
+      "search": "Spalte finden…",
+      "filter": {
+        "all": "Alle",
+        "derived": "Abgeleitet",
+        "created": "Neu",
+        "passthrough": "Unverändert"
+      },
+      "roleShort": {
+        "passthrough": "Unverändert aus der Eingabe",
+        "cast": "Nur Typkonvertierung",
+        "enriched": "Behält Eingabewerte, ergänzt oder passt an",
+        "overwritten": "Eingabewerte ersetzt",
+        "created": "Neue Spalte",
+        "renamed": "Umbenannte Eingabespalte",
+        "dropped": "Vom Skript entfernt",
+        "intermediate": "Hilfsspalte"
+      },
+      "inputsCount": "{count, plural, one {# Eingabe} other {# Eingaben}}",
+      "noMatch": "Keine Spalte gefunden.",
+      "column": "Spalte",
+      "inInputAndOutput": "In Ein- und Ausgabe",
+      "newColumn": "Vom Skript erzeugt",
+      "possible": "Zur Laufzeit ausgewählt",
+      "showInGraph": "Im Graphen zeigen",
+      "showInCode": "Im Code zeigen",
+      "facts": {
+        "directInputs": "Direkte Eingaben",
+        "sources": "Quellspalten",
+        "writes": "Schreibzugriffe",
+        "usedBy": "Verwendet von",
+        "cellsChanged": "Geänderte Zeilen",
+        "computed": "{count} aus leer gefüllt"
+      },
+      "profile": {
+        "title": "Datenprofil",
+        "hint": "Gefüllte Werte vor und nach dem Skript (Wiederholung dieser Ausführung).",
+        "input": "Eingabe",
+        "output": "Ausgabe",
+        "notInInput": "Nicht in der Eingabe",
+        "notInOutput": "Nicht in der Ausgabe",
+        "filled": "{filled} von {total} gefüllt"
+      },
+      "runtime": {
+        "title": "Laufzeitbestätigung",
+        "hint": "Eingabespalten wurden einzeln verändert; hat diese Spalte reagiert?",
+        "confirmed": "Bestätigte Abhängigkeiten",
+        "staticOnly": "Mit diesen Daten nicht beobachtbar",
+        "staticOnlyHint": "Der Code liest sie, aber ihre Änderung hatte auf die Daten dieser Ausführung keine Wirkung (z. B. ein Zweig, den keine Zeile nimmt).",
+        "runtimeOnly": "Nur zur Laufzeit beobachtet",
+        "runtimeOnlyHint": "Die Spalte reagierte, obwohl die statische Analyse keine Abhängigkeit fand; siehe Untersuchung."
+      },
+      "findings": "Befunde zu dieser Spalte ({count})",
+      "passthroughText": "Unverändert aus dem Eingabedatensatz übernommen; das Skript schreibt diese Spalte nicht.",
+      "ai": {
+        "title": "KI-Erläuterung",
+        "hint": "Aus der verifizierten Herkunft verfasst; jede Regel nennt die Codezeilen, die sie beschreibt.",
+        "passthrough": "Diese Spalte wird unverändert aus der Eingabe übernommen; es gibt nichts abzuleiten.",
+        "notDocumented": "Keine KI-Erläuterung für diese Spalte.",
+        "failed": "Die KI-Erläuterung konnte für diese Spalte nicht erstellt werden.",
+        "grounded": "Belege bestätigt",
+        "partiallyGrounded": "Belege teilweise",
+        "reviewConfirmed": "Prüfung: bestätigt",
+        "reviewCorrected": "Prüfung: korrigiert",
+        "formula": "Formel",
+        "rules": "Ableitungsregeln",
+        "notes": "Hinweise und Sonderfälle",
+        "correctionApplied": "Der Prüfer hat diese Erläuterung korrigiert; die Korrektur hat die Belegprüfung bestanden und wird angezeigt.",
+        "correctionRejected": "Der Prüfer schlug eine Korrektur vor, die die Belegprüfung nicht bestanden hat; das Original bleibt.",
+        "showOriginal": "Original des Autors zeigen",
+        "showCorrected": "Korrigierte Fassung zeigen",
+        "groundingIssues": "Von der Belegprüfung entfernte Verweise",
+        "footer": "KI-Text: Prüfen Sie ihn an der Ableitung unten, die direkt aus dem Code stammt.",
+        "translated": "maschinell übersetzt · Original: {language} · Spaltennamen und Verweise unverändert",
+        "rejectedBecause": "Warum die Korrektur des Prüfers nicht übernommen wurde",
+        "issues": {
+          "no_rules": "Es wurden keine Regeln angegeben.",
+          "uncited_rule": "Regel {rule} nennt keine Codezeile.",
+          "lines_outside": "Regel {rule} nennt Zeile(n) {lines}, die nicht zur Herkunft dieser Spalte gehören.",
+          "inputs_outside": "Regel {rule} führt Eingabe(n) {inputs} an, von denen diese Spalte nicht abhängt.",
+          "formula_name": "Die Formel nennt [{name}], das nicht zur Herkunft dieser Spalte gehört.",
+          "missing_inputs": "Die Regeln erwähnen die direkte(n) Eingabe(n) {inputs} nicht."
+        }
+      },
+      "derivation": {
+        "title": "Ableitung aus dem Code",
+        "hint": "Jeder Schreibzugriff auf diese Spalte in Ausführungsreihenfolge, direkt aus dem Code; Laufzeitwirkung aus der Wiederholung.",
+        "inputValue": "Eingabewert",
+        "passthrough": "Der Wert stammt unverändert aus dem Eingabedatensatz.",
+        "inputUsed": "Ausgangspunkt ist der gemeldete Eingabewert; die Schreibzugriffe unten füllen oder passen ihn an.",
+        "inputProfile": "({filled} von {total} Zeilen in der Eingabe gefüllt.)",
+        "keepsOthers": "andere Zeilen bleiben",
+        "possible": "läuft ggf. nicht",
+        "cells": "{count, plural, one {# Zeile geändert} other {# Zeilen geändert}}",
+        "noChange": "keine Änderung bei diesen Daten",
+        "notReplayed": "nicht wiederholt",
+        "renamedFrom": "Umbenannt aus {column}.",
+        "condition": {
+          "rows": "Zeilen mit",
+          "branch": "Wenn",
+          "loop": "Schleife über"
+        },
+        "none": "Kein Schreibzugriff erreicht die Ausgabe."
+      },
+      "lineage": {
+        "title": "Herkunft",
+        "hint": "Direkte Eingaben, die Spalten, die diese verwenden, und die Eingabespalten, von denen sie letztlich abhängt.",
+        "inputs": "Direkte Eingaben",
+        "onlyItself": "Nur der eigene Eingabewert",
+        "historical": "Früherer Stand genutzt",
+        "usedBy": "Verwendet von",
+        "final": "Endergebnis (nicht weiterverwendet)",
+        "sources": "Quell-Eingabespalten ({count})",
+        "mode": {
+          "direct": "Wert fließt in diese Spalte ein",
+          "indirect": "Bestimmt, welche Regel oder Zeilen gelten (Bedingung, Filter, Schlüssel)"
+        },
+        "sourcesLegend": "Durchgezogen: Wert fließt ein · gestrichelt: nur Bedingung, Filter oder Schlüssel"
+      },
+      "lookups": {
+        "title": "Mapping-Tabellen",
+        "hint": "Fest codierte Zuordnungen im Code, die Werte durchlaufen.",
+        "direct": "direkt genutzt",
+        "upstream": "über eine Eingabespalte",
+        "unmapped": "Werte ohne Zuordnung in dieser Ausführung: {values}"
+      }
+    },
+    "code": {
+      "lines": "{count, plural, one {# Zeile} other {# Zeilen}}",
+      "stages": "KI-Stufen",
+      "focusNone": "Spalte hervorheben…",
+      "stage": "Stufe {index}",
+      "cells": "{count, plural, one {# Zelle} other {# Zellen}}",
+      "noChange": "keine Änderung",
+      "inspector": "Anweisungsinspektor",
+      "inspectorHint": "Klicken Sie auf eine Zeile, um zu sehen, was die Anweisung schreibt und liest, ihre Laufzeitwirkung, ihre Bedingungen und die genutzten Mapping-Tabellen.",
+      "kind": {
+        "write": "Spaltenschreibzugriff",
+        "frame": "Tabellenoperation",
+        "lookup": "Mapping-Tabelle",
+        "variable": "Variable / Maske",
+        "function": "Funktionsdefinition",
+        "import": "Import",
+        "other": "Sonstige Anweisung"
+      },
+      "unresolved": "{count} Anweisung(en) konnten statisch nicht vollständig aufgelöst werden; die Laufzeittests decken sie ab.",
+      "statement": "Anweisung",
+      "close": "Schließen",
+      "runtime": "Laufzeitwirkung (Wiederholung)",
+      "runtimeNoChange": "Keine Zelle geändert.",
+      "runtimeMs": "{ms} ms",
+      "rowsRemoved": "{count} Zeilen entfernt",
+      "reordered": "Spalten umgeordnet",
+      "writes": "Schreibt",
+      "dead": "später überschrieben",
+      "when": "wenn",
+      "reads": "Liest",
+      "defines": "Definiert",
+      "lookup": "Mapping-Tabelle {name}",
+      "usedBy": "Verwendet von: {columns}",
+      "frameOp": {
+        "REORDER": "Ordnet die Spalten neu",
+        "DROP": "Entfernt {count, plural, one {# Spalte} other {# Spalten}}",
+        "RENAME": "Benennt {count, plural, one {# Spalte} other {# Spalten}} um",
+        "FILTER": "Filtert Zeilen",
+        "SORT": "Sortiert Zeilen",
+        "JOIN": "Verknüpft eine weitere Tabelle"
+      },
+      "unresolvedTitle": "Statisch nicht vollständig aufgelöst"
+    },
+    "cells": {
+      "title": "Ergebnisdaten",
+      "rows": "{count, plural, one {# Zeile} other {# Zeilen}}",
+      "rowsLimited": "erste {shown} von {total} Zeilen",
+      "legend": {
+        "filled": "Gefüllt",
+        "changed": "Geändert",
+        "emptied": "Geleert"
+      },
+      "onlyChanged": "Nur geänderte Spalten",
+      "compare": "Eingabewerte zeigen",
+      "pickTitle": "Zelle wählen",
+      "pickBody": "Klicken Sie auf einen Ergebniswert, um seine Herkunft zu sehen: den Eingabewert, jede Anweisung, die ihn geändert hat, und die dabei genutzten Eingaben.",
+      "provenance": {
+        "title": "Zellherkunft",
+        "row": "Zeile {row}",
+        "close": "Schließen",
+        "finalValue": "Wert im Ergebnis",
+        "inputValue": "Eingabewert",
+        "notInInput": "Spalte nicht in der Eingabe",
+        "formula": "Ausgewertet mit den Werten dieser Zeile",
+        "conditionTrue": "Bedingung für diese Zeile erfüllt:",
+        "inputs": "An dieser Stelle gelesene Werte",
+        "unchanged": "Das Skript hat diesen Wert nicht geändert; es ist der Eingabewert.",
+        "neverWritten": "Keine Anweisung hat einen Wert in diese Zelle geschrieben."
+      }
+    },
+    "mapping": {
+      "title": "Zuordnungstabelle",
+      "hint": "Eine Zeile je Abhängigkeit Eingabe → Ausgabe, mit OpenLineage-Transformationstypen und Laufzeitbestätigung.",
+      "search": "Spalten oder Erläuterungen suchen…",
+      "type": {
+        "all": "Alle",
+        "DIRECT": "Direkt",
+        "INDIRECT": "Indirekt"
+      },
+      "hidePassthrough": "Durchgereichte Spalten ausblenden",
+      "export": "Excel",
+      "cols": {
+        "output": "Ausgabespalte",
+        "input": "Eingabe",
+        "transformation": "Transformation",
+        "function": "Funktion",
+        "lines": "Zeilen",
+        "runtime": "Laufzeit"
+      },
+      "selfInput": "eigener Eingabewert",
+      "noInput": "keine Eingabe (Konstante)",
+      "historical": "früherer Stand genutzt",
+      "keepsInput": "behält gemeldeten Wert ·",
+      "passthrough": "Durchgereicht",
+      "empty": "Keine Abhängigkeit entspricht den Filtern.",
+      "count": "{rows} Zeilen · {outputs} Ausgabespalten",
+      "openLineageNote": "Die Typen folgen dem OpenLineage-Standard für Spaltenherkunft (DIRECT / INDIRECT).",
+      "runtime": {
+        "confirmed": "Bestätigt",
+        "passthrough": "Bestätigt",
+        "not_observable": "Nicht beobachtbar",
+        "confirmed_via": "Über ihre Quellen bestätigt"
+      }
+    },
+    "verification": {
+      "verified": "Zur Laufzeit bestätigt",
+      "partial": "Teilweise beobachtbar",
+      "discrepancy": "Abweichung",
+      "unprobed": "Nicht getestet",
+      "passthrough": "Durchgereicht",
+      "checksTitle": "Kontrollen",
+      "checksHint": "Deterministische Prüfungen der Analyse und der KI-Ausgabe.",
+      "checks": {
+        "syntax": {
+          "title": "Code eingelesen",
+          "body": "Das Skript ist gültiges Python und wurde Anweisung für Anweisung analysiert.",
+          "value": "{lines} Zeilen"
+        },
+        "outputs": {
+          "title": "Ausgabespalten stimmen überein",
+          "body": "Die statisch abgeleiteten Ausgabespalten entsprechen den Spalten der gespeicherten Ausführung, auch in der Reihenfolge.",
+          "value": "statisch {static} · gespeichert {stored}"
+        },
+        "static_coverage": {
+          "title": "Statische Abdeckung",
+          "body": "Jede Anweisung konnte auf gelesene und geschriebene Spalten zurückgeführt werden.",
+          "value": "{statements} Anweisungen · {unresolved} unaufgelöst"
+        },
+        "replay": {
+          "title": "Wiederholung reproduziert die Ausführung",
+          "body": "Das erneute Ausführen des Codes auf der Eingabe reproduziert das gespeicherte Ergebnis Zelle für Zelle.",
+          "value": "{cells} Zellen · {mismatches} Abweichungen"
+        },
+        "write_consistency": {
+          "title": "Laufzeit-Schreibzugriffe passen",
+          "body": "Jede zur Laufzeit geänderte Zelle wurde von einer Anweisung geändert, die laut statischer Analyse diese Spalte schreibt.",
+          "value": "{unexplained} unerklärte Schreibzugriffe"
+        },
+        "cell_attribution": {
+          "title": "Berechnete Zellen zugeordnet",
+          "body": "Jeder von der Ausführung berechnete Wert ist auf die Zeile zurückgeführt, die ihn erzeugt hat.",
+          "value": "{attributed} von {computed} zugeordnet"
+        },
+        "dependency_agreement": {
+          "title": "Statische und Laufzeit-Herkunft stimmen überein",
+          "body": "Keine Ausgabe reagiert auf eine Eingabe, die die statische Analyse nicht als Quelle führt.",
+          "value": "{confirmed} von {total} bestätigt · {runtime_only} nur Laufzeit"
+        },
+        "ai_grounding": {
+          "title": "KI-Erläuterungen belegt",
+          "body": "Jede zitierte Zeile und Eingabe gehört zur verifizierten Herkunft der Spalte; Verstöße gehen einmal an das Modell zurück.",
+          "value": "{verified} von {documented} bestätigt · {failed} fehlgeschlagen"
+        },
+        "four_eyes": {
+          "title": "Vier-Augen-Prüfung",
+          "body": "Ein zweiter, unabhängiger KI-Durchlauf hat jede Erläuterung gegen den Code geprüft.",
+          "value": "{reviewed} von {documented} geprüft · {corrected} korrigiert"
+        }
+      },
+      "findingsTitle": "Befunde ({count})",
+      "findingsHint": "Deterministisch aus Analyse und Wiederholung ermittelt.",
+      "noFindings": "Keine Befunde: Der Code verhält sich auf diesen Daten genau wie analysiert.",
+      "logTitle": "Agentenprotokoll ({count} Einträge)",
+      "logHint": "jeder Schritt des Laufs",
+      "matrix": {
+        "title": "Matrix der Abhängigkeitsbestätigung",
+        "hint": "Zeilen: abgeleitete Ausgabespalten · Spalten: Eingabespalten. Statische Analyse gegenüber Laufzeittests.",
+        "disabled": "Die Laufzeittests waren für diese Analyse abgeschaltet.",
+        "confirmed": "Wertabhängigkeit bestätigt",
+        "indirectConfirmed": "Bedingungsabhängigkeit bestätigt",
+        "staticOnly": "Im Code, mit diesen Daten nicht beobachtbar",
+        "runtimeOnly": "Nur zur Laufzeit",
+        "outputInput": "Ausgabe ↓ · Eingabe →"
+      },
+      "review": {
+        "title": "KI-Prüfung",
+        "hint": "Belegprüfung und Vier-Augen-Urteil je Spalte.",
+        "column": "Spalte",
+        "grounding": "Belege",
+        "review": "Vier Augen",
+        "failed": "Fehlgeschlagen",
+        "verified": "Bestätigt",
+        "partial": "Teilweise",
+        "afterCorrection": "nach Korrektur",
+        "confirmed": "Bestätigt",
+        "correctedApplied": "Korrigiert (übernommen)",
+        "correctedRejected": "Korrektur verworfen"
+      },
+      "investigation": {
+        "title": "Untersuchung",
+        "hint": "Der Untersuchungsagent hat {issues} Problem(e) mit {steps} Werkzeugaufruf(en) geprüft.",
+        "resolution": {
+          "static_gap": "Lücke der statischen Analyse",
+          "not_exercised": "Von den Daten nicht ausgelöst",
+          "probe_limitation": "Grenze des Tests",
+          "code_issue": "Problem im Code",
+          "input_changed": "Eingabe geändert",
+          "other": "Sonstiges"
+        }
+      },
+      "probes": {
+        "title": "Abhängigkeitstests ({count})",
+        "hint": "auf {rows} Zeilen ausgeführt",
+        "disabled": "abgeschaltet",
+        "search": "Eingabespalten filtern…",
+        "column": "Eingabespalte",
+        "mode": "Test",
+        "changed": "Geänderte Ausgabespalten (Zellen)",
+        "skipped": "nicht anwendbar",
+        "none": "keine Ausgabe geändert",
+        "modes": {
+          "perturb": "Werte verändert",
+          "null": "geleert",
+          "fill": "Lücken gefüllt"
+        }
+      },
+      "run": {
+        "title": "Laufdetails",
+        "runId": "Analyse",
+        "execution": "Ausführung",
+        "cluster": "Cluster",
+        "dataset": "Datensatz",
+        "code": "Code (Zeilen)",
+        "started": "Gestartet",
+        "duration": "Dauer",
+        "model": "Modell",
+        "calls": "LLM-Aufrufe",
+        "tools": "{count} Werkzeugaufrufe",
+        "tokens": "Tokens (Prompt / Antwort)",
+        "probes": "Laufzeittests",
+        "on": "an",
+        "off": "aus",
+        "language": "Sprache"
+      }
+    },
+    "findings": {
+      "replay_mismatch": {
+        "title": "Wiederholung weicht von der gespeicherten Ausführung ab",
+        "body": "{mismatches} von {cells} Zellen weichen ab. Die Eingabedaten wurden vermutlich seit der Ausführung geändert; die Herkunft beschreibt weiterhin den Code."
+      },
+      "replay_error": {
+        "title": "Wiederholung mit Fehler abgebrochen",
+        "body": "{message}"
+      },
+      "replay_columns": {
+        "title": "Code passt nicht mehr zur Ausführung",
+        "body": "Die Wiederholung des aktuellen Codes erzeugt andere Spalten als die gespeicherte Ausführung (zusätzlich: {extra}; fehlend: {missing}). Der Code wurde vermutlich nach der Ausführung geändert; die Herkunft beschreibt den aktuellen Code."
+      },
+      "write_unexplained": {
+        "title": "Unerwarteter Schreibzugriff zur Laufzeit",
+        "body": "Diese Anweisung hat die Spalte zur Laufzeit geändert ({cells} Zellen), obwohl die statische Analyse keinen Schreibzugriff erwartet hat."
+      },
+      "runtime_only": {
+        "title": "Abhängigkeit nur zur Laufzeit gefunden",
+        "body": "Eine Änderung von {sources} hat diese Spalte verändert, die statische Analyse fand aber keine solche Abhängigkeit."
+      },
+      "unresolved": {
+        "title": "Anweisung nicht vollständig aufgelöst",
+        "body": "Die statische Analyse konnte einen Teil dieser Anweisung nicht auflösen ({reason}: {detail}). Die Laufzeittests decken sie ab."
+      },
+      "import": {
+        "title": "Import außerhalb der Sandbox",
+        "body": "Der Import von {module} ist in der Sandbox der Plattform nicht verfügbar; nur pandas (pd) und numpy (np) stehen bereit."
+      },
+      "unmapped_values": {
+        "title": "Werte ohne Zuordnung",
+        "body": "{rows} Zeile(n) haben Werte von {column}, die die Mapping-Tabelle {lookup} nicht abbildet: {values}. Das Ergebnis ist für sie leer."
+      },
+      "coerced_to_null": {
+        "title": "Werte durch Typkonvertierung geleert",
+        "body": "{count} Wert(e) konnten nicht konvertiert werden und wurden leer, z. B. {examples}."
+      },
+      "values_removed": {
+        "title": "Werte geleert",
+        "body": "{count} Wert(e) wurden durch diese Anweisung geleert, z. B. {examples}."
+      },
+      "remaining_nulls": {
+        "title": "Leere Werte bleiben",
+        "body": "{count} von {total} Zeilen haben nach dem Skript keinen Wert in dieser Spalte."
+      },
+      "no_effect": {
+        "title": "Keine Wirkung auf diese Daten",
+        "body": "Die Anweisung hat in dieser Ausführung keinen Wert von {columns} geändert."
+      },
+      "dead_write": {
+        "title": "Überschriebener Schreibzugriff",
+        "body": "Dieser Schreibzugriff wird später überschrieben und erreicht die Ausgabe nie."
+      },
+      "historical_read": {
+        "title": "Früherer Stand genutzt",
+        "body": "{source} wird hier gelesen, bevor eine spätere Anweisung die Spalte ändert."
+      },
+      "chained_assignment": {
+        "title": "Verkettete Zuweisung",
+        "body": "Ein Schreibzugriff über eine verkettete Auswahl aktualisiert die Tabelle möglicherweise nicht (pandas-Kopiersemantik); prüfen Sie die Laufzeitwirkung."
+      },
+      "possible_writes": {
+        "title": "Zur Laufzeit gewählte Spalten",
+        "body": "Eine Schleife über eine berechnete Spaltenauswahl kann {count} Spalte(n) schreiben; die Wiederholung zeigt, welche tatsächlich geändert wurden."
+      },
+      "static_only": {
+        "title": "Abhängigkeit nicht beobachtbar",
+        "body": "Der Code hängt von {sources} ab, deren Änderung auf diese Daten aber keine Wirkung hatte (z. B. ein Zweig, den keine Zeile nimmt)."
+      },
+      "probe_error": {
+        "title": "Test löste einen Fehler aus",
+        "body": "Eine Änderung dieser Spalte ließ das Skript scheitern ({messages}): Der Code hängt von ihrem Typ oder ihren Werten ab."
+      }
+    },
+    "tour": "Geführte Tour",
+    "languageNames": {
+      "EN": "Englisch",
+      "DE": "Deutsch",
+      "ES": "Spanisch"
+    },
+    "reasons": {
+      "unknown_column": "Spalte erst zur Laufzeit gewählt",
+      "missing_column": "Spalte gelesen, bevor sie existiert",
+      "unsupported": "Konstrukt nicht modelliert",
+      "reshape": "Tabelle umgeformt (pivot, melt, concat)",
+      "dynamic_loop": "Schleife über berechnete Spalten",
+      "analysis_error": "Analysefehler",
+      "import": "Import"
+    }
   }
 }

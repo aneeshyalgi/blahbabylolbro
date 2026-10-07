@@ -14,6 +14,8 @@ import {
   Shield,
   FileText,
   Sparkles,
+  GitCompareArrows,
+  BrainCircuit,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
@@ -57,6 +59,8 @@ export function TabNavigation({ activeTab, onTabChange, isNavigationLocked = fal
         return <TableProperties className={iconClassName} />;
       case "technical-lineage":
         return <GitBranch className={iconClassName} />;
+      case "technical-lineage-agent":
+        return <BrainCircuit className={iconClassName} />;
       case "clustering":
         return <Rows3 className={iconClassName} />;
       case "content-lineage":
@@ -75,6 +79,8 @@ export function TabNavigation({ activeTab, onTabChange, isNavigationLocked = fal
         return <Shield className={iconClassName} />;
       case "release-notes":
         return <FileText className={iconClassName} />;
+      case "regulation-matcher":
+        return <GitCompareArrows className={iconClassName} />;
       default:
         return <Code2 className={iconClassName} />;
     }
@@ -154,7 +160,7 @@ export function TabNavigation({ activeTab, onTabChange, isNavigationLocked = fal
                 >
                   {getNavIcon(id)}
                 </span>
-                <span className="truncate">
+                <span className="line-clamp-2 min-w-0 leading-snug">
                   {label}
                 </span>
               </button>

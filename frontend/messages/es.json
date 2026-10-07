@@ -14,6 +14,7 @@
     "code": "Código",
     "dataModal": "Modelo de datos",
     "technicalLineage": "Linaje técnico",
+    "technicalLineageAgent": "Linaje técnico – Agente IA",
     "data": "Resultados",
     "clustering": "Clusters",
     "contentLineage": "Linaje de contenido",
@@ -21,7 +22,8 @@
     "rootCause": "RootCause",
     "semanticLineage": "Linaje semántico",
     "regulations": "Normativas",
-    "releaseNotes": "Notas de versión"
+    "releaseNotes": "Notas de versión",
+    "regulationMatcher": "Comparador Regulación–Notas de versión"
   },
   "reorderDialog": {
     "title": "Reordenar pestañas",
@@ -475,5 +477,1137 @@
     "en": "English",
     "de": "Deutsch",
     "es": "Español"
+  },
+  "matcher": {
+    "eyebrow": "Trazabilidad regulatoria",
+    "title": "Comparador Regulación–Notas de versión",
+    "subtitle": "Vincula cada nota de versión con las disposiciones regulatorias a las que afecta: vínculos con evidencia, citas verificadas literalmente en ambas fuentes y una pista de auditoría completa.",
+    "history": "Ejecuciones",
+    "historyTitle": "Ejecuciones anteriores",
+    "historyEmpty": "Aún no hay ejecuciones.",
+    "historyLine": "{notes} notas · {links} vínculos · {coverage} % de cobertura",
+    "newRun": "Nueva ejecución",
+    "backToResults": "Volver a los resultados",
+    "exportExcel": "Libro de auditoría Excel",
+    "deleteRun": "Eliminar ejecución",
+    "deleteTitle": "¿Eliminar esta ejecución?",
+    "deleteBody": "Los resultados y la pista de auditoría se eliminan de forma permanente. Las notas de versión y las regulaciones no se modifican.",
+    "cancel": "Cancelar",
+    "meta": {
+      "duration": "Duración {value}"
+    },
+    "tabs": {
+      "evidence": "Evidencia",
+      "matrix": "Matriz de trazabilidad",
+      "provisions": "Disposiciones",
+      "audit": "Pista de auditoría"
+    },
+    "toast": {
+      "completed": "Comparación completada",
+      "completedBody": "{links} vínculos verificados para {notes} notas de versión.",
+      "failed": "La comparación falló",
+      "deleted": "Ejecución eliminada"
+    },
+    "errors": {
+      "load": "No se pudieron cargar los datos del comparador",
+      "start": "No se pudo iniciar la comparación",
+      "cancel": "No se pudo cancelar la ejecución",
+      "delete": "No se pudo eliminar la ejecución",
+      "noResult": "Esta ejecución no produjo resultados."
+    },
+    "linkType": {
+      "direct": "Directo",
+      "indirect": "Indirecto"
+    },
+    "status": {
+      "linked": "Vinculada",
+      "review": "Revisar",
+      "no_link": "Sin vínculo",
+      "failed": "Fallida"
+    },
+    "approach": {
+      "standardised": "Método estándar",
+      "irb": "Método IRB",
+      "both": "Estándar e IRB",
+      "not_specific": "Cualquier método"
+    },
+    "phase": {
+      "queued": "En cola",
+      "interpreting": "Interpretando",
+      "retrieving": "Buscando",
+      "adjudicating": "Evaluando",
+      "verifying": "Verificando",
+      "done": "Lista",
+      "failed": "Fallida",
+      "cancelled": "Cancelada",
+      "reviewing": "Revisando",
+      "translating": "Traduciendo"
+    },
+    "setup": {
+      "releaseNotes": "Notas de versión",
+      "releaseNotesHint": "Se analiza cada nota de versión de los archivos seleccionados.",
+      "regulations": "Regulaciones",
+      "regulationsHint": "PDF de regulaciones indexados con los que comparar.",
+      "selectAll": "Seleccionar todo",
+      "clear": "Limpiar",
+      "noReleaseNotes": "Aún no hay notas de versión. Súbalas en la pestaña Release Notes.",
+      "noRegulations": "Aún no hay regulaciones. Suba PDF de regulaciones en la pestaña Regulation.",
+      "notesCount": "{count, plural, one {# nota de versión} other {# notas de versión}}",
+      "articles": "{count, plural, one {# artículo} other {# artículos}}",
+      "pages": "{count, plural, one {# página} other {# páginas}}",
+      "passages": "{count} pasajes",
+      "semantic": "Índice semántico",
+      "keywordOnly": "Índice de palabras clave",
+      "statusReady": "Lista",
+      "statusIndexing": "Indexando",
+      "statusFailed": "Indexación fallida",
+      "steps": {
+        "interpret": {
+          "title": "Interpretar",
+          "body": "Cada nota se reformula en términos regulatorios; los términos de negocio alemanes como EWB o PWB se traducen al vocabulario de la regulación."
+        },
+        "retrieve": {
+          "title": "Buscar",
+          "body": "Búsqueda híbrida por palabras clave y semántica en todos los artículos, más las disposiciones que nombran los conceptos de la nota y sus referencias cruzadas."
+        },
+        "adjudicate": {
+          "title": "Evaluar",
+          "body": "El modelo vincula la nota solo con disposiciones encontradas, califica cada vínculo como directo o indirecto y cita ambas fuentes literalmente."
+        },
+        "verify": {
+          "title": "Verificar",
+          "body": "Cada cita se comprueba literalmente; se prueban el ámbito, las cláusulas de habilitación, los conceptos comunes y las cadenas de referencias, con una ronda de autocorrección."
+        },
+        "review": {
+          "title": "Revisar",
+          "body": "Una segunda llamada independiente al modelo cuestiona cada vínculo aceptado – confirmar, rebajar o rechazar – y le escala los desacuerdos."
+        }
+      },
+      "scope": "{notes, plural, one {# nota de versión} other {# notas de versión}} × {regulations, plural, one {# regulación} other {# regulaciones}} ({articles} artículos)",
+      "selectBoth": "Seleccione al menos un archivo de notas de versión y una regulación.",
+      "modelHint": "temperatura 0 · salida con esquema JSON · comprobaciones deterministas",
+      "run": "Iniciar comparación"
+    },
+    "progress": {
+      "title": "Comparación en curso",
+      "cancelling": "Cancelando…",
+      "subtitle": "{notes, plural, one {# nota de versión} other {# notas de versión}} frente a {regulations}",
+      "elapsed": "Tiempo",
+      "llmCalls": "Llamadas LLM",
+      "tokens": "Tokens",
+      "links": "Vínculos",
+      "cancel": "Cancelar",
+      "notesDone": "{done} de {total} notas de versión completadas",
+      "stages": {
+        "interpret": "Interpretar",
+        "retrieve": "Buscar",
+        "adjudicate": "Evaluar",
+        "verify": "Verificar",
+        "review": "Revisión a cuatro ojos",
+        "translate": "Traducir"
+      },
+      "activeNotes": "{count, plural, one {# nota en este paso} other {# notas en este paso}}",
+      "stageDone": "Completado",
+      "notes": "Notas de versión",
+      "linkCount": "{count, plural, =0 {sin vínculo} one {# vínculo} other {# vínculos}}",
+      "log": "Registro en vivo",
+      "done": "Emparejamiento completado"
+    },
+    "kpi": {
+      "notes": "Notas de versión",
+      "notesSub": "{files, plural, one {de # archivo} other {de # archivos}}",
+      "coverage": "Cobertura",
+      "coverageSub": "{linked} vinculadas · {review} revisar · {none} sin vínculo",
+      "links": "Vínculos",
+      "linksSub": "{direct} directos · {indirect} indirectos",
+      "provisions": "Disposiciones",
+      "provisionsSub": "{articles, plural, one {en # artículo} other {en # artículos}}",
+      "quotes": "Citas verificadas",
+      "quotesSub": "{percent} % literales en la fuente",
+      "quotesCorrected": "{count} ajustadas al texto exacto de la fuente",
+      "candidates": "Candidatas",
+      "candidatesSub": "{rejected} descartadas con motivo",
+      "confidence": "Confianza media",
+      "confidenceSub": "juicio del modelo + evidencia verificada"
+    },
+    "evidence": {
+      "search": "Buscar ID de Jira, texto o disposición…",
+      "filterAll": "Todas",
+      "noMatches": "Ninguna nota coincide.",
+      "releaseNote": "Nota de versión",
+      "record": "registro {number}",
+      "problem": "Descripción del problema",
+      "solution": "Descripción de la solución",
+      "text": "Texto",
+      "interpretation": "Interpretación regulatoria",
+      "changeKinds": {
+        "calculation": "Cambio de cálculo",
+        "input_data": "Cambio de datos de entrada",
+        "classification": "Cambio de clasificación",
+        "reporting": "Cambio de reporte",
+        "methodology": "Cambio de metodología",
+        "other": "Otro cambio"
+      },
+      "affected": "Afecta a",
+      "failed": "Esta nota de versión no se pudo analizar",
+      "linked": "{count, plural, one {# disposición vinculada} other {# disposiciones vinculadas}}",
+      "noLinks": "Ninguna disposición de las regulaciones seleccionadas regula este cambio",
+      "corrections": "{count, plural, one {Autocorrección: # punto resuelto} other {Autocorrección: # puntos resueltos}}",
+      "correctionsHint": "puntos que la verificación automática devolvió al modelo",
+      "rejected": "{count, plural, one {# candidata descartada} other {# candidatas descartadas}}",
+      "rejectedHint": "disposiciones consideradas y por qué no se vincularon",
+      "decidedBy": {
+        "model": "Juicio del modelo",
+        "verification": "Verificación fallida",
+        "review": "Revisión a cuatro ojos"
+      },
+      "retrieval": "Traza de búsqueda: {count} candidatas de {pool} pasajes",
+      "retrievalHint": "consultas y señales de ranking",
+      "page": "p. {page}",
+      "confidenceTitle": "Confianza {value}/100",
+      "confidenceHint": "60 % evaluación del modelo ({model}) y 40 % evidencia: verificación de citas, concepto regulatorio común y rango de búsqueda.",
+      "affectedElement": "Elemento afectado",
+      "releaseNoteQuote": "Nota de versión",
+      "formulaWarning": "Esta disposición contiene una fórmula cuyos símbolos pueden no haberse extraído correctamente; compruebe el PDF.",
+      "crossReferences": "Remite a",
+      "hideProvision": "Ocultar texto de la disposición",
+      "showProvision": "Mostrar texto de la disposición",
+      "readArticle": "Leer {label}",
+      "openPdf": "PDF p. {page}",
+      "quoteStatus": {
+        "pass": "Verificada literalmente",
+        "corrected": "Ajustada al texto exacto",
+        "fail": "No verificada",
+        "warn": "Revisar",
+        "info": "Info"
+      },
+      "queries": "Consultas de búsqueda",
+      "hybrid": "búsqueda híbrida por palabras clave y semántica",
+      "keywordOnly": "búsqueda por palabras clave",
+      "table": {
+        "provision": "Disposición",
+        "score": "Puntuación",
+        "keyword": "Palabras clave",
+        "semantic": "Semántica",
+        "via": "Encontrada por",
+        "decision": "Decisión"
+      },
+      "via": {
+        "concept": "concepto",
+        "reference": "referencia desde {from}",
+        "search": "búsqueda"
+      },
+      "decision": {
+        "linked": "Vinculada",
+        "rejected": "Descartada",
+        "not_selected": "No relevante"
+      }
+    },
+    "checks": {
+      "title": "Verificación",
+      "regulationQuote": {
+        "pass": "Cita encontrada literalmente en {reference}, p. {page}",
+        "corrected": "La cita coincidía en un {similarity} % y se sustituyó por el texto exacto de la fuente",
+        "fail": "Cita no encontrada en la disposición"
+      },
+      "noteQuote": {
+        "pass": "Cita de la nota encontrada literalmente",
+        "corrected": "La cita de la nota coincidía en un {similarity} % y se ajustó al texto exacto",
+        "fail": "Cita de la nota no encontrada"
+      },
+      "scope": {
+        "pass": "El ámbito encaja: la nota se refiere a {scope}",
+        "fail": "Conflicto de ámbito: la nota se refiere a {note}, la disposición se aplica a {provision}",
+        "info": "La nota no nombra una clase de exposición; ámbito sin restricción"
+      },
+      "substantive": {
+        "pass": "Requisito sustantivo, no una cláusula de habilitación",
+        "fail": "Cláusula de habilitación (normas técnicas o acto delegado)"
+      },
+      "concept": {
+        "pass": "Concepto regulatorio común: {concepts}",
+        "fail": "La disposición no trata {concepts}",
+        "info": "La nota no nombra ningún concepto del glosario"
+      },
+      "retargeted": "Cita corregida de {from} a {to}, donde está el texto citado",
+      "retrieval": {
+        "rank": "Rango de búsqueda #{rank} de {total}",
+        "keyword": "palabras clave #{rank}",
+        "semantic": "similitud semántica {value}",
+        "queries": "{count, plural, one {encontrada en # consulta} other {encontrada en # consultas}}",
+        "concept": "nombra el concepto de la nota",
+        "reference": "referida desde {from}"
+      },
+      "scopes": {
+        "credit_obligation": "préstamos (obligaciones crediticias)",
+        "non_credit_obligation": "otros activos que no son obligaciones crediticias",
+        "central_government": "administraciones centrales",
+        "regional_government": "administraciones regionales",
+        "public_sector_entity": "entes del sector público",
+        "multilateral_development_bank": "bancos multilaterales de desarrollo",
+        "international_organisation": "organizaciones internacionales",
+        "institution": "entidades",
+        "corporate": "empresas",
+        "retail": "exposiciones minoristas",
+        "immovable_property": "bienes inmuebles",
+        "default": "exposiciones en situación de impago",
+        "equity": "renta variable",
+        "covered_bond": "bonos garantizados",
+        "ciu": "OIC",
+        "securitisation": "titulizaciones"
+      },
+      "review": {
+        "pass": "Revisión a cuatro ojos confirmada: {reason}",
+        "corrected": "La revisión a cuatro ojos rebajó el vínculo a indirecto: {reason}",
+        "warn": "El revisor discrepa – se necesita revisión humana: {reason}"
+      }
+    },
+    "matrix": {
+      "title": "Matriz de trazabilidad",
+      "hint": "{notes, plural, one {# nota de versión} other {# notas de versión}} × {provisions, plural, one {# disposición} other {# disposiciones}} · seleccione una celda para abrir su evidencia",
+      "legendDirect": "Directo",
+      "legendIndirect": "Indirecto",
+      "legendConfidence": "confianza",
+      "releaseNote": "Nota de versión",
+      "clickToOpen": "Haga clic para abrir la evidencia",
+      "empty": "No hay vínculos que mostrar."
+    },
+    "provisions": {
+      "empty": "No hay disposiciones vinculadas.",
+      "page": "p. {page}",
+      "notes": "{count, plural, one {nota de versión} other {notas de versión}}",
+      "read": "Leer {label}",
+      "pdf": "PDF p. {page}"
+    },
+    "drawer": {
+      "error": "No se pudo cargar la disposición.",
+      "loading": "Cargando disposición…",
+      "pages": "páginas {from}–{to}",
+      "linked": "Vinculada: {reference}",
+      "openPdf": "Abrir {file}",
+      "page": "p. {page}",
+      "table": "tabla",
+      "formula": "Contiene una fórmula; los símbolos pueden no haberse extraído correctamente.",
+      "footnotes": "Notas al pie",
+      "references": "Referencias cruzadas"
+    },
+    "audit": {
+      "run": "Ejecución",
+      "copy": "Copiar",
+      "copied": "Copiado",
+      "status": "Estado",
+      "started": "Inicio",
+      "finished": "Fin",
+      "duration": "Duración",
+      "model": "Modelo",
+      "language": "Idiomas de los textos",
+      "llmCalls": "Llamadas LLM",
+      "tokens": "Tokens entrada / salida",
+      "sources": "Fuentes",
+      "notes": "{count, plural, one {# nota de versión} other {# notas de versión}}",
+      "articles": "{count, plural, one {# artículo} other {# artículos}}",
+      "controls": "Controles aplicados",
+      "control": {
+        "closedSet": {
+          "title": "Conjunto cerrado de candidatas",
+          "body": "El modelo solo puede vincular disposiciones encontradas en el texto de la regulación, por ID; no puede inventar artículos ni apartados."
+        },
+        "verbatim": {
+          "title": "Citas literales",
+          "body": "Cada cita de la regulación y de la nota se compara con el texto fuente; las diferencias de nivel tipográfico se sustituyen por el texto exacto y lo demás se rechaza."
+        },
+        "scope": {
+          "title": "Control de ámbito",
+          "body": "El título de la disposición debe aplicarse a las exposiciones de la nota (p. ej., los préstamos no son «other non credit-obligation assets»)."
+        },
+        "substantive": {
+          "title": "Solo disposiciones sustantivas",
+          "body": "Las cláusulas de habilitación que solo encargan normas técnicas o actos delegados nunca se aceptan como vínculos."
+        },
+        "concept": {
+          "title": "Concepto regulatorio común",
+          "body": "Un apartado vinculado debe tratar el concepto que cambia la nota (p. ej., ajustes por riesgo de crédito general frente a específico)."
+        },
+        "references": {
+          "title": "Cadenas de referencias",
+          "body": "Las disposiciones según las cuales se aplica una regla vinculada («in accordance with») se siguen y se vinculan o se descartan con motivo."
+        },
+        "selfCorrection": {
+          "title": "Autocorrección",
+          "body": "Los controles fallidos se devuelven una vez al modelo con los motivos; los vínculos que siguen fallando se rechazan y se listan."
+        },
+        "noForcing": {
+          "title": "Sin vínculos forzados",
+          "body": "Una nota sin disposición aplicable se informa como «sin vínculo», tras una ronda de contraste cuando hay candidatas que nombran sus conceptos."
+        },
+        "fourEyes": {
+          "title": "Revisión a cuatro ojos",
+          "body": "Una segunda llamada independiente al modelo cuestiona cada vínculo aceptado a partir del texto de la disposición: lo confirma, lo rebaja a indirecto o lo rechaza; si rechaza todos los vínculos de una nota, la nota se escala como «Revisar»."
+        }
+      },
+      "log": "Registro de la ejecución",
+      "allLevels": "todos",
+      "statuses": {
+        "running": "En curso",
+        "completed": "Completada",
+        "failed": "Fallida",
+        "cancelled": "Cancelada",
+        "interrupted": "Interrumpida"
+      }
+    },
+    "tour": "Visita guiada",
+    "textsOnlyIn": "Textos de IA solo en {language}",
+    "textsOnlyInHint": "Esta ejecución se creó antes de que las ejecuciones se redactaran en ambos idiomas: sus interpretaciones y justificaciones permanecen en el idioma de la ejecución. Las nuevas ejecuciones están disponibles en inglés y alemán.",
+    "languages": {
+      "en": "inglés",
+      "de": "alemán",
+      "es": "español"
+    }
+  },
+  "lineageAgent": {
+    "eyebrow": "Linaje por columna · Agente IA",
+    "title": "Linaje técnico – Agente IA",
+    "subtitle": "Deriva el linaje por columna del código de una ejecución mediante análisis estático de flujo de datos, lo demuestra re-ejecutando el código y probando cada columna de entrada, y documenta cada columna con una explicación de IA fundamentada y revisada a cuatro ojos.",
+    "history": "Análisis",
+    "historyTitle": "Análisis anteriores",
+    "historyEmpty": "Todavía no hay análisis.",
+    "historyLine": "{outputs} columnas · {edges} dependencias · {verified} % verificado",
+    "newRun": "Nuevo análisis",
+    "backToResults": "Volver a los resultados",
+    "backToProgress": "Volver al análisis en curso",
+    "deleteRun": "Eliminar análisis",
+    "deleteTitle": "¿Eliminar este análisis?",
+    "deleteBody": "El linaje, la documentación de IA y la pista de auditoría de este análisis se eliminan definitivamente. La ejecución, su código y su conjunto de datos no se ven afectados.",
+    "cancel": "Cancelar",
+    "status": {
+      "running": "En curso",
+      "completed": "Completado",
+      "failed": "Fallido",
+      "cancelled": "Cancelado",
+      "interrupted": "Interrumpido"
+    },
+    "meta": {
+      "execution": "Ejecución del {date}",
+      "duration": "Duración {value}"
+    },
+    "export": {
+      "title": "Exportar",
+      "excel": "Libro Excel de linaje",
+      "excelHint": "Linaje, columnas, transformaciones, procedencia de celdas, hallazgos, controles, pruebas y código.",
+      "openlineage": "Evento OpenLineage (JSON)",
+      "openlineageHint": "Faceta de linaje por columna para catálogos de datos como Marquez, DataHub o Collibra.",
+      "drawio": "Diagrama draw.io",
+      "drawioHint": "Abre el grafo de linaje; expórtelo allí con el botón de descarga."
+    },
+    "tabs": {
+      "graph": "Grafo de linaje",
+      "columns": "Columnas",
+      "code": "Código",
+      "cells": "Traza de celdas",
+      "mapping": "Tabla de mapeo",
+      "verification": "Verificación"
+    },
+    "toast": {
+      "completed": "Análisis de linaje completado",
+      "completedBody": "{outputs} columnas de salida, {edges} dependencias de columnas.",
+      "failed": "El análisis de linaje falló",
+      "deleted": "Análisis eliminado"
+    },
+    "errors": {
+      "load": "No se pudieron cargar los datos de linaje",
+      "preview": "No se pudo cargar la vista previa de la ejecución",
+      "start": "No se pudo iniciar el análisis",
+      "cancel": "No se pudo cancelar el análisis",
+      "delete": "No se pudo eliminar el análisis",
+      "export": "La exportación falló",
+      "noResult": "Este análisis no produjo ningún resultado."
+    },
+    "roles": {
+      "passthrough": "Sin cambios",
+      "cast": "Tipo convertido",
+      "enriched": "Enriquecida",
+      "overwritten": "Sobrescrita",
+      "created": "Creada",
+      "renamed": "Renombrada",
+      "dropped": "Eliminada",
+      "intermediate": "Intermedia"
+    },
+    "operations": {
+      "copy": "Copia",
+      "cast": "Conversión de tipo",
+      "fill_missing": "Completar valores vacíos",
+      "conditional": "Regla condicional",
+      "lookup": "Búsqueda (mapeo)",
+      "arithmetic": "Cálculo",
+      "aggregation": "Agregación",
+      "window": "Valor acumulado / ventana",
+      "function": "Función",
+      "string": "Operación de texto",
+      "date": "Operación de fecha",
+      "rounding": "Redondeo",
+      "binning": "Agrupación en intervalos",
+      "constant": "Constante",
+      "rename": "Renombrado",
+      "transformation": "Transformación"
+    },
+    "subtypes": {
+      "IDENTITY": "Identidad",
+      "TRANSFORMATION": "Transformación",
+      "AGGREGATION": "Agregación",
+      "CONDITIONAL": "Condición",
+      "FILTER": "Filtro",
+      "SORT": "Orden",
+      "JOIN": "Clave de unión",
+      "GROUP_BY": "Agrupación",
+      "WINDOW": "Ventana"
+    },
+    "setup": {
+      "executionsTitle": "Elija una ejecución",
+      "executionsHint": "Se analizan juntos el código del clúster y el conjunto de datos sobre el que se ejecutó.",
+      "search": "Buscar clústeres, conjuntos de datos, código…",
+      "loading": "Cargando…",
+      "emptyTitle": "Todavía no hay ejecuciones",
+      "emptyBody": "Ejecute primero un clúster en la pestaña «Clúster». Después podrá analizar aquí cada ejecución de un clúster.",
+      "reference": "Referencia",
+      "reportingDate": "Fecha de reporte {date}",
+      "noExecutions": "Este clúster todavía no tiene ejecuciones.",
+      "executedAt": "Ejecutado el {date}",
+      "rows": "{count, plural, one {# fila} other {# filas}}",
+      "columns": "{count, plural, one {# columna} other {# columnas}}",
+      "computed": "{count} calculados",
+      "previewTitle": "Revisar la entrada",
+      "previewHint": "El código y el conjunto de datos que analizará el agente.",
+      "previewEmpty": "Seleccione una ejecución para ver su código y sus columnas.",
+      "lines": "{count, plural, one {# línea} other {# líneas}}",
+      "syntaxValid": "Python válido",
+      "syntaxInvalid": "Error de sintaxis al subir",
+      "moreLines": "… y {count} líneas más",
+      "inputColumns": "Columnas de entrada ({count})",
+      "statRows": "Filas",
+      "statOutputs": "Columnas de salida",
+      "statComputed": "Valores calculados",
+      "methodTitle": "Cómo trabaja el agente",
+      "methodHint": "Cinco etapas. Las tres primeras son deterministas y demuestran el linaje; la IA solo explica lo que estas establecieron.",
+      "method": {
+        "parse": {
+          "title": "Análisis estático de flujo de datos",
+          "body": "Lee el árbol sintáctico del código: cada escritura de columna, las columnas que lee, condiciones, tablas de mapeo, bucles y funciones."
+        },
+        "replay": {
+          "title": "Re-ejecución",
+          "body": "Vuelve a ejecutar el código sentencia por sentencia en el entorno aislado de la plataforma y atribuye cada celda modificada a una línea de código."
+        },
+        "probe": {
+          "title": "Pruebas de dependencia",
+          "body": "Modifica, vacía y rellena cada columna de entrada por turnos y registra qué salidas reaccionan: linaje demostrado experimentalmente."
+        },
+        "document": {
+          "title": "Documentación con IA",
+          "body": "El LLM explica cada columna derivada citando líneas de código; las citas fuera del linaje verificado se rechazan."
+        },
+        "review": {
+          "title": "Revisión a cuatro ojos",
+          "body": "Una segunda pasada de IA contrasta cada explicación con el código; un agente investigador resuelve las discrepancias."
+        }
+      },
+      "probesTitle": "Pruebas de dependencia en tiempo de ejecución",
+      "probesBody": "Recomendado. Ejecuta el código una vez por prueba (unas tres por columna de entrada) para confirmar empíricamente cada dependencia. Desactívelo solo para scripts muy lentos.",
+      "readyTitle": "Listo para analizar {cluster}",
+      "notReadyTitle": "Seleccione una ejecución para empezar",
+      "notReadyBody": "El análisis necesita una ejecución: su código, su conjunto de datos y su resultado guardado.",
+      "noLlm": "No hay ningún LLM configurado en el servidor (OPENAI_API_KEY o Azure OpenAI).",
+      "start": "Iniciar análisis de linaje"
+    },
+    "progress": {
+      "running": "Agente trabajando",
+      "failed": "El análisis falló",
+      "cancelled": "Análisis cancelado",
+      "interrupted": "Análisis interrumpido",
+      "done": "Análisis terminado",
+      "title": "Linaje técnico de {cluster}",
+      "rows": "{count, plural, one {# fila} other {# filas}}",
+      "cancel": "Cancelar",
+      "new": "Nuevo análisis",
+      "step": "Etapa {index}",
+      "stages": {
+        "parse": {
+          "title": "Análisis estático",
+          "body": "Árbol sintáctico → flujo de columnas"
+        },
+        "replay": {
+          "title": "Re-ejecución",
+          "body": "Código re-ejecutado, celdas atribuidas"
+        },
+        "probe": {
+          "title": "Pruebas de dependencia",
+          "body": "Entradas modificadas una a una"
+        },
+        "document": {
+          "title": "Documentación con IA",
+          "body": "Explicaciones fundamentadas por columna"
+        },
+        "review": {
+          "title": "Revisión a cuatro ojos",
+          "body": "Segunda pasada e investigación"
+        }
+      },
+      "detail": {
+        "parse": "{statements} sentencias · {writes} escrituras · {edges} dependencias",
+        "replay": "{cells} celdas idénticas · {changes} cambios atribuidos",
+        "replayMismatch": "La re-ejecución difiere del resultado guardado",
+        "probesOff": "Desactivadas",
+        "probe": "{done} / {total} pruebas",
+        "document": "{done} / {total} columnas",
+        "review": "{done} / {total} revisadas",
+        "investigating": "investigando",
+        "translating": "traduciendo"
+      },
+      "errorTitle": "El análisis se detuvo con un error",
+      "interruptedBody": "El servidor se reinició mientras se ejecutaba este análisis. Inicie un nuevo análisis.",
+      "console": "Consola del agente",
+      "consoleHint": "Cada paso del agente, en directo"
+    },
+    "log": {
+      "run_started": "Análisis iniciado para la ejecución {execution} de {cluster}",
+      "code_loaded": "{file} cargado ({lines} líneas)",
+      "data_loaded": "Tabla de entrada cargada: {rows} filas × {columns} columnas",
+      "static_done": "Análisis estático de flujo de datos: {statements} sentencias, {writes} escrituras de columnas, {edges} dependencias de columnas, {lookups} tabla(s) de mapeo",
+      "unresolved": "Línea {line}: no resuelta del todo estáticamente ({reason}: {detail})",
+      "outputs_mismatch": "Las columnas de salida derivadas estáticamente difieren de las de la ejecución guardada",
+      "replay_done": "La re-ejecución reproduce la ejecución guardada: {cells} celdas idénticas; {changes} cambios de celdas atribuidos a sentencias ({ms} ms)",
+      "replay_mismatch": "La re-ejecución difiere de la ejecución guardada en {mismatches} de {cells} celdas (puede que los datos de entrada hayan cambiado)",
+      "replay_error": "La re-ejecución se detuvo en la línea {line}: {message}",
+      "replay_columns": "El código produce columnas distintas de la ejecución guardada (adicionales: {extra}; ausentes: {missing}): probablemente el código cambió desde la ejecución",
+      "write_unexplained": "La línea {line} modificó [{column}] en tiempo de ejecución, algo que el análisis estático no esperaba",
+      "probes_start": "Ejecutando {count} pruebas de dependencia sobre {rows} filas (una columna de entrada modificada por ejecución)",
+      "probe_column": "[{column}] → {count, plural, =0 {ninguna salida cambia} other {{affected}}}",
+      "probes_budget": "Se alcanzó el presupuesto de tiempo de las pruebas tras {done} de {total}",
+      "probe_error": "[{column}] la(s) prueba(s) {modes} provocaron un error: el código depende del tipo o de los valores de esta columna",
+      "probes_done": "Pruebas de dependencia: {confirmed} de {total} dependencias estáticas de origen confirmadas en ejecución; {runtime_only} solo en ejecución",
+      "probes_skipped": "{reason, select, disabled {Las pruebas de dependencia están desactivadas para este análisis} other {Pruebas de dependencia omitidas: el script falla con la entrada de prueba}}",
+      "model": "Modelo: {model} · temperatura 0 · salida con esquema JSON",
+      "model_fallback": "El modelo {model} no está disponible; se continúa con {fallback}",
+      "documenting": "Documentando {columns} columna(s) derivada(s) en {batches} lote(s)",
+      "documented": "[{column}] documentada{grounding, select, partial { – fundamentación verificada parcialmente} other {}}",
+      "grounding_retry": "[{column}] la verificación de fundamentación falló ({issues} problema(s)); devuelta al modelo una vez",
+      "reviewed": "[{column}] revisión a cuatro ojos: {verdict, select, confirmed {confirmada} corrected {corregida} other {no disponible}}{applied, select, true { – corrección aplicada} other {}}",
+      "investigation_start": "Investigando {issues} discrepancia(s) entre el linaje estático y el de ejecución",
+      "tool_call": "{tool}({args})",
+      "investigation_done": "Investigación terminada con {findings} hallazgo(s)",
+      "llm_error": "El paso de IA {step} falló: {message}",
+      "completed": "Linaje completo: {outputs} columnas de salida, {edges} dependencias de columnas",
+      "cancelled": "Análisis cancelado",
+      "cancel_requested": "Cancelación solicitada",
+      "failed": "El análisis falló: {message}",
+      "translating": "Traduciendo la documentación de IA: {languages}",
+      "translated": "Documentación de IA disponible en {language} ({columns} columnas)"
+    },
+    "graph": {
+      "search": "Buscar una columna…",
+      "lookups": "Tablas de mapeo",
+      "indirect": "Condiciones",
+      "unconnected": "Sin conexión ({count})",
+      "color": {
+        "role": "Rol",
+        "verification": "Verificación en ejecución"
+      },
+      "zoomOut": "Alejar",
+      "zoomIn": "Acercar",
+      "fit": "Ajustar a la vista",
+      "drawio": "Descargar como draw.io",
+      "fullscreen": "Pantalla completa",
+      "exitFullscreen": "Salir de pantalla completa",
+      "historical": "Usa un estado anterior de la columna de origen (se modifica más adelante en el script).",
+      "legend": {
+        "verified": "Verificada",
+        "partial": "Parcialmente observable",
+        "discrepancy": "Discrepancia",
+        "passthrough": "Sin cambios",
+        "direct": "Datos",
+        "indirect": "Condición",
+        "lookup": "Mapeo"
+      },
+      "about": "Linaje por columna",
+      "aboutBody": "Orígenes a la izquierda, columnas derivadas a la derecha en orden de dependencia. Las aristas continuas transportan valores; las discontinuas son condiciones que deciden a qué filas se aplica una regla; las punteadas proceden de tablas de mapeo fijas en el código.",
+      "stats": {
+        "columns": "Columnas",
+        "edges": "Dependencias",
+        "lookups": "Tablas de mapeo",
+        "layers": "Niveles"
+      },
+      "tipSelect": "Haga clic en una columna para resaltar todo su linaje anterior (dorado) y posterior (azul).",
+      "tipNavigate": "Arrastre el fondo para desplazar, use la rueda para el zoom y pase sobre una arista para ver su transformación y sus líneas.",
+      "datasetOps": "Operaciones de filas que afectan a todas las columnas",
+      "drawioTitle": "Linaje técnico",
+      "lookupNode": "Mapeo · {count} entradas",
+      "selectedColumn": "Columna seleccionada",
+      "close": "Cerrar",
+      "directInputs": "Entradas directas",
+      "lookupTables": "Tablas de mapeo",
+      "usedBy": "Usada por",
+      "sources": "Columnas de entrada de origen ({count})",
+      "lines": "Líneas de código",
+      "openDetails": "Abrir la ficha de la columna",
+      "lookupTable": "Tabla de mapeo",
+      "key": "Clave",
+      "value": "Valor",
+      "referenceTable": "Tabla de referencia con {columns} columnas, unida a los datos.",
+      "keyColumn": "Columna mapeada",
+      "unmapped": "{count} fila(s) de {column} tienen valores que esta tabla no mapea:",
+      "tipMove": "Arrastre un nodo para reorganizar el grafo: sus conexiones lo siguen. Las flechas mueven el nodo enfocado (Mayús para pasos mayores); «Restablecer diseño» recupera la disposición automática.",
+      "resetLayout": "Restablecer diseño",
+      "movableNode": "nodo desplazable"
+    },
+    "columns": {
+      "search": "Buscar una columna…",
+      "filter": {
+        "all": "Todas",
+        "derived": "Derivadas",
+        "created": "Nuevas",
+        "passthrough": "Sin cambios"
+      },
+      "roleShort": {
+        "passthrough": "Tomada sin cambios de la entrada",
+        "cast": "Solo conversión de tipo",
+        "enriched": "Conserva valores de entrada, completa o ajusta",
+        "overwritten": "Valores de entrada reemplazados",
+        "created": "Columna nueva",
+        "renamed": "Columna de entrada renombrada",
+        "dropped": "Eliminada por el script",
+        "intermediate": "Columna auxiliar"
+      },
+      "inputsCount": "{count, plural, one {# entrada} other {# entradas}}",
+      "noMatch": "Ninguna columna coincide.",
+      "column": "Columna",
+      "inInputAndOutput": "En entrada y salida",
+      "newColumn": "Creada por el script",
+      "possible": "Seleccionada en ejecución",
+      "showInGraph": "Ver en el grafo",
+      "showInCode": "Ver en el código",
+      "facts": {
+        "directInputs": "Entradas directas",
+        "sources": "Columnas de origen",
+        "writes": "Escrituras",
+        "usedBy": "Usada por",
+        "cellsChanged": "Filas modificadas",
+        "computed": "{count} rellenadas desde vacío"
+      },
+      "profile": {
+        "title": "Perfil de datos",
+        "hint": "Valores completos antes y después del script (re-ejecución de esta ejecución).",
+        "input": "Entrada",
+        "output": "Salida",
+        "notInInput": "No está en la entrada",
+        "notInOutput": "No está en la salida",
+        "filled": "{filled} de {total} completas"
+      },
+      "runtime": {
+        "title": "Verificación en ejecución",
+        "hint": "Las columnas de entrada se modificaron una a una; ¿reaccionó esta columna?",
+        "confirmed": "Dependencias confirmadas",
+        "staticOnly": "No observables con estos datos",
+        "staticOnlyHint": "El código las lee, pero modificarlas no tuvo efecto en los datos de esta ejecución (p. ej. una rama que ninguna fila toma).",
+        "runtimeOnly": "Dependencias solo en ejecución",
+        "runtimeOnlyHint": "La columna reaccionó aunque el análisis estático no encontró ninguna dependencia; vea la investigación."
+      },
+      "findings": "Hallazgos de esta columna ({count})",
+      "passthroughText": "Tomada sin cambios del conjunto de datos de entrada; el script no escribe esta columna.",
+      "ai": {
+        "title": "Explicación de IA",
+        "hint": "Redactada a partir del linaje verificado; cada regla cita las líneas de código que describe.",
+        "passthrough": "Esta columna se toma sin cambios de la entrada; no hay nada que derivar.",
+        "notDocumented": "No hay explicación de IA para esta columna.",
+        "failed": "No se pudo generar la explicación de IA para esta columna.",
+        "grounded": "Fundamentación verificada",
+        "partiallyGrounded": "Fundamentación parcial",
+        "reviewConfirmed": "Revisión: confirmada",
+        "reviewCorrected": "Revisión: corregida",
+        "formula": "Fórmula",
+        "rules": "Reglas de derivación",
+        "notes": "Notas y casos límite",
+        "correctionApplied": "El revisor corrigió esta explicación; la corrección superó las verificaciones de fundamentación y es la que se muestra.",
+        "correctionRejected": "El revisor propuso una corrección que no superó las verificaciones de fundamentación; se mantiene el original.",
+        "showOriginal": "Mostrar el original del autor",
+        "showCorrected": "Mostrar la versión corregida",
+        "groundingIssues": "Citas eliminadas por la verificación de fundamentación",
+        "footer": "Texto de IA: contrástelo con la derivación de abajo, que procede directamente del código.",
+        "translated": "traducción automática · original: {language} · nombres de columnas y citas sin cambios",
+        "rejectedBecause": "Por qué no se aplicó la corrección del revisor",
+        "issues": {
+          "no_rules": "No se indicaron reglas.",
+          "uncited_rule": "La regla {rule} no cita ninguna línea de código.",
+          "lines_outside": "La regla {rule} cita la(s) línea(s) {lines}, que no forman parte del linaje de esta columna.",
+          "inputs_outside": "La regla {rule} indica entrada(s) {inputs} de las que esta columna no depende.",
+          "formula_name": "La fórmula nombra [{name}], que no forma parte del linaje de esta columna.",
+          "missing_inputs": "Las reglas no mencionan la(s) entrada(s) directa(s) {inputs}."
+        }
+      },
+      "derivation": {
+        "title": "Derivación a partir del código",
+        "hint": "Cada escritura en esta columna en orden de ejecución, tomada directamente del código; efecto en ejecución según la re-ejecución.",
+        "inputValue": "Valor de entrada",
+        "passthrough": "El valor procede sin cambios del conjunto de datos de entrada.",
+        "inputUsed": "El punto de partida es el valor de entrada informado; las escrituras siguientes lo completan o ajustan.",
+        "inputProfile": "({filled} de {total} filas completas en la entrada.)",
+        "keepsOthers": "conserva otras filas",
+        "possible": "puede no ejecutarse",
+        "cells": "{count, plural, one {# fila modificada} other {# filas modificadas}}",
+        "noChange": "sin cambios con estos datos",
+        "notReplayed": "no re-ejecutado",
+        "renamedFrom": "Renombrada desde {column}.",
+        "condition": {
+          "rows": "Filas donde",
+          "branch": "Si",
+          "loop": "Bucle sobre"
+        },
+        "none": "Ninguna escritura llega a la salida."
+      },
+      "lineage": {
+        "title": "Linaje",
+        "hint": "Entradas directas, las columnas que usan esta y las columnas de entrada de las que depende en último término.",
+        "inputs": "Entradas directas",
+        "onlyItself": "Solo su propio valor de entrada",
+        "historical": "Estado anterior usado",
+        "usedBy": "Usada por",
+        "final": "Resultado final (no se usa después)",
+        "sources": "Columnas de entrada de origen ({count})",
+        "mode": {
+          "direct": "El valor fluye a esta columna",
+          "indirect": "Decide qué regla o filas se aplican (condición, filtro, clave)"
+        },
+        "sourcesLegend": "Continua: el valor fluye · discontinua: solo condición, filtro o clave"
+      },
+      "lookups": {
+        "title": "Tablas de mapeo",
+        "hint": "Asignaciones fijas en el código por las que pasan los valores.",
+        "direct": "uso directo",
+        "upstream": "a través de una columna de entrada",
+        "unmapped": "Valores sin mapeo en esta ejecución: {values}"
+      }
+    },
+    "code": {
+      "lines": "{count, plural, one {# línea} other {# líneas}}",
+      "stages": "Etapas de IA",
+      "focusNone": "Resaltar una columna…",
+      "stage": "Etapa {index}",
+      "cells": "{count, plural, one {# celda} other {# celdas}}",
+      "noChange": "sin cambios",
+      "inspector": "Inspector de sentencias",
+      "inspectorHint": "Haga clic en cualquier línea para ver qué escribe y lee su sentencia, su efecto en ejecución, sus condiciones y las tablas de mapeo que usa.",
+      "kind": {
+        "write": "Escritura de columna",
+        "frame": "Operación de tabla",
+        "lookup": "Tabla de mapeo",
+        "variable": "Variable / máscara",
+        "function": "Definición de función",
+        "import": "Importación",
+        "other": "Otra sentencia"
+      },
+      "unresolved": "{count} sentencia(s) no se pudieron resolver del todo estáticamente; las pruebas en ejecución las cubren.",
+      "statement": "Sentencia",
+      "close": "Cerrar",
+      "runtime": "Efecto en ejecución (re-ejecución)",
+      "runtimeNoChange": "No cambió ninguna celda.",
+      "runtimeMs": "{ms} ms",
+      "rowsRemoved": "{count} filas eliminadas",
+      "reordered": "Columnas reordenadas",
+      "writes": "Escribe",
+      "dead": "sobrescrita después",
+      "when": "cuando",
+      "reads": "Lee",
+      "defines": "Define",
+      "lookup": "Tabla de mapeo {name}",
+      "usedBy": "Usada por: {columns}",
+      "frameOp": {
+        "REORDER": "Reordena las columnas",
+        "DROP": "Elimina {count, plural, one {# columna} other {# columnas}}",
+        "RENAME": "Renombra {count, plural, one {# columna} other {# columnas}}",
+        "FILTER": "Filtra filas",
+        "SORT": "Ordena filas",
+        "JOIN": "Une otra tabla"
+      },
+      "unresolvedTitle": "No resuelta del todo estáticamente"
+    },
+    "cells": {
+      "title": "Datos del resultado",
+      "rows": "{count, plural, one {# fila} other {# filas}}",
+      "rowsLimited": "primeras {shown} de {total} filas",
+      "legend": {
+        "filled": "Rellenada",
+        "changed": "Modificada",
+        "emptied": "Vaciada"
+      },
+      "onlyChanged": "Solo columnas modificadas",
+      "compare": "Mostrar valores de entrada",
+      "pickTitle": "Elija una celda",
+      "pickBody": "Haga clic en cualquier valor del resultado para ver su procedencia: el valor de entrada, cada sentencia que lo modificó y las entradas que usó.",
+      "provenance": {
+        "title": "Procedencia de la celda",
+        "row": "Fila {row}",
+        "close": "Cerrar",
+        "finalValue": "Valor en el resultado",
+        "inputValue": "Valor de entrada",
+        "notInInput": "La columna no está en la entrada",
+        "formula": "Evaluado con los valores de esta fila",
+        "conditionTrue": "Condición verdadera para esta fila:",
+        "inputs": "Valores leídos en este punto",
+        "unchanged": "El script no modificó este valor; es el valor de entrada.",
+        "neverWritten": "Ninguna sentencia escribió un valor en esta celda."
+      }
+    },
+    "mapping": {
+      "title": "Tabla de mapeo",
+      "hint": "Una fila por dependencia entrada → salida, con tipos de transformación OpenLineage y verificación en ejecución.",
+      "search": "Buscar columnas o explicaciones…",
+      "type": {
+        "all": "Todas",
+        "DIRECT": "Directas",
+        "INDIRECT": "Indirectas"
+      },
+      "hidePassthrough": "Ocultar columnas sin cambios",
+      "export": "Excel",
+      "cols": {
+        "output": "Columna de salida",
+        "input": "Entrada",
+        "transformation": "Transformación",
+        "function": "Función",
+        "lines": "Líneas",
+        "runtime": "Ejecución"
+      },
+      "selfInput": "su valor de entrada",
+      "noInput": "sin entrada (constante)",
+      "historical": "estado anterior usado",
+      "keepsInput": "conserva el valor informado ·",
+      "passthrough": "Sin cambios",
+      "empty": "Ninguna dependencia coincide con los filtros.",
+      "count": "{rows} filas · {outputs} columnas de salida",
+      "openLineageNote": "Los tipos siguen el estándar OpenLineage de linaje por columna (DIRECT / INDIRECT).",
+      "runtime": {
+        "confirmed": "Confirmada",
+        "passthrough": "Confirmada",
+        "not_observable": "No observable",
+        "confirmed_via": "Confirmada vía sus orígenes"
+      }
+    },
+    "verification": {
+      "verified": "Verificada en ejecución",
+      "partial": "Parcialmente observable",
+      "discrepancy": "Discrepancia",
+      "unprobed": "Sin probar",
+      "passthrough": "Sin cambios",
+      "checksTitle": "Controles",
+      "checksHint": "Comprobaciones deterministas del análisis y de la salida de la IA.",
+      "checks": {
+        "syntax": {
+          "title": "Código analizado",
+          "body": "El script es Python válido y se analizó sentencia por sentencia.",
+          "value": "{lines} líneas"
+        },
+        "outputs": {
+          "title": "Las columnas de salida coinciden",
+          "body": "Las columnas de salida derivadas estáticamente son las de la ejecución guardada, en el mismo orden.",
+          "value": "estáticas {static} · guardadas {stored}"
+        },
+        "static_coverage": {
+          "title": "Cobertura estática",
+          "body": "Cada sentencia se pudo resolver en lecturas y escrituras de columnas.",
+          "value": "{statements} sentencias · {unresolved} sin resolver"
+        },
+        "replay": {
+          "title": "La re-ejecución reproduce la ejecución",
+          "body": "Volver a ejecutar el código sobre la entrada reproduce el resultado guardado celda por celda.",
+          "value": "{cells} celdas · {mismatches} diferencias"
+        },
+        "write_consistency": {
+          "title": "Las escrituras en ejecución coinciden",
+          "body": "Cada celda modificada en ejecución la modificó una sentencia que, según el análisis estático, escribe esa columna.",
+          "value": "{unexplained} escrituras sin explicar"
+        },
+        "cell_attribution": {
+          "title": "Celdas calculadas atribuidas",
+          "body": "Cada valor calculado por la ejecución se remonta a la línea que lo produjo.",
+          "value": "{attributed} de {computed} atribuidas"
+        },
+        "dependency_agreement": {
+          "title": "Linaje estático y de ejecución coinciden",
+          "body": "Ninguna salida reacciona a una entrada que el análisis estático no recoja como origen.",
+          "value": "{confirmed} de {total} confirmadas · {runtime_only} solo en ejecución"
+        },
+        "ai_grounding": {
+          "title": "Explicaciones de IA fundamentadas",
+          "body": "Cada línea y entrada citada pertenece al linaje verificado de la columna; las infracciones se devuelven una vez al modelo.",
+          "value": "{verified} de {documented} verificadas · {failed} fallidas"
+        },
+        "four_eyes": {
+          "title": "Revisión a cuatro ojos",
+          "body": "Una segunda pasada independiente de IA contrastó cada explicación con el código.",
+          "value": "{reviewed} de {documented} revisadas · {corrected} corregidas"
+        }
+      },
+      "findingsTitle": "Hallazgos ({count})",
+      "findingsHint": "Detectados de forma determinista a partir del análisis y de la re-ejecución.",
+      "noFindings": "Sin hallazgos: el código se comporta exactamente como se analizó sobre estos datos.",
+      "logTitle": "Registro del agente ({count} entradas)",
+      "logHint": "cada paso de la ejecución",
+      "matrix": {
+        "title": "Matriz de verificación de dependencias",
+        "hint": "Filas: columnas de salida derivadas · columnas: columnas de entrada. Análisis estático frente a pruebas en ejecución.",
+        "disabled": "Las pruebas en ejecución estaban desactivadas para este análisis.",
+        "confirmed": "Dependencia de valor confirmada",
+        "indirectConfirmed": "Dependencia de condición confirmada",
+        "staticOnly": "En el código, no observable con estos datos",
+        "runtimeOnly": "Solo en ejecución",
+        "outputInput": "Salida ↓ · Entrada →"
+      },
+      "review": {
+        "title": "Revisión de IA",
+        "hint": "Verificaciones de fundamentación y veredicto a cuatro ojos por columna.",
+        "column": "Columna",
+        "grounding": "Fundamentación",
+        "review": "Cuatro ojos",
+        "failed": "Fallida",
+        "verified": "Verificada",
+        "partial": "Parcial",
+        "afterCorrection": "tras corrección",
+        "confirmed": "Confirmada",
+        "correctedApplied": "Corregida (aplicada)",
+        "correctedRejected": "Corrección rechazada"
+      },
+      "investigation": {
+        "title": "Investigación",
+        "hint": "El agente investigador examinó {issues} problema(s) con {steps} llamada(s) a herramientas.",
+        "resolution": {
+          "static_gap": "Laguna del análisis estático",
+          "not_exercised": "No ejercitado por los datos",
+          "probe_limitation": "Límite de la prueba",
+          "code_issue": "Problema en el código",
+          "input_changed": "Entrada modificada",
+          "other": "Otro"
+        }
+      },
+      "probes": {
+        "title": "Pruebas de dependencia ({count})",
+        "hint": "ejecutadas sobre {rows} filas",
+        "disabled": "desactivadas",
+        "search": "Filtrar columnas de entrada…",
+        "column": "Columna de entrada",
+        "mode": "Prueba",
+        "changed": "Columnas de salida modificadas (celdas)",
+        "skipped": "no aplicable",
+        "none": "ninguna salida cambió",
+        "modes": {
+          "perturb": "valores modificados",
+          "null": "vaciada",
+          "fill": "huecos rellenados"
+        }
+      },
+      "run": {
+        "title": "Detalles de la ejecución",
+        "runId": "Análisis",
+        "execution": "Ejecución",
+        "cluster": "Clúster",
+        "dataset": "Conjunto de datos",
+        "code": "Código (líneas)",
+        "started": "Inicio",
+        "duration": "Duración",
+        "model": "Modelo",
+        "calls": "Llamadas al LLM",
+        "tools": "{count} llamadas a herramientas",
+        "tokens": "Tokens (prompt / respuesta)",
+        "probes": "Pruebas en ejecución",
+        "on": "activadas",
+        "off": "desactivadas",
+        "language": "Idioma"
+      }
+    },
+    "findings": {
+      "replay_mismatch": {
+        "title": "La re-ejecución difiere de la ejecución guardada",
+        "body": "Difieren {mismatches} de {cells} celdas. Probablemente los datos de entrada cambiaron desde la ejecución; el linaje sigue describiendo el código."
+      },
+      "replay_error": {
+        "title": "La re-ejecución se detuvo con un error",
+        "body": "{message}"
+      },
+      "replay_columns": {
+        "title": "El código ya no coincide con la ejecución",
+        "body": "Re-ejecutar el código actual produce columnas distintas de la ejecución guardada (adicionales: {extra}; ausentes: {missing}). Probablemente el código se modificó después de la ejecución; el linaje describe el código actual."
+      },
+      "write_unexplained": {
+        "title": "Escritura inesperada en ejecución",
+        "body": "Esta sentencia modificó la columna en ejecución ({cells} celdas) aunque el análisis estático no esperaba ninguna escritura."
+      },
+      "runtime_only": {
+        "title": "Dependencia hallada solo en ejecución",
+        "body": "Modificar {sources} cambió esta columna, pero el análisis estático no encontró tal dependencia."
+      },
+      "unresolved": {
+        "title": "Sentencia no resuelta del todo",
+        "body": "El análisis estático no pudo resolver parte de esta sentencia ({reason}: {detail}). Las pruebas en ejecución la cubren."
+      },
+      "import": {
+        "title": "Importación fuera del entorno aislado",
+        "body": "La importación de {module} no está disponible en el entorno aislado de la plataforma; solo lo están pandas (pd) y numpy (np)."
+      },
+      "unmapped_values": {
+        "title": "Valores sin mapeo",
+        "body": "{rows} fila(s) tienen valores de {column} que la tabla de mapeo {lookup} no recoge: {values}. Para ellas el resultado mapeado queda vacío."
+      },
+      "coerced_to_null": {
+        "title": "Valores vaciados por una conversión de tipo",
+        "body": "{count} valor(es) no se pudieron convertir y quedaron vacíos, p. ej. {examples}."
+      },
+      "values_removed": {
+        "title": "Valores vaciados",
+        "body": "Esta sentencia vació {count} valor(es), p. ej. {examples}."
+      },
+      "remaining_nulls": {
+        "title": "Quedan valores vacíos",
+        "body": "{count} de {total} filas no tienen valor en esta columna tras el script."
+      },
+      "no_effect": {
+        "title": "Sin efecto sobre estos datos",
+        "body": "La sentencia no modificó ningún valor de {columns} en esta ejecución."
+      },
+      "dead_write": {
+        "title": "Escritura sobrescrita",
+        "body": "Esta escritura se sobrescribe después y nunca llega a la salida."
+      },
+      "historical_read": {
+        "title": "Estado anterior usado",
+        "body": "{source} se lee aquí antes de que una sentencia posterior la modifique."
+      },
+      "chained_assignment": {
+        "title": "Asignación encadenada",
+        "body": "Escribir a través de una selección encadenada puede no actualizar la tabla (semántica de copia de pandas); compruebe el efecto en ejecución."
+      },
+      "possible_writes": {
+        "title": "Columnas elegidas en ejecución",
+        "body": "Un bucle sobre una selección calculada de columnas puede escribir {count} columna(s); la re-ejecución muestra cuáles cambió realmente."
+      },
+      "static_only": {
+        "title": "Dependencia no observable",
+        "body": "El código depende de {sources}, pero modificarlas no tuvo efecto sobre estos datos (p. ej. una rama que ninguna fila toma)."
+      },
+      "probe_error": {
+        "title": "La prueba provocó un error",
+        "body": "Modificar esta columna hizo fallar el script ({messages}): el código depende de su tipo o de sus valores."
+      }
+    },
+    "tour": "Visita guiada",
+    "languageNames": {
+      "EN": "inglés",
+      "DE": "alemán",
+      "ES": "español"
+    },
+    "reasons": {
+      "unknown_column": "Columna elegida en ejecución",
+      "missing_column": "Columna leída antes de existir",
+      "unsupported": "Construcción no modelada",
+      "reshape": "Tabla transformada (pivot, melt, concat)",
+      "dynamic_loop": "Bucle sobre columnas calculadas",
+      "analysis_error": "Error de análisis",
+      "import": "Importación"
+    }
   }
 }

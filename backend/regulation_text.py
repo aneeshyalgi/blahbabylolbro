@@ -20,12 +20,13 @@ import re
 import unicodedata
 from collections import Counter, defaultdict
 from difflib import SequenceMatcher
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from pypdf import PdfReader
 
-INDEX_VERSION = 2
+INDEX_VERSION = 3  # 3: sub-section headings in every spelling ("Sub-Section 1", "Subsection 2")
 # Called as progress(stage, done, total) while indexing: stages 'reading', 'structure', 'embedding'.
 Progress = Callable[[str, int, int], None]
 PASSAGE_TARGET = 900
@@ -252,8 +253,8 @@ _LEVELS: List[Tuple[str, re.Pattern]] = [
     ("part", re.compile(r"^(?:PART|TEIL)\s+([A-ZÄÖÜ]+|[IVXLC]+|\d+)$")),
     ("title", re.compile(r"^(?:TITLE|TITEL)\s+([IVXLC]+[A-Za-z]?|\d+)$")),
     ("chapter", re.compile(r"^(?:CHAPTER|KAPITEL)\s+(\d+[a-z]?|[IVXLC]+)$")),
-    ("section", re.compile(r"^(?:SECTION|Section|ABSCHNITT|Abschnitt)\s+(\d+[a-z]?|[IVXLC]+)$")),
-    ("subsection", re.compile(r"^(?:SUB-SECTION|Sub-section|Subsection|UNTERABSCHNITT|Unterabschnitt)\s+(\d+[a-z]?)$")),
+    ("section", re.compile(r"^(?:section|abschnitt)\s+(\d+[a-z]?|[IVXLC]+)$", re.IGNORECASE)),
+    ("subsection", re.compile(r"^(?:sub-?section|unterabschnitt)[\s-]+(\d+[a-z]?)$", re.IGNORECASE)),
 ]
 _LEVEL_NAMES = [name for name, _ in _LEVELS]
 _ARTICLE = re.compile(r"^(?:Article|Artikel)\s+(\d{1,4}[a-z]{0,3})$")
@@ -819,7 +820,7 @@ GLOSSARY: List[List[str]] = [
     ["public sector entity", "öffentliche stelle"],
     ["immovable property", "real estate", "mortgage", "residential property", "commercial immovable property", "immobilie", "immobilieneigentum", "grundpfandrecht", "hypothek", "wohnimmobilie", "gewerbeimmobilie"],
     ["exposures in default", "defaulted", "default", "ausfall", "ausgefallene positionen", "non-performing", "notleidend"],
-    ["specific credit risk adjustment", "provision", "impairment", "einzelwertberichtigung", "ewb", "spezifische kreditrisikoanpassung", "wertberichtigung", "risikovorsorge"],
+    ["specific credit risk adjustment", "impairment", "einzelwertberichtigung", "ewb", "spezifische kreditrisikoanpassung", "wertberichtigung", "risikovorsorge"],
     ["general credit risk adjustment", "pauschalwertberichtigung", "pwb", "allgemeine kreditrisikoanpassung"],
     ["accounting value", "carrying amount", "book value", "buchwert", "bilanzwert", "bruttobuchwert"],
     ["credit risk mitigation", "crm", "collateral", "financial collateral", "kreditrisikominderung", "sicherheit", "sicherheiten", "finanzielle sicherheit"],
@@ -835,7 +836,7 @@ GLOSSARY: List[List[str]] = [
     ["exposure class", "forderungsklasse", "risikopositionsklasse"],
     ["loan", "loans", "darlehen", "kredit"],
     ["small and medium-sized enterprise", "sme", "sme supporting factor", "kmu", "kmu-faktor"],
-    ["accrued interest", "interest", "zinsen", "anteilige zinsen", "aufgelaufene zinsen"],
+    ["accrued interest", "zinsen", "anteilige zinsen", "aufgelaufene zinsen"],
     ["nominal amount", "nominal value", "nennwert", "nominalbetrag"],
     ["derivative", "counterparty credit risk", "derivat", "gegenparteiausfallrisiko"],
     ["leverage ratio", "verschuldungsquote"],
@@ -880,6 +881,185 @@ def exposure_classes(text: str) -> Set[str]:
             found.add(name)
             folded = folded.replace(needle, " # ")
     return found
+
+
+# Glossary groups that name a quantity or treatment (not an exposure class or a generic word); used to check that
+# a provision linked to a change actually deals with the concept the change affects.
+_GENERIC_GROUPS = {
+    "exposure", "loan", "institution", "corporate", "retail", "central government", "regional government",
+    "public sector entity", "residual maturity", "nominal amount", "derivative", "exposure class",
+}
+
+
+_CONCEPT_PATTERNS: Optional[List[Tuple[int, List[Any]]]] = None
+
+
+def _concept_patterns() -> List[Tuple[int, List[Any]]]:
+    """Per glossary group, the compiled patterns of its phrases (built once)."""
+    global _CONCEPT_PATTERNS
+    if _CONCEPT_PATTERNS is None:
+        built = []
+        for position, group in enumerate(GLOSSARY):
+            if group[0] in _GENERIC_GROUPS:
+                continue
+            patterns = []
+            for phrase in group:
+                words = re.sub(r"[^a-zäöü0-9]+", " ", fold(phrase)).strip()
+                if len(words) >= 3:
+                    patterns.append(re.compile(rf" {re.escape(words)}(?:s|es|en|n|e)? "))
+                # Coordinated form: 'general and specific credit risk adjustments' names both adjustments.
+                first, _, head = words.partition(" ")
+                if head:
+                    patterns.append(re.compile(
+                        rf" {re.escape(first)}(?:e|en|er|es)? (?:and|or|und|oder|bzw) [a-zäöü]+ {re.escape(head)}(?:s|es|en|n|e)? "
+                    ))
+            built.append((position, patterns))
+        _CONCEPT_PATTERNS = built
+    return _CONCEPT_PATTERNS
+
+
+@lru_cache(maxsize=8192)
+def _concepts_of(text: str) -> frozenset:
+    folded = " " + re.sub(r"[^a-zäöü0-9]+", " ", fold(text)) + " "
+    return frozenset(position for position, patterns in _concept_patterns() if any(pattern.search(folded) for pattern in patterns))
+
+
+def concepts(text: str) -> Set[int]:
+    """Indexes of the GLOSSARY concept groups named in a text (plural endings tolerated)."""
+    return set(_concepts_of(str(text or "")))
+
+
+def concept_name(position: int) -> str:
+    return GLOSSARY[position][0]
+
+
+_FOLDED_PASSAGES: Dict[int, Tuple[Dict[str, Any], List[str]]] = {}
+
+
+def _folded_passages(index: Dict[str, Any]) -> List[str]:
+    """fold() of every passage text, computed once per loaded index."""
+    cached = _FOLDED_PASSAGES.get(id(index))
+    if cached is None or cached[0] is not index:
+        if len(_FOLDED_PASSAGES) > 16:
+            _FOLDED_PASSAGES.clear()
+        cached = (index, [fold(passage["text"]) for passage in index["passages"]])
+        _FOLDED_PASSAGES[id(index)] = cached
+    return cached[1]
+
+
+def concept_evidence(index: Dict[str, Any], positions: Iterable[int], limit: int = 3) -> List[Dict[str, Any]]:
+    """Units (articles, annexes) whose text names the given concepts, most mentions first, each with the first
+    sentence that names it (reference, page and text), so a reviewer or agent can judge the link directly."""
+    patterns = [
+        re.compile(rf"(?<![a-zäöü0-9]){re.escape(fold(phrase))}(?:s|es|en|n|e)?(?![a-zäöü0-9])")
+        for position in positions for phrase in GLOSSARY[position] if len(phrase) >= 5
+    ]
+    if not patterns:
+        return []
+    # One scan rules out the passages that name none of the phrases; the others are counted phrase by phrase.
+    anywhere = re.compile("|".join(pattern.pattern for pattern in patterns))
+    counts: Counter = Counter()
+    first: Dict[int, Tuple[Dict[str, Any], int]] = {}
+    for passage, folded in zip(index["passages"], _folded_passages(index)):
+        if passage["kind"] == "footnote" or not anywhere.search(folded):
+            continue
+        hits = [match for pattern in patterns for match in pattern.finditer(folded)]
+        if hits:
+            counts[passage["unit"]] += len(hits)
+            first.setdefault(passage["unit"], (passage, min(hit.start() for hit in hits)))
+    # Provisions whose title names the concept (e.g. "Treatment of credit risk adjustment") come first, then the
+    # ones that mention it most; a long article that mentions it in passing should not outrank them.
+    concept_words = {word for position in positions for phrase in GLOSSARY[position] for word in tokens(phrase) if len(word) > 3}
+    ranked = sorted(
+        counts.items(),
+        key=lambda item: (-len(concept_words & set(tokens(index["units"][item[0]].get("title") or ""))), -item[1]),
+    )
+    evidence = []
+    for unit_position, mentions in ranked[:limit]:
+        passage, at = first[unit_position]
+        text = passage["text"]
+        # The sentence (or list item) around the first mention; fold() keeps positions for these texts.
+        start = max(text.rfind(". ", 0, at), text.rfind("; ", 0, at), text.rfind(": ", 0, at))
+        start = 0 if start < 0 else start + 2
+        ends = [position for position in (text.find(". ", at), text.find("; ", at)) if position >= 0]
+        end = min(ends) + 1 if ends else len(text)
+        evidence.append({
+            "unit": unit_position,
+            "mentions": mentions,
+            "title_match": len(concept_words & set(tokens(index["units"][unit_position].get("title") or ""))),
+            "reference": passage_reference(index["units"][unit_position], passage),
+            "page": page_label(passage),
+            "sentence": text[start:end].strip()[:300],
+        })
+    return evidence
+
+
+def concept_units(index: Dict[str, Any], positions: Iterable[int], limit: int = 4) -> List[Tuple[int, int]]:
+    """Units whose text names the given concepts, as (unit, mentions), most mentions first."""
+    return [(item["unit"], item["mentions"]) for item in concept_evidence(index, positions, limit)]
+
+
+def closest_original(quote: str, original: str) -> Tuple[float, str]:
+    """The stretch of an original text (case and spelling kept) that best matches a quote, with its similarity."""
+    text = re.sub(r"\s+", " ", original or "").strip()
+    wanted = re.sub(r"\s+", " ", quote or "").strip()
+    if not text or not wanted:
+        return 0.0, ""
+    lower_text, lower_quote, size = text.lower(), wanted.lower(), len(wanted)
+    step = max(1, size // 25)
+    best = (0.0, 0, size)
+    for start in range(0, max(1, len(text) - size + 1), step):
+        ratio = SequenceMatcher(None, lower_quote, lower_text[start:start + size], autojunk=False).ratio()
+        if ratio > best[0]:
+            best = (ratio, start, size)
+    _, origin, length = best
+    for shift in range(-step, step + 1):
+        for stretch in range(-4, 5):
+            start, end = origin + shift, origin + shift + length + stretch
+            if start < 0 or end > len(text) or end <= start:
+                continue
+            ratio = SequenceMatcher(None, lower_quote, lower_text[start:end], autojunk=False).ratio()
+            if ratio > best[0]:
+                best = (ratio, start, end - start)
+    ratio, start, length = best
+    return ratio, text[start:start + length]
+
+
+# What a release note or a provision applies to, for the scope check of a link: the exposure classes plus loans
+# (credit obligations) versus "other non credit-obligation assets". Longer phrases win, so "non credit-obligation"
+# never counts as "credit obligation".
+_SCOPE_EXTRA: Dict[str, List[str]] = {
+    "credit_obligation": ["loan", "loans", "credit obligation", "credit obligations", "darlehen", "kredit", "kredite", "betriebsmitteldarlehen"],
+    "non_credit_obligation": ["non credit obligation", "non credit obligations", "non credit-obligation", "non credit-obligation assets", "other non credit-obligation assets"],
+}
+_SCOPE_PHRASES = sorted(
+    [(phrase, name) for name, phrases in {**EXPOSURE_CLASSES, **_SCOPE_EXTRA}.items() for phrase in phrases],
+    key=lambda item: -len(item[0]),
+)
+
+
+_SCOPE_NEEDLES: Optional[List[Tuple[str, str]]] = None
+
+
+@lru_cache(maxsize=8192)
+def _scope_of(text: str) -> frozenset:
+    global _SCOPE_NEEDLES
+    if _SCOPE_NEEDLES is None:
+        _SCOPE_NEEDLES = [
+            (" " + re.sub(r"[^a-zäöü0-9]+", " ", fold(phrase)).strip() + " ", name) for phrase, name in _SCOPE_PHRASES
+        ]
+    folded = " " + re.sub(r"[^a-zäöü0-9]+", " ", fold(text)) + " "
+    found: Set[str] = set()
+    for needle, name in _SCOPE_NEEDLES:
+        if needle.strip() and needle in folded:
+            found.add(name)
+            folded = folded.replace(needle, " # ")
+    return frozenset(found)
+
+
+def scope_classes(text: str) -> Set[str]:
+    """Exposure classes and asset types a text is about (each word counts once, for its longest phrase)."""
+    return set(_scope_of(str(text or "")))
 
 
 def fold(text: str) -> str:
@@ -1277,6 +1457,8 @@ def verify_quote(index: Dict[str, Any], quote: str, unit_positions: Optional[Lis
     """Check a quote verbatim (whitespace, quote marks and dashes normalised) against the cited unit,
     then against the whole document; report the closest source text when it is not verbatim."""
     fragments = [normalise_for_match(part) for part in re.split(r"\s*(?:\.\.\.|…|\[\.\.\.\]|\[…\])\s*", quote) if part.strip()]
+    # Punctuation around a quote is often added or dropped when quoting ("…have been applied." vs "…have been applied").
+    fragments = [fragment.strip(" .;:,") for fragment in fragments]
     fragments = [fragment for fragment in fragments if fragment]
     if not fragments:
         return {"status": "empty_quote"}

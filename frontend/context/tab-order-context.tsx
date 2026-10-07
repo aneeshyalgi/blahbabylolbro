@@ -5,19 +5,34 @@ import { DEFAULT_TAB_ORDER } from "@/lib/tabs";
 
 const STORAGE_KEY = "dataflow_tab_order";
 
-// Previous default order, kept so an untouched (non-customized) stored order can be
+// Previous default orders, kept so an untouched (non-customized) stored order can be
 // migrated forward when DEFAULT_TAB_ORDER changes, without discarding real user customization.
-const PREVIOUS_DEFAULT_TAB_ORDER = [
-  "code",
-  "data-modal",
-  "technical-lineage",
-  "data",
-  "clustering",
-  "content-lineage",
-  "compare-clusters",
-  "semantic-lineage",
-  "regulations",
-  "release-notes",
+const PREVIOUS_DEFAULT_TAB_ORDERS = [
+  [
+    "code",
+    "data-modal",
+    "technical-lineage",
+    "data",
+    "clustering",
+    "content-lineage",
+    "compare-clusters",
+    "semantic-lineage",
+    "regulations",
+    "release-notes",
+  ],
+  [
+    "data-modal",
+    "code",
+    "clustering",
+    "data",
+    "compare-clusters",
+    "technical-lineage",
+    "content-lineage",
+    "release-notes",
+    "regulations",
+    "root-cause",
+    "rootcause-ai-agents",
+  ],
 ];
 
 type TabOrderContextValue = {
@@ -35,15 +50,23 @@ function loadTabOrder(): string[] {
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed) || parsed.length === 0) return [...DEFAULT_TAB_ORDER];
     if (
-      parsed.length === PREVIOUS_DEFAULT_TAB_ORDER.length &&
-      parsed.every((id, index) => id === PREVIOUS_DEFAULT_TAB_ORDER[index])
+      PREVIOUS_DEFAULT_TAB_ORDERS.some(
+        (previous) => parsed.length === previous.length && parsed.every((id, index) => id === previous[index]),
+      )
     ) {
       return [...DEFAULT_TAB_ORDER];
     }
-    const validIds = new Set(DEFAULT_TAB_ORDER);
+    const validIds = new Set<string>(DEFAULT_TAB_ORDER);
     const filtered = (parsed as string[]).filter((id) => validIds.has(id));
-    const missing = DEFAULT_TAB_ORDER.filter((id) => !filtered.includes(id));
-    return [...filtered, ...missing];
+    // New tabs join a customized order next to the tab they follow by default.
+    const order = [...filtered];
+    for (const id of DEFAULT_TAB_ORDER) {
+      if (order.includes(id)) continue;
+      const before = DEFAULT_TAB_ORDER[DEFAULT_TAB_ORDER.indexOf(id) - 1];
+      const at = before ? order.indexOf(before) : -1;
+      order.splice(at >= 0 ? at + 1 : order.length, 0, id);
+    }
+    return order;
   } catch {
     return [...DEFAULT_TAB_ORDER];
   }

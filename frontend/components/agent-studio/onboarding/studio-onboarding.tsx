@@ -55,7 +55,7 @@ export type OnboardingController = {
 
 type Phase = "deck" | "tour" | "complete";
 
-function format(template: string, vars: Record<string, string | number>): string {
+export function format(template: string, vars: Record<string, string | number>): string {
   return template.replace(/\{(\w+)\}/g, (match, key: string) => (vars[key] !== undefined ? String(vars[key]) : match));
 }
 
@@ -135,7 +135,7 @@ export function StudioOnboarding({
 const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 /** Keeps Tab and Shift+Tab cycling inside a modal screen, whatever else the page adds later. */
-function useFocusTrap(ref: RefObject<HTMLElement | null>) {
+export function useFocusTrap(ref: RefObject<HTMLElement | null>) {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const container = ref.current;
@@ -326,7 +326,7 @@ function WelcomeDeck({
   );
 }
 
-function ScreenHeading({ eyebrow, title, intro }: { eyebrow: string; title: string; intro?: string }) {
+export function ScreenHeading({ eyebrow, title, intro }: { eyebrow: string; title: string; intro?: string }) {
   return (
     <div className="max-w-2xl">
       <p className="ob-rise text-[10.5px] font-semibold uppercase tracking-[0.22em] text-[#f5c400]">{eyebrow}</p>
@@ -587,7 +587,7 @@ function AnatomyScreen({ copy }: { copy: OnboardingCopy }) {
   );
 }
 
-function useTypewriter(text: string, speed = 20) {
+export function useTypewriter(text: string, speed = 20) {
   const [count, setCount] = useState(0);
   useEffect(() => {
     setCount(0);
@@ -736,7 +736,7 @@ function ReadyScreen({ copy, onStart }: { copy: OnboardingCopy; onStart: () => v
   );
 }
 
-function Emblem({ icon: Icon, large = false }: { icon: LucideIcon; large?: boolean }) {
+export function Emblem({ icon: Icon, large = false }: { icon: LucideIcon; large?: boolean }) {
   const size = large ? "h-44 w-44" : "h-32 w-32";
   return (
     <div className={cn("ob-pop relative flex items-center justify-center", size)}>
@@ -766,7 +766,7 @@ function Emblem({ icon: Icon, large = false }: { icon: LucideIcon; large?: boole
 /* Act 2 · Hands-on spotlight tour                                            */
 /* -------------------------------------------------------------------------- */
 
-type Box = { x: number; y: number; w: number; h: number };
+export type Box = { x: number; y: number; w: number; h: number };
 
 const CARD_WIDTH = 400;
 const SPOT_PAD = 8;
@@ -781,7 +781,7 @@ function findTarget(step: TourStepDef): Element | null {
 }
 
 /** Ancestors that clip their content, so the spotlight only covers the part of a target that is actually visible. */
-function clippingAncestors(element: Element): Element[] {
+export function clippingAncestors(element: Element): Element[] {
   const clips: Element[] = [];
   for (let node = element.parentElement; node && node !== document.body && node !== document.documentElement; node = node.parentElement) {
     const style = window.getComputedStyle(node);
@@ -791,17 +791,17 @@ function clippingAncestors(element: Element): Element[] {
 }
 
 /** A popover or confirmation dialog from the studio is open on top of the tour; it owns the keyboard. */
-function studioOverlayOpen(): boolean {
+export function studioOverlayOpen(): boolean {
   return Boolean(document.querySelector('[data-radix-popper-content-wrapper], [data-slot="alert-dialog-content"]'));
 }
 
-function prefersReducedMotion(): boolean {
+export function prefersReducedMotion(): boolean {
   return typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
 }
 
 const USE_TEMPLATE_INDEX = TOUR_STEPS.findIndex((item) => item.action === "useTemplate");
 
-function placeCard(hole: Box | null, card: { w: number; h: number }, viewport: { w: number; h: number }) {
+export function placeCard(hole: Box | null, card: { w: number; h: number }, viewport: { w: number; h: number }) {
   const clampY = (y: number) => Math.min(Math.max(y, EDGE), viewport.h - card.h - EDGE);
   const clampX = (x: number) => Math.min(Math.max(x, EDGE), viewport.w - card.w - EDGE);
   if (!hole) return { x: (viewport.w - card.w) / 2, y: (viewport.h - card.h) / 2 };
@@ -1178,7 +1178,7 @@ function CompletionCard({ copy, onFinish }: { copy: OnboardingCopy; onFinish: ()
   );
 }
 
-function TipRow({ children, delay }: { children: ReactNode; delay: number }) {
+export function TipRow({ children, delay }: { children: ReactNode; delay: number }) {
   return (
     <li className="ob-rise flex items-start gap-2.5 text-[13px] leading-5 text-[#c2cad5]" style={{ animationDelay: `${delay}ms` }}>
       <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#f5c400]" />
@@ -1193,7 +1193,7 @@ function TipRow({ children, delay }: { children: ReactNode; delay: number }) {
 
 const EASE_OUT = "cubic-bezier(0.22, 1, 0.36, 1)";
 
-const ONBOARDING_CSS = `
+export const ONBOARDING_CSS = `
 /*
   The root is deliberately not a stacking context: every layer is fixed with its own z-index so studio UI can sit between them.
   Bottom to top: dimming and blockers (200) · studio popovers (240) · toasts (260) · tour card (280) · confirmation dialogs (300).

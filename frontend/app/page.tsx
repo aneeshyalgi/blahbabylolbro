@@ -14,14 +14,16 @@ import { LineageTabContent } from "@/components/lineage-tab-content";
 import { RegulationsTabContent } from "@/components/regulations-tab-content";
 import { PatchNotesTabContent } from "@/components/release-notes-tab-content";
 import { CreateAIAgentsTabContent } from "@/components/create-ai-agents-tab-content";
+import { RegulationMatcherTabContent } from "@/components/regulation-matcher/regulation-matcher-tab-content";
+import { LineageAgentTabContent } from "@/components/lineage-agent/lineage-agent-tab-content";
 import { PlaceholderTab } from "@/components/placeholder-tab";
 import { DataAssistant } from "@/components/data-assistant";
 
 const TAB_STORAGE_KEY = "dataflow_active_tab";
 const VALID_TAB_IDS = new Set([
   "code", "data-modal", "data", "clustering",
-  "content-lineage", "technical-lineage", "semantic-lineage",
-  "compare-clusters", "regulations", "release-notes",
+  "content-lineage", "technical-lineage", "technical-lineage-agent", "semantic-lineage",
+  "compare-clusters", "regulations", "regulation-matcher", "release-notes",
   "root-cause", "rootcause-ai-agents", "create-ai-agents",
 ]);
 
@@ -34,10 +36,12 @@ const tabLabels: Record<string, string> = {
   "root-cause": "RootCause",
   "rootcause-ai-agents": "Rootcause AI Agents",
   regulations: "Regulations",
+  "regulation-matcher": "Regulation–Release Note Matcher",
   "data-model": "Data Model",
   "data-modal": "Data Model",
   "content-lineage": "Content Lineage",
   "technical-lineage": "Technical Lineage",
+  "technical-lineage-agent": "Technical Lineage AI Agent",
   "semantic-lineage": "Semantic Lineage",
   validation: "Validation",
   regression: "Regression",
@@ -85,12 +89,16 @@ export default function HomePage() {
         return <LineageTabContent variant="content" />;
       case "technical-lineage":
         return <LineageTabContent variant="technical" />;
+      case "technical-lineage-agent":
+        return <LineageAgentTabContent />;
       case "semantic-lineage":
         return <LineageTabContent variant="semantic" />;
       case "regulations":
         return <RegulationsTabContent />;
       case "release-notes":
         return <PatchNotesTabContent />;
+      case "regulation-matcher":
+        return <RegulationMatcherTabContent />;
       case "create-ai-agents":
         return <CreateAIAgentsTabContent />;
       default:

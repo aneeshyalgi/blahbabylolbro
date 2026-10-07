@@ -11,6 +11,7 @@ loading) are injected through ``register_platform`` to avoid a circular import.
 from __future__ import annotations
 
 import ast
+from difflib import SequenceMatcher
 import json
 import math
 import operator
@@ -22,7 +23,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Optional, Set, Tuple
 
 import numpy as np
 import pandas as pd
@@ -1559,14 +1560,22 @@ def _tool_verify_regulation_quotes(args: Dict[str, Any]) -> ToolResult:
         raise ToolError("quotes is required: a list of {quote, article} pairs, e.g. [{\"quote\": \"100 % for items in bucket 1\", \"article\": \"Article 111(2)\"}].")
     if len(quotes) > 25:
         raise ToolError("Verify at most 25 quotes per call.")
-    documents = _regulation_documents(args.get("_regulation_sources") or [], args.get("files"))
+    # Agents that may read release notes can verify release-note quotes here too (cite the Jira ID in 'article').
+    note_sources = args.get("_release_note_sources")
+    notes = _release_notes_for_audit({"tools": ["search_release_notes"], "release_note_sources": note_sources}) if note_sources is not None else []
     loaded = []
+    try:
+        documents = _regulation_documents(args.get("_regulation_sources") or [], args.get("files"))
+    except ToolError:
+        if not notes:
+            raise
+        documents = []
     for document in documents:
         try:
             loaded.append((document, _regulation_index_for(document)))
         except ToolError:
             continue
-    if not loaded:
+    if not loaded and not notes:
         raise ToolError("None of the regulation files can be read yet.")
     results = []
     for item in quotes:
@@ -1587,12 +1596,40 @@ def _tool_verify_regulation_quotes(args: Dict[str, Any]) -> ToolResult:
             results.append(entry)
             continue
         request = regulation_text.parse_unit_request(cited) if cited else None
+        if notes and not request:
+            cited_notes = [note for note in notes if note["jira"] and _mentions(note["jira"], cited)]
+            owners = [note for note in notes if _quote_in(quote, note["text"])]
+            if owners or cited_notes:
+                entry["source"] = "release_note"
+                if owners:
+                    own = [note for note in owners if note in cited_notes] or owners
+                    entry["status"] = "verified" if (own[0] in cited_notes or not cited_notes) else "found_in_other_note"
+                    entry["found_in"] = f"Jira {own[0]['jira']} ({own[0]['file']})" if own[0]["jira"] else own[0]["file"]
+                    if entry["status"] == "found_in_other_note":
+                        entry["note"] = f"The text is in Jira {own[0]['jira']}, not in {cited}: correct the Jira ID."
+                else:
+                    normalised = " ".join(regulation_text.normalise_for_match(part) for part in _QUOTE_GAP.split(quote))
+                    ratio, window = max(regulation_text._best_window(normalised, note["text"]) for note in cited_notes)
+                    entry["status"] = "paraphrased" if ratio >= 0.85 else "not_found"
+                    entry["similarity"] = round(ratio, 3)
+                    entry["closest_source_text"] = window[:400]
+                    entry["note"] = "Not verbatim in the release note. Quote it exactly as written (typos included) or mark it as a paraphrase."
+                results.append(entry)
+                continue
+        if not loaded:
+            entry["status"] = "not_found"
+            entry["note"] = "No regulation file can be read, and the text is not in the selected release notes."
+            results.append(entry)
+            continue
         best: Optional[Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]] = None
         for document, index in loaded:
             if wanted_file and wanted_file not in str(document.get("filename") or "").casefold():
                 continue
             positions = regulation_text.find_units(index, request) if request else []
             outcome = regulation_text.verify_quote(index, quote, positions or None)
+            if request and not positions and outcome["status"] == "verified":
+                # The cited provision does not exist in this file; the words are elsewhere, so the citation is wrong.
+                outcome["status"] = "found_in_other_unit"
             if outcome["status"] == "verified" and request and request.get("paragraph") and request["paragraph"] not in (outcome.get("paragraphs") or []):
                 outcome["status"] = "wrong_paragraph"
             score = (_VERIFY_RANK.get(outcome["status"], 0), outcome.get("similarity", 1.0))
@@ -1866,7 +1903,8 @@ TOOLS: Dict[str, ToolSpec] = {
             "verify_regulation_quotes", "Verify regulation quotes", "Evidence", "shield-check",
             "Check quotes against the regulation text before answering: each quote is verified verbatim against the cited article "
             "(whitespace, quote marks and dashes normalised; '...' separates fragments). Reports verified quotes with pages, quotes that "
-            "sit in a different article or paragraph than cited, and paraphrases or unsupported text with the closest source wording.",
+            "sit in a different article or paragraph than cited, and paraphrases or unsupported text with the closest source wording. "
+            "Agents that can read release notes can also verify release-note quotes by citing the Jira ID.",
             {
                 "type": "object",
                 "properties": {
@@ -1876,7 +1914,7 @@ TOOLS: Dict[str, ToolSpec] = {
                             "type": "object",
                             "properties": {
                                 "quote": {"type": "string", "description": "The regulation's exact words you will quote (not the article reference)."},
-                                "article": {"type": "string", "description": "Cited provision, e.g. 'Article 111(2)' or 'Annex I'."},
+                                "article": {"type": "string", "description": "Cited provision, e.g. 'Article 111(2)' or 'Annex I'; for a release-note quote, its Jira ID (e.g. 'Jira 112752')."},
                                 "file": {"type": "string"},
                             },
                             "required": ["quote", "article"],
@@ -2165,43 +2203,40 @@ TEMPLATES: List[Dict[str, Any]] = [
         },
     },
     {
-        "id": "regulatory-traceability",
-        "tagline": "Traces every calculated column back to the regulation article that governs it, and shows where the implementation deviates or inputs are missing.",
+        "id": "release-note-regulation-linker",
+        "tagline": "Links every release note to the regulation provisions it affects, with verified quotes from both sides.",
         "definition": {
-            "name": "Regulatory Traceability Mapper",
-            "description": "Maps calculated columns, code and datasets to the articles of the uploaded regulations and checks they agree.",
-            "purpose": "Show auditors and supervisors the regulatory basis of every calculated number, and where the implementation departs from it.",
+            "name": "Release Note Regulation Linker",
+            "description": "Links the release notes in the selected release-note files to the provisions of the selected regulations and grades each link.",
+            "purpose": "Show for every release note which regulatory requirement it touches, so changes can be assessed and documented against the regulation.",
             "instructions": (
-                "1. Fix the scope: use the pinned context, or workspace_overview to find the cluster, its dataset and code, and the uploaded regulations. Call regulation_outline to see how each regulation is structured.\n"
-                "2. With inspect_code, list the calculated columns (e.g. EAD, CCF, Risk Weight, RWA, Carrying Amount) with their formulas and line numbers; its lookup_tables and chained_lookups give the value the code assigns to every category (use effective_values for chains). Use trace_lineage to get the input fields.\n"
-                "3. Locate the governing provisions. Fixed values per category in the code (risk weights, CCFs) mean the standardised approach; PD/LGD formulas mean the IRB approach. Call regulation_outline with 'within' set to that part (e.g. 'Standardised approach'): its article titles name the exposure classes (e.g. 'Exposures to institutions', 'Exposures to corporates') and the exposure-value rules, so before reading, write down for every category the article whose title covers it (e.g. Sovereigns -> 'Exposures to central governments or central banks', Banks -> 'Exposures to institutions' and its rated/unrated variants, Corporates -> 'Exposures to corporates', off-balance-sheet items -> 'Exposure value' and the annex it refers to) and read every one of them. For anything the titles do not settle, call search_regulations with the regulatory concept, a 'meaning' sentence describing what the provision says and the same 'within' (dataset names rarely appear in regulations). Batch independent calls in one step.\n"
-                "4. Read every governing article in full with read_regulation_article, and the annexes and articles it refers to when the value is set there (e.g. Annex I classifies off-balance-sheet items into buckets; Article 111 sets each bucket's percentage). Then go through inspect_code's category_values one row at a time (e.g. CCF for ProductType=Guarantee, Risk Weight for Asset Class=Banks): find the provision that assigns a value to that exact category and compare it with the code value. Do not skip or merge rows; regulations classify by the original category, not by an intermediate one. For CCFs: on-balance-sheet items (e.g. loans, deposits, securities) are taken at their accounting value (in the CRR, Article 111(1)), so a conversion factor only applies to off-balance-sheet items, whose class follows from how the annex describes the item; when a category fits more than one class (e.g. a guarantee that may or may not be a credit substitute), rate it partially aligned and name the fact that decides it.\n"
-                "5. Re-compute each mapping on one or two real rows per category with query_data and the calculator, in both the dataset and the latest execution result.\n"
-                "6. Use profile_data to check whether input fields the provision depends on (e.g. exposure class, balance-sheet treatment, rating) are missing or empty.\n"
-                "7. Run verify_regulation_quotes on every quote you will put in the matrix, citing it as precisely as possible (e.g. 'Article 111(2)'), and correct or drop each quote that is not verified.\n"
-                "8. Answer with a traceability matrix with one row per calculated column and per lookup-table entry (column, category, code line, value in code, regulation · provision · page, value in regulation, status: aligned / partially aligned / deviation / no basis found, verbatim evidence), then deviations ranked by impact, gaps and recommended actions."
+                "1. Fix the scope: call search_release_notes without a query to read every release-note row of the selected files (Jira ID, problem and solution description, module), and regulation_outline to see how each selected regulation is structured. Every release note gets its own row in the answer.\n"
+                "2. For each release note, state in regulatory terms what changed: which quantity or input it affects. Release notes are often German and use business terms: accrued interest (anteilige Zinsen) in the Carrying Amount changes the accounting value of an asset; Einzelwertberichtigungen (EWB) are specific credit risk adjustments; Pauschalwertberichtigungen (PWB) are general credit risk adjustments. If a cluster's code is available and the note names a field, trace_lineage shows which calculated quantities (e.g. EAD, RWA) the field feeds.\n"
+                "3. Find the governing provisions: call search_regulations with the regulatory concept and a 'meaning' sentence describing what such a provision says (e.g. meaning 'the exposure value of an asset item is its accounting value after specific credit risk adjustments'), narrowed with 'within' when the part is known; use regulation_outline with 'within' to confirm the article whose title covers the concept. Batch independent searches in one step.\n"
+                "4. Read every candidate provision in full with read_regulation_article, with the articles it refers to when they define the term. Grade each link from the provision text, not from keyword overlap: direct = the provision defines or sets the quantity or input the note changes; indirect = the note changes an input upstream of a quantity the provision uses; no link found = no selected regulation governs it. Prefer the provision that defines the quantity itself (e.g. 'the exposure value of an asset item shall be its accounting value…') over one that only uses the same words in another context; never link to a clause that only mandates technical standards ('EBA shall develop draft regulatory technical standards…') when a substantive provision exists; check the provision's scope against the release note (loans to households are retail credit obligations, so an article on 'Other non credit-obligation assets' does not govern them even if it uses the same term); when the standardised and the IRB approach treat the quantity differently, name both provisions and the approach in the row.\n"
+                "5. Run verify_regulation_quotes on every regulation quote you will show, citing it as precisely as possible (e.g. 'Article 111(1)'), and correct or drop each quote that is not verified. Quote release notes in quotation marks exactly as search_release_notes returned them, typos included.\n"
+                "6. Answer with a link matrix, one row per release note: Jira ID, release-note file, change (quoting the solution description), affected quantity, regulation · provision · page, link (direct / indirect / no link found), verified regulation quote. Then list provisions touched by several release notes, release notes without a regulatory link, and open questions."
             ),
             "tools": [
-                "workspace_overview", "list_executions", "inspect_code", "trace_lineage", "query_data", "profile_data",
-                "regulation_outline", "search_regulations", "read_regulation_article", "verify_regulation_quotes", "calculator",
+                "workspace_overview", "search_release_notes", "inspect_code", "trace_lineage",
+                "regulation_outline", "search_regulations", "read_regulation_article", "verify_regulation_quotes",
             ],
             "starters": [
-                "Map every calculated column of the reference cluster to the governing article in the uploaded regulations.",
-                "Is the risk weight mapping in the code consistent with the uploaded CRR?",
-                "Which inputs required by the regulation are missing in the pinned dataset?",
-                "Show the regulatory basis for the CCF values used in the code.",
+                "Link every release note in the selected files to the regulation provisions it affects.",
+                "Which regulation articles are touched by the release notes, and by which Jira tickets?",
+                "Which release notes have no basis in the selected regulations?",
+                "Pick the release note with the biggest regulatory impact and explain its link in detail.",
             ],
             "guardrails": [
-                "Give the regulation file, provision (paragraph and point where the text has them, e.g. Article 111(2)(a)) and page for every mapping.",
-                "Quote the regulation verbatim and only quotes that verify_regulation_quotes has verified; mark anything else as a paraphrase.",
-                "Judge each category only against the provision whose title or wording covers it (e.g. Corporates -> 'Exposures to corporates'); never against another category's article.",
-                "Rate a mapping as aligned only when the formula or parameter is shown both in the code and in the regulation text.",
-                "Treat factors and percentages as the same value when comparing (1.0 = 100 %, 0.5 = 50 %, 0.2 = 20 %).",
-                "Write 'no basis found in the uploaded regulations' instead of citing from memory.",
-                "Separate findings proven on real rows from potential concerns.",
+                "Give every release note in the selected files its own row; write 'no link found' instead of forcing a link.",
+                "Never invent Jira IDs or provisions: use only Jira IDs returned by search_release_notes and provisions read with read_regulation_article.",
+                "Quote release notes and regulations word for word; show only regulation quotes that verify_regulation_quotes has verified.",
+                "Give the release-note file and Jira ID, and the regulation file, provision (paragraph and point where the text has them) and page for every link.",
+                "Grade a link 'direct' only when the provision text names the quantity or input the release note changes.",
+                "Keep release-note quotes in their original language and explain German terms in the answer language.",
             ],
-            "output_format": "Traceability matrix, one row per column and lookup-table entry (column, category, code line, code value, regulation · provision · page, regulation value, status, verified verbatim evidence); then deviations ranked by impact, gaps and recommended actions.",
-            "icon": "clipboard-check",
+            "output_format": "Link matrix, one row per release note (Jira ID, release-note file, change quoted in quotation marks, affected quantity, regulation · provision · page, link: direct / indirect / no link found, verified regulation quote); then provisions touched by several releases, release notes without a regulatory link, and open questions.",
+            "icon": "scale",
             "color": "orange",
             "max_steps": 12,
             "temperature": 0.1,
@@ -2343,37 +2378,34 @@ TEMPLATE_TRANSLATIONS: Dict[str, Dict[str, Dict[str, Any]]] = {
             ],
             "output_format": "Befundtabelle (Schweregrad, Zeile, Problem, Nachweis, Empfehlung), danach ein kurzes Fazit.",
         },
-        "regulatory-traceability": {
-            "tagline": "Führt jede berechnete Spalte auf den Artikel zurück, der sie regelt – und zeigt, wo die Umsetzung abweicht oder Eingaben fehlen.",
-            "name": "Regulatorische Rückverfolgung",
-            "description": "Ordnet berechnete Spalten, Code und Datensätze den Artikeln der hochgeladenen Regulierungen zu und prüft ihre Übereinstimmung.",
-            "purpose": "Für Prüfer und Aufsicht belegen, auf welcher regulatorischen Grundlage jede berechnete Zahl beruht und wo die Umsetzung davon abweicht.",
+        "release-note-regulation-linker": {
+            "tagline": "Verknüpft jede Release Note mit den Regulierungsvorschriften, die sie betrifft – mit bestätigten Zitaten aus beiden Quellen.",
+            "name": "Release-Note-Regulierungsabgleich",
+            "description": "Verknüpft die Release Notes der ausgewählten Release-Note-Dateien mit den Vorschriften der ausgewählten Regulierungen und bewertet jeden Bezug.",
+            "purpose": "Für jede Release Note zeigen, welche regulatorische Anforderung sie berührt, damit Änderungen gegen die Regulierung bewertet und dokumentiert werden können.",
             "instructions": (
-                "1. Den Umfang festlegen: fixierten Kontext verwenden oder mit workspace_overview Cluster, Datensatz, Code und hochgeladene Regulierungen ermitteln. Mit regulation_outline den Aufbau jeder Regulierung ansehen.\n"
-                "2. Mit inspect_code die berechneten Spalten (z. B. EAD, CCF, Risk Weight, RWA, Carrying Amount) mit Formeln und Zeilennummern erfassen; lookup_tables und chained_lookups liefern den Wert, den der Code jeder Kategorie zuweist (bei Ketten effective_values verwenden). Mit trace_lineage die Eingabefelder bestimmen.\n"
-                "3. Die maßgeblichen Vorschriften finden. Feste Werte je Kategorie im Code (Risikogewichte, CCF) bedeuten den Standardansatz; PD/LGD-Formeln den IRB-Ansatz. regulation_outline mit 'within' für diesen Teil aufrufen (z. B. „Standardised approach“): Die Artikeltitel nennen die Forderungsklassen (z. B. „Exposures to institutions“, „Exposures to corporates“) und die Regeln zum Risikopositionswert; vor dem Lesen für jede Kategorie den Artikel notieren, dessen Titel sie abdeckt (z. B. Sovereigns -> „Exposures to central governments or central banks“, Banks -> „Exposures to institutions“ und die Varianten für Institute mit/ohne Rating, Corporates -> „Exposures to corporates“, außerbilanzielle Posten -> „Exposure value“ und der Anhang, auf den er verweist) und jeden davon lesen. Was die Titel nicht klären, mit search_regulations suchen: regulatorischer Begriff, ein Satz in 'meaning', der beschreibt, was die Vorschrift regelt, und dasselbe 'within' (Spaltennamen kommen in Regulierungen selten vor). Unabhängige Aufrufe in einem Schritt bündeln.\n"
-                "4. Jeden maßgeblichen Artikel mit read_regulation_article vollständig lesen, ebenso die Anhänge und Artikel, auf die er verweist, wenn der Wert dort festgelegt ist (z. B. ordnet Anhang I außerbilanzielle Posten Klassen zu; Artikel 111 legt den Prozentsatz je Klasse fest). Danach die category_values aus inspect_code Zeile für Zeile durchgehen (z. B. CCF für ProductType=Guarantee, Risk Weight für Asset Class=Banks): die Vorschrift finden, die genau dieser Kategorie einen Wert zuweist, und sie mit dem Codewert vergleichen. Keine Zeile auslassen oder zusammenfassen; Regulierungen klassifizieren nach der Ausgangskategorie, nicht nach einer Zwischenstufe. Zu CCF: Bilanzielle Posten (z. B. Kredite, Einlagen, Wertpapiere) werden mit ihrem Buchwert angesetzt (in der CRR Artikel 111(1)); ein Umrechnungsfaktor gilt nur für außerbilanzielle Posten, deren Klasse sich aus der Beschreibung des Postens im Anhang ergibt. Passt eine Kategorie in mehr als eine Klasse (z. B. eine Garantie, die ein Kreditsubstitut sein kann oder nicht), als teilweise übereinstimmend bewerten und die entscheidende Tatsache nennen.\n"
-                "5. Jede Zuordnung an ein bis zwei echten Zeilen je Kategorie mit query_data und dem calculator nachrechnen, sowohl im Datensatz als auch im letzten Ausführungsergebnis.\n"
-                "6. Mit profile_data prüfen, ob Eingabefelder, die die Vorschrift voraussetzt (z. B. Forderungsklasse, Bilanzierung, Rating), fehlen oder leer sind.\n"
-                "7. Jedes Zitat, das in die Matrix kommt, mit verify_regulation_quotes prüfen, möglichst genau zitiert (z. B. „Article 111(2)“), und jedes nicht bestätigte Zitat korrigieren oder streichen.\n"
-                "8. Antworten mit einer Rückverfolgungsmatrix mit einer Zeile je berechneter Spalte und je Eintrag einer Zuordnungstabelle (Spalte, Kategorie, Codezeile, Wert im Code, Regulierung · Vorschrift · Seite, Wert in der Regulierung, Status: übereinstimmend / teilweise / Abweichung / keine Grundlage gefunden, wörtlicher Nachweis), danach Abweichungen nach Auswirkung geordnet, Lücken und empfohlene Maßnahmen."
+                "1. Den Umfang festlegen: search_release_notes ohne query aufrufen, um alle Release-Note-Zeilen der ausgewählten Dateien zu lesen (Jira-ID, Problem- und Lösungsbeschreibung, Modul), und mit regulation_outline den Aufbau jeder ausgewählten Regulierung ansehen. Jede Release Note erhält in der Antwort eine eigene Zeile.\n"
+                "2. Für jede Release Note in regulatorischen Begriffen festhalten, was sich geändert hat: welche Größe oder Eingabe sie betrifft. Release Notes sind oft deutsch und nutzen Fachbegriffe: anteilige Zinsen im Carrying Amount ändern den Buchwert (accounting value) eines Aktivpostens; Einzelwertberichtigungen (EWB) sind spezifische Kreditrisikoanpassungen (specific credit risk adjustments); Pauschalwertberichtigungen (PWB) sind allgemeine Kreditrisikoanpassungen (general credit risk adjustments). Ist der Code eines Clusters vorhanden und nennt die Note ein Feld, zeigt trace_lineage, in welche berechneten Größen (z. B. EAD, RWA) das Feld einfließt.\n"
+                "3. Die maßgeblichen Vorschriften finden: search_regulations mit dem regulatorischen Begriff und einem Satz in 'meaning' aufrufen, der beschreibt, was eine solche Vorschrift regelt (z. B. meaning „der Risikopositionswert eines Aktivpostens ist sein Buchwert nach spezifischen Kreditrisikoanpassungen“), mit 'within' eingrenzen, wenn der Teil bekannt ist; mit regulation_outline und 'within' den Artikel bestätigen, dessen Titel den Begriff abdeckt. Unabhängige Suchen in einem Schritt bündeln.\n"
+                "4. Jede in Frage kommende Vorschrift mit read_regulation_article vollständig lesen, samt der Artikel, auf die sie zur Begriffsbestimmung verweist. Jeden Bezug anhand des Vorschriftentexts bewerten, nicht anhand gleicher Stichworte: direkt = die Vorschrift bestimmt oder setzt die Größe bzw. Eingabe, die die Note ändert; indirekt = die Note ändert eine vorgelagerte Eingabe einer Größe, die die Vorschrift verwendet; kein Bezug gefunden = keine ausgewählte Regulierung regelt sie. Die Vorschrift bevorzugen, die die Größe selbst bestimmt (z. B. „the exposure value of an asset item shall be its accounting value…“), vor einer, die dieselben Wörter nur in anderem Zusammenhang verwendet; nie auf eine Klausel verweisen, die nur technische Standards beauftragt („EBA shall develop draft regulatory technical standards…“), wenn es eine materielle Vorschrift gibt; den Anwendungsbereich der Vorschrift mit der Release Note abgleichen (Darlehen an private Haushalte sind Kreditverpflichtungen des Mengengeschäfts, ein Artikel zu „Other non credit-obligation assets“ regelt sie nicht, auch wenn er denselben Begriff verwendet); behandeln Standardansatz und IRB-Ansatz die Größe unterschiedlich, beide Vorschriften und den Ansatz in der Zeile nennen.\n"
+                "5. Jedes Regulierungszitat, das gezeigt wird, mit verify_regulation_quotes prüfen, möglichst genau zitiert (z. B. „Article 111(1)“), und jedes nicht bestätigte Zitat korrigieren oder streichen. Release Notes in Anführungszeichen genau so zitieren, wie search_release_notes sie geliefert hat, einschließlich Tippfehlern.\n"
+                "6. Antworten mit einer Bezugsmatrix, eine Zeile je Release Note: Jira-ID, Release-Note-Datei, Änderung (Zitat der Lösungsbeschreibung), betroffene Größe, Regulierung · Vorschrift · Seite, Bezug (direkt / indirekt / kein Bezug gefunden), bestätigtes Regulierungszitat. Danach Vorschriften, die mehrere Release Notes berühren, Release Notes ohne regulatorischen Bezug und offene Fragen."
             ),
             "starters": [
-                "Ordne jede berechnete Spalte des Referenzclusters dem maßgeblichen Artikel der hochgeladenen Regulierungen zu.",
-                "Ist die Risikogewicht-Zuordnung im Code mit der hochgeladenen CRR vereinbar?",
-                "Welche vom Artikel geforderten Eingabefelder fehlen im fixierten Datensatz?",
-                "Zeige die regulatorische Grundlage der im Code verwendeten CCF-Werte.",
+                "Verknüpfe jede Release Note der ausgewählten Dateien mit den Regulierungsvorschriften, die sie betrifft.",
+                "Welche Regulierungsartikel berühren die Release Notes, und durch welche Jira-Tickets?",
+                "Welche Release Notes haben keine Grundlage in den ausgewählten Regulierungen?",
+                "Wähle die Release Note mit der größten regulatorischen Bedeutung und erkläre ihren Bezug im Detail.",
             ],
             "guardrails": [
-                "Für jede Zuordnung Regulierungsdatei, Vorschrift (Absatz und Buchstabe, wo der Text sie hat, z. B. Artikel 111(2)(a)) und Seite angeben.",
-                "Die Regulierung wörtlich zitieren und nur Zitate verwenden, die verify_regulation_quotes bestätigt hat; alles andere als Umschreibung kennzeichnen.",
-                "Jede Kategorie nur an der Vorschrift messen, deren Titel oder Wortlaut sie abdeckt (z. B. Corporates -> „Exposures to corporates“), nie am Artikel einer anderen Kategorie.",
-                "Eine Zuordnung nur dann als übereinstimmend bewerten, wenn Formel oder Parameter sowohl im Code als auch im Regulierungstext gezeigt sind.",
-                "„Keine Grundlage in den hochgeladenen Regulierungen gefunden“ schreiben, statt aus dem Gedächtnis zu zitieren.",
-                "Prüffeststellungen an echten Zeilen von bloßen Hinweisen trennen.",
-                "Faktoren und Prozentangaben beim Vergleich als gleichen Wert behandeln (1,0 = 100 %, 0,5 = 50 %, 0,2 = 20 %).",
+                "Jede Release Note der ausgewählten Dateien erhält eine eigene Zeile; „kein Bezug gefunden“ schreiben, statt einen Bezug zu erzwingen.",
+                "Niemals Jira-IDs oder Vorschriften erfinden: nur Jira-IDs aus search_release_notes und mit read_regulation_article gelesene Vorschriften verwenden.",
+                "Release Notes und Regulierungen wörtlich zitieren; nur Regulierungszitate zeigen, die verify_regulation_quotes bestätigt hat.",
+                "Für jeden Bezug Release-Note-Datei und Jira-ID sowie Regulierungsdatei, Vorschrift (Absatz und Buchstabe, wo der Text sie hat) und Seite angeben.",
+                "Einen Bezug nur dann als „direkt“ bewerten, wenn der Vorschriftentext die Größe oder Eingabe nennt, die die Release Note ändert.",
+                "Release-Note-Zitate in der Originalsprache belassen und deutsche Fachbegriffe in der Antwortsprache erklären.",
             ],
-            "output_format": "Rückverfolgungsmatrix, eine Zeile je Spalte und Zuordnungseintrag (Spalte, Kategorie, Codezeile, Wert im Code, Regulierung · Vorschrift · Seite, Wert in der Regulierung, Status, bestätigter wörtlicher Nachweis); danach Abweichungen nach Auswirkung, Lücken und empfohlene Maßnahmen.",
+            "output_format": "Bezugsmatrix, eine Zeile je Release Note (Jira-ID, Release-Note-Datei, Änderung als Zitat in Anführungszeichen, betroffene Größe, Regulierung · Vorschrift · Seite, Bezug: direkt / indirekt / kein Bezug gefunden, bestätigtes Regulierungszitat); danach Vorschriften, die mehrere Releases berühren, Release Notes ohne regulatorischen Bezug und offene Fragen.",
         },
     }
 }
@@ -2523,6 +2555,10 @@ def build_system_prompt(definition: Dict[str, Any], language: str = "en") -> str
             "before relying on it. If the uploaded regulations do not cover a point, say so. A passage with a formula_warning must be "
             "checked on the PDF page."
         )
+        rules += (
+            " Do not write your own statement that quotes were verified or checked; the platform verifies every quote and "
+            "appends the result to your answer."
+        )
         if "verify_regulation_quotes" in regulation_tools:
             rules += (
                 " Before the final answer, run verify_regulation_quotes on every quote you will present and fix each one that is not "
@@ -2631,6 +2667,9 @@ def _execute_tool(
         arguments["_release_note_sources"] = list(release_note_sources or [])
     if name in REGULATION_TOOLS:
         arguments["_regulation_sources"] = list(regulation_sources or [])
+    if name == "verify_regulation_quotes":
+        # Release-note quotes can be verified only by agents allowed to read release notes, and only in their files.
+        arguments["_release_note_sources"] = list(release_note_sources or []) if "search_release_notes" in allowed else None
     try:
         data, summary = TOOLS[name].handler(arguments)
         return {"ok": True, "result": _safe(data)}, summary
@@ -2651,48 +2690,479 @@ def _parse_arguments(raw: str) -> Dict[str, Any]:
         return {}
 
 
-# Automatic quote check: every quote an answer attributes to a regulation provision is verified against
-# the uploaded text before the answer is final, whatever the model did on its own.
+# Automatic quote check: every quote an answer attributes to a regulation provision or a release note is
+# verified against the uploaded text before the answer is final, whatever the model did on its own.
 _ANSWER_QUOTE = re.compile(r"[“\"„]([^“”\"„\n]{20,700})[”\"“]")
 _ANSWER_CITATION = re.compile(
     r"\b(?:Article|Artikel|Art\.)\s*\d{1,4}[a-z]{0,3}(?:\s*\(\s*\d{1,3}[a-z]?\s*\))?(?:\s*\(\s*[a-z0-9]{1,4}\s*\))?"
     r"|\b(?:Annex|Anhang)\s+[IVXLC]+\b"
 )
 _PARAPHRASE_MARK = re.compile(r"paraphras|sinngemäß|umschreib|summar|zusammengefasst", re.IGNORECASE)
+_JIRA_KEY = re.compile(r"\b[A-Z][A-Z0-9]+-\d+\b")
+_QUOTE_GAP = re.compile(r"\s*(?:\.\.\.|…|\[\.\.\.\]|\[…\])\s*")
 QUOTE_AUDIT_LIMIT = 25
 
 
-def _answer_quotes(text: str) -> List[Dict[str, str]]:
-    """Quotes in an answer that are attributed to a regulation provision on the same line (sentence or
-    table row). Quotes marked as paraphrases, and quotes without a provision, are not audited."""
-    found: List[Dict[str, str]] = []
+def _answer_quote_candidates(text: str) -> List[Dict[str, Any]]:
+    """Quotes in an answer with the provision cited on the same line (sentence or table row), if any.
+    Quotes marked as paraphrases are left out."""
+    found: List[Dict[str, Any]] = []
     seen: set = set()
     for line in text.splitlines():
         for match in _ANSWER_QUOTE.finditer(line):
             quote = match.group(1).strip()
-            if len(quote.split()) < 4 or _PARAPHRASE_MARK.search(line[max(0, match.start() - 40):match.start()]):
+            if len(quote.split()) < 4 or _PARAPHRASE_MARK.search(line[max(0, match.start() - 40):match.start()] + " " + line[match.end():match.end() + 25]):
                 continue
             before = list(_ANSWER_CITATION.finditer(line[:match.start()]))
             after = _ANSWER_CITATION.search(line[match.end():])
             citation = before[-1].group(0) if before else (after.group(0) if after else None)
-            if not citation or (quote, citation) in seen:
+            if (quote, citation) in seen:
                 continue
             seen.add((quote, citation))
-            found.append({"quote": quote, "article": citation})
-    return found[:QUOTE_AUDIT_LIMIT]
+            # A table row may list several provisions and quotes in one cell; any of them may be the source.
+            others = list(dict.fromkeys(match.group(0) for match in _ANSWER_CITATION.finditer(line)))
+            found.append({"quote": quote, "article": citation, "line": line, "citations": others})
+    return found
+
+
+def _answer_quotes(text: str) -> List[Dict[str, str]]:
+    """Quotes attributed to a regulation provision (see _answer_quote_candidates)."""
+    return [
+        {"quote": item["quote"], "article": item["article"]}
+        for item in _answer_quote_candidates(text) if item["article"]
+    ][:QUOTE_AUDIT_LIMIT]
+
+
+def _release_notes_for_audit(definition: Dict[str, Any]) -> List[Dict[str, str]]:
+    """The release-note rows an agent may read (its selected files), with normalised text for quote checks."""
+    if "search_release_notes" not in (definition.get("tools") or []):
+        return []
+    try:
+        contexts = _searchable_release_notes(definition.get("release_note_sources") or [], None)
+    except Exception:
+        return []
+    notes = []
+    for context in contexts:
+        for sheet in context.get("sheets", []):
+            for record in sheet.get("records", []):
+                row = _release_note_row(context, sheet, record)
+                text = " ".join(str(value) for value in record.values() if not _is_missing(value))
+                notes.append({
+                    "jira": row["jira_id"],
+                    "file": str(context.get("filename") or ""),
+                    "text": regulation_text.normalise_for_match(text),
+                    "original": re.sub(r"\s+", " ", text).strip(),
+                })
+    return notes
+
+
+def _mentions(identifier: str, text: str) -> bool:
+    return re.search(rf"(?<![\w-]){re.escape(identifier)}(?![\w-])", text or "") is not None
+
+
+def _quote_in(quote: str, text: str) -> bool:
+    """All '...'-separated fragments of a quote appear in order in a normalised text."""
+    fragments = [regulation_text.normalise_for_match(part).strip(" .;:,") for part in _QUOTE_GAP.split(quote) if part.strip()]
+    fragments = [fragment for fragment in fragments if fragment]
+    cursor = 0
+    for fragment in fragments:
+        found = text.find(fragment, cursor)
+        if found < 0:
+            return False
+        cursor = found + len(fragment)
+    return bool(fragments)
+
+
+QUOTE_REPAIR_SIMILARITY = 0.95
+
+
+def _repair_quotes(text: str, definition: Dict[str, Any]) -> Tuple[str, List[Dict[str, str]]]:
+    """Replace quotes that differ from their source only slightly (a corrected typo, changed case, a missing
+    hyphen) with the exact source wording, so answers quote verbatim without another round trip. Quotes with
+    '...' gaps or larger differences are left to the quote check."""
+    notes = _release_notes_for_audit(definition)
+    has_regulations = bool(REGULATION_TOOLS & set(definition.get("tools") or []))
+    if not notes and not has_regulations:
+        return text, []
+    loaded: List[Dict[str, Any]] = []
+    if has_regulations:
+        try:
+            loaded = [_regulation_index_for(document) for document in _regulation_documents(definition.get("regulation_sources") or [], None)]
+        except ToolError:
+            loaded = []
+    repairs: List[Dict[str, str]] = []
+    for item in _answer_quote_candidates(text)[:QUOTE_AUDIT_LIMIT]:
+        quote = item["quote"]
+        if len(quote) < 30 or _QUOTE_GAP.search(quote):
+            continue
+        if notes and any(_quote_in(quote, note["text"]) for note in notes):
+            continue
+        candidates: List[Tuple[str, str]] = []  # (source label, original text)
+        jiras = [note for note in notes if note["jira"] and _mentions(note["jira"], item["line"])]
+        candidates += [(f"Jira {note['jira']}", note["original"]) for note in jiras]
+        if item["article"] and loaded:
+            request = regulation_text.parse_unit_request(item["article"])
+            for index in loaded:
+                positions = regulation_text.find_units(index, request) if request else []
+                if not positions:
+                    continue
+                unit_label = index["units"][positions[0]]["label"]
+                if _quote_in(quote, regulation_text.normalise_for_match(regulation_text.unit_text(index, positions[0]))):
+                    candidates = []
+                    break
+                passages = [p["text"] for p in index["passages"] if p["unit"] == positions[0] and p["kind"] != "footnote"]
+                # Search the passages most like the quote first; whole articles can be long.
+                ranked = sorted(passages, key=lambda passage: -SequenceMatcher(None, quote.lower(), passage.lower()).quick_ratio())[:4]
+                candidates += [(unit_label, passage) for passage in ranked]
+        best = (0.0, "", "")
+        for label, original in candidates:
+            ratio, window = regulation_text.closest_original(quote, original)
+            if ratio > best[0]:
+                best = (ratio, window, label)
+        ratio, window, label = best
+        if ratio >= QUOTE_REPAIR_SIMILARITY and window and window != quote:
+            text = text.replace(quote, window)
+            repairs.append({"from": quote, "to": window, "source": label})
+    return text, repairs
+
+
+_CORRECTION_INTRO = re.compile(
+    r"\b(corrected|correction|adjustments? made|discrepanc|revised|updated|korrigiert|überarbeitet|berichtigt|aktualisiert|Abweichungen behoben)",
+    re.IGNORECASE,
+)
+
+
+def _strip_correction_intro(text: str) -> str:
+    """Drop an opening sentence that talks about the correction round ("Here is the corrected matrix …:")."""
+    first, separator, rest = text.partition("\n")
+    if separator and len(first) < 300 and not first.lstrip().startswith(("|", "#")) and _CORRECTION_INTRO.search(first):
+        return rest.lstrip("\n")
+    return text
+
+
+def _repair_footer(repairs: List[Dict[str, str]], language: str) -> str:
+    if not repairs:
+        return ""
+    sources = ", ".join(dict.fromkeys(item["source"] for item in repairs))
+    if language == "de":
+        return f"\n\n✎ {len(repairs)} Zitat(e) wurden auf den exakten Wortlaut der Quelle gesetzt ({sources})."
+    return f"\n\n✎ {len(repairs)} quote(s) were set to the exact wording of the source ({sources})."
 
 
 def _audit_answer_quotes(text: str, definition: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    if not (REGULATION_TOOLS & set(definition.get("tools") or [])):
+    """Verify the answer's quotes: release-note quotes against the release notes of the Jira IDs on the same line,
+    regulation quotes against the cited provision. Returns {verified, total, results} or None if nothing to check."""
+    has_regulations = bool(REGULATION_TOOLS & set(definition.get("tools") or []))
+    notes = _release_notes_for_audit(definition)
+    if not has_regulations and not notes:
         return None
-    quotes = _answer_quotes(text)
-    if not quotes:
+    results: List[Dict[str, Any]] = []
+    regulation_quotes: List[Dict[str, str]] = []
+    for item in _answer_quote_candidates(text)[:QUOTE_AUDIT_LIMIT]:
+        quote = item["quote"]
+        jiras = [note["jira"] for note in notes if note["jira"] and _mentions(note["jira"], item["line"])]
+        jiras = list(dict.fromkeys(jiras))
+        owners = [note for note in notes if _quote_in(quote, note["text"])] if notes else []
+        if owners:
+            own = [note for note in owners if note["jira"] in jiras]
+            if own or not jiras:
+                note = (own or owners)[0]
+                results.append({
+                    "source": "release_note", "quote": quote[:240], "cited": ", ".join(f"Jira {jira}" for jira in jiras) or None,
+                    "status": "verified", "found_in": f"Jira {note['jira']} ({note['file']})" if note["jira"] else note["file"],
+                })
+            else:
+                results.append({
+                    "source": "release_note", "quote": quote[:240], "cited": ", ".join(f"Jira {jira}" for jira in jiras),
+                    "status": "found_in_other_note", "found_in": f"Jira {owners[0]['jira']} ({owners[0]['file']})",
+                })
+            continue
+        # Not verbatim in any release note: compare with the notes of the Jira IDs on the line. A near match is a
+        # release-note quote with a changed word (e.g. a corrected typo), not a regulation quote.
+        best = (0.0, "")
+        for note in notes:
+            if note["jira"] in jiras:
+                normalised = " ".join(regulation_text.normalise_for_match(part) for part in _QUOTE_GAP.split(quote))
+                best = max(best, regulation_text._best_window(normalised, note["text"]))
+        if jiras and (best[0] >= 0.85 or not item["article"]):
+            results.append({
+                "source": "release_note", "quote": quote[:240], "cited": ", ".join(f"Jira {jira}" for jira in jiras),
+                "status": "paraphrased" if best[0] >= 0.85 else "not_found",
+                "similarity": round(best[0], 3), "closest_source_text": best[1][:400],
+            })
+            continue
+        if item["article"] and has_regulations:
+            regulation_quotes.append({"quote": quote, "article": item["article"], "alternatives": [c for c in item.get("citations", []) if c != item["article"]]})
+    if regulation_quotes:
+        payload, _ = _execute_tool(
+            "verify_regulation_quotes", json.dumps({"quotes": [{"quote": q["quote"], "article": q["article"]} for q in regulation_quotes]}),
+            {"verify_regulation_quotes"}, None, definition.get("regulation_sources"),
+        )
+        if payload.get("ok"):
+            for request, item in zip(regulation_quotes, payload["result"]["results"]):
+                if item["status"] != "verified" and request["alternatives"]:
+                    # Try the other provisions cited in the same row before calling the quote unverified.
+                    retry, _ = _execute_tool(
+                        "verify_regulation_quotes",
+                        json.dumps({"quotes": [{"quote": request["quote"], "article": other} for other in request["alternatives"][:5]]}),
+                        {"verify_regulation_quotes"}, None, definition.get("regulation_sources"),
+                    )
+                    if retry.get("ok"):
+                        hit = next((other for other in retry["result"]["results"] if other["status"] == "verified"), None)
+                        if hit:
+                            item = hit
+                results.append({"source": "regulation", **item})
+    if not results:
         return None
-    payload, _ = _execute_tool(
-        "verify_regulation_quotes", json.dumps({"quotes": quotes}), {"verify_regulation_quotes"},
-        None, definition.get("regulation_sources"),
-    )
-    return payload.get("result") if payload.get("ok") else None
+    return {"verified": sum(1 for item in results if item["status"] == "verified"), "total": len(results), "results": results}
+
+
+_LINKED = re.compile(r"\b(?:direct|direkt|indirect|indirekt)\b", re.IGNORECASE)
+# Empowerment clauses ("EBA shall develop draft regulatory technical standards …") set no requirement themselves.
+_MANDATE_CLAUSE = re.compile(
+    r"\b(?:EBA|ESMA|EIOPA|the Commission)\s+shall\s+(?:develop|submit|issue|adopt)\b[^.]{0,80}\b(?:technical standards|guidelines|delegated act|implementing act)"
+    r"|power is delegated to the Commission|die EBA arbeitet [^.]{0,60}Entwürfe|der Kommission wird die Befugnis übertragen",
+    re.IGNORECASE,
+)
+_NO_LINK = re.compile(r"no link|kein(?:e|en)? bezug|keine verknüpfung|^\W*(?:none|keine?)\W*$", re.IGNORECASE)
+LINK_COVERAGE_LIMIT = 40
+
+
+_SCOPE_LABELS = {
+    "credit_obligation": "loans (credit obligations)", "non_credit_obligation": "other non credit-obligation assets",
+    "central_government": "central governments", "regional_government": "regional governments", "public_sector_entity": "public sector entities",
+    "multilateral_development_bank": "multilateral development banks", "international_organisation": "international organisations",
+    "institution": "institutions", "corporate": "corporates", "retail": "retail exposures", "immovable_property": "immovable property",
+    "default": "exposures in default", "equity": "equity", "covered_bond": "covered bonds", "ciu": "CIUs", "securitisation": "securitisations",
+}
+
+
+def _scope_conflict(note_text: str, units: List[Dict[str, Any]]) -> Optional[Tuple[str, str, str]]:
+    """(title, note scope, title scope) when a cited article's title clearly applies to other exposures than the
+    release note: loans versus 'non credit-obligation assets', or different exposure classes."""
+    note_scope = regulation_text.scope_classes(note_text)
+    if not note_scope:
+        return None
+    # A loan to any counterparty can be in default or secured by immovable property, so these classes overlay the
+    # counterparty classes instead of excluding them ('Exposures in default' applies to defaulted retail loans).
+    ignored = {"credit_obligation", "non_credit_obligation", "default", "immovable_property"}
+    note_classes = note_scope - ignored
+    for unit in units:
+        title = unit.get("title") or ""
+        title_scope = regulation_text.scope_classes(title)
+        title_classes = title_scope - ignored
+        loans_vs_other = "credit_obligation" in note_scope and "non_credit_obligation" in title_scope
+        other_class = bool(note_classes) and bool(title_classes) and not note_classes & title_classes
+        if loans_vs_other or other_class:
+            describe = lambda scope: ", ".join(sorted(_SCOPE_LABELS.get(name, name) for name in scope))
+            return title, describe(note_scope), describe(title_scope)
+    return None
+
+
+_SIDE_PROVISION = re.compile(r"^(?:disclosure|reporting|report|review|transitional|offenlegung|meldung|bericht|übergangs)", re.IGNORECASE)
+
+
+def _cited_text(index: Dict[str, Any], unit_position: int, request: Dict[str, Any]) -> str:
+    """Text of the cited paragraph (when the citation names one that exists), else of the whole unit."""
+    paragraph = request.get("paragraph")
+    if paragraph:
+        parts = [
+            p["text"] for p in index["passages"]
+            if p["unit"] == unit_position and p["kind"] != "footnote" and str(p.get("paragraph") or "") == paragraph
+        ]
+        if parts:
+            return " ".join(parts)
+    return regulation_text.unit_text(index, unit_position)
+
+
+def _fitting_citations(loaded: List[Dict[str, Any]], about: Set[int], note_text: str, citations: List[str]) -> List[str]:
+    """Provisions cited elsewhere in the answer that would fit this release note: the cited paragraph deals with the
+    concept, its scope fits and it is not a mandate clause."""
+    fitting = []
+    for citation in dict.fromkeys(citations):
+        request = regulation_text.parse_unit_request(citation)
+        if not request:
+            continue
+        for index in loaded:
+            positions = regulation_text.find_units(index, request)
+            if not positions:
+                continue
+            text = _cited_text(index, positions[0], request)
+            unit = index["units"][positions[0]]
+            if about & regulation_text.concepts(text) and not _scope_conflict(note_text, [unit]) and not _MANDATE_CLAUSE.search(text):
+                fitting.append(f"{citation} ('{unit.get('title') or ''}', already cited in this answer)")
+            break
+    return fitting
+
+
+def _concept_evidence_text(loaded: List[Dict[str, Any]], about: Set[int], note_text: str = "", cited: Optional[List[str]] = None) -> str:
+    """'Article 110(1), p. 161: “Institutions applying …”; …' for the provisions that best govern the concepts:
+    provisions already cited elsewhere in the answer that fit, then titles naming the concept, then mention density;
+    disclosure/reporting articles last; mandate clauses and articles whose scope does not fit left out."""
+    if not about:
+        return ""
+    fitting = _fitting_citations(loaded, about, note_text, cited or [])
+    found = []
+    for index in loaded:
+        for item in regulation_text.concept_evidence(index, about, limit=10):
+            unit = index["units"][item["unit"]]
+            if (note_text and _scope_conflict(note_text, [unit])) or _MANDATE_CLAUSE.search(item["sentence"]):
+                continue
+            density = item["mentions"] / max(1.0, (unit.get("chars") or 1000) / 1000)
+            side = bool(_SIDE_PROVISION.match(unit.get("title") or ""))
+            found.append((side, -item.get("title_match", 0), -density, item))
+    found.sort(key=lambda entry: entry[:3])
+    listed = [f"{text};" for text in fitting[:2]]
+    listed += [f"{item['reference']}, p. {item['page']}: “{item['sentence']}”;" for *_, item in found[: 3 - len(listed[:1])]]
+    return " ".join(listed[:3])
+
+
+def _audit_link_matrix(text: str, definition: Dict[str, Any], message: str = "", language: str = "en") -> List[str]:
+    """Checks of a release-note ↔ regulation link matrix: every Jira ID exists in the selected release-note files,
+    every cited provision exists in the selected regulations and deals with the concept the change affects, the
+    link grade agrees with the citation, and every release note has a row (unless the question named tickets)."""
+    notes = _release_notes_for_audit(definition)
+    known = {note["jira"]: note for note in notes if note["jira"]}
+    if not known:
+        return []
+    loaded = []
+    if REGULATION_TOOLS & set(definition.get("tools") or []):
+        try:
+            loaded = [_regulation_index_for(document) for document in _regulation_documents(definition.get("regulation_sources") or [], None)]
+        except ToolError:
+            loaded = []
+    issues: List[str] = []
+    link_table = False
+    for table in _markdown_tables(text):
+        headers = [regulation_text.fold(cell) for cell in table[0]]
+        jira_column = _column(headers, r"jira")
+        if jira_column is None:
+            continue
+        link_column = _column(headers, r"^link|link strength|bezug|verknüpfung|verknupfung|relation", exclude=(jira_column,))
+        affected_column = _column(headers, r"affected|betroffen|quantity|grösse|grosse|größe", exclude=(jira_column,))
+        taken = tuple(position for position in (jira_column, link_column, affected_column) if position is not None)
+        # The regulation-quote column, not the release-note "Change (quoted)" column.
+        change_columns = tuple(i for i, header in enumerate(headers) if re.search(r"change|anderung|änderung", header))
+        evidence_column = _column(headers, r"(regulation|regulierung|verified|bestatigt|bestätigt).*(quote|zitat)|(quote|zitat).*(regulation|regulierung)", exclude=taken)
+        if evidence_column is None:
+            evidence_column = _column(headers, r"quote|zitat|evidence|nachweis", exclude=taken + change_columns)
+        provision_column = _column(headers, r"provision|vorschrift|article|artikel|regulation|regulierung", exclude=tuple(
+            position for position in (jira_column, link_column, affected_column, evidence_column) if position is not None
+        ))
+        link_table = link_table or (link_column is not None and len(table) > 2)
+        answer_citations = [
+            match.group(0) for row in table[1:] if provision_column is not None and len(row) > provision_column
+            for match in _ANSWER_CITATION.finditer(row[provision_column])
+        ]
+        for row in table[1:]:
+            if len(row) < len(table[0]):
+                continue
+            cell = row[jira_column]
+            ids = list(dict.fromkeys(_JIRA_KEY.findall(cell) + re.findall(r"(?<![\w.,-])\d{4,}(?![\w.,-])", cell)))
+            for identifier in ids:
+                if identifier not in known:
+                    issues.append(_say(
+                        language,
+                        f"Jira {identifier} is not in the selected release-note files; use only Jira IDs returned by search_release_notes.",
+                        f"Jira {identifier} steht in keiner ausgewählten Release-Note-Datei; nur Jira-IDs aus search_release_notes verwenden.",
+                    ))
+            if not ids or link_column is None or provision_column is None:
+                continue
+            jira = ids[0]
+            grade = row[link_column]
+            citations = [match.group(0) for match in _ANSWER_CITATION.finditer(row[provision_column])]
+            if _NO_LINK.search(grade) and citations:
+                issues.append(_say(
+                    language,
+                    f"Jira {jira}: the row says '{grade}' but cites {citations[0]}; grade the link that provision supports, or remove the provision and its quote.",
+                    f"Jira {jira}: Die Zeile sagt „{grade}“, zitiert aber {citations[0]}; den Bezug bewerten, den diese Vorschrift stützt, oder Vorschrift und Zitat entfernen.",
+                ))
+            if _LINKED.search(grade) and not citations:
+                issues.append(_say(
+                    language,
+                    f"Jira {jira}: the link is '{grade}' but no provision is cited; cite the article that governs the change.",
+                    f"Jira {jira}: Der Bezug ist „{grade}“, aber keine Vorschrift ist zitiert; den Artikel zitieren, der die Änderung regelt.",
+                ))
+            wanted = regulation_text.concepts(row[affected_column]) if affected_column is not None else set()
+            if _NO_LINK.search(grade) and not citations and loaded:
+                about = wanted or regulation_text.concepts(" ".join(note["original"] for note in notes if note["jira"] == jira))
+                evidence = _concept_evidence_text(loaded, about, " ".join(note["original"] for note in notes if note["jira"] == jira), answer_citations)
+                if about and evidence:
+                    named = ", ".join(sorted(regulation_text.concept_name(position) for position in about))
+                    issues.append(_say(
+                        language,
+                        f"Jira {jira}: graded '{grade}', but these provisions name {named}: {evidence} Read them with read_regulation_article before deciding, and grade the link they support.",
+                        f"Jira {jira}: als „{grade}“ bewertet, aber diese Vorschriften nennen {named}: {evidence} Sie vor der Entscheidung mit read_regulation_article lesen und den Bezug bewerten, den sie stützen.",
+                    ))
+            quote_cell = row[evidence_column] if evidence_column is not None else ""
+            if _LINKED.search(grade) and _MANDATE_CLAUSE.search(quote_cell):
+                about = wanted or regulation_text.concepts(" ".join(note["original"] for note in notes if note["jira"] == jira))
+                evidence = _concept_evidence_text(loaded, about, " ".join(note["original"] for note in notes if note["jira"] == jira), answer_citations) if loaded else ""
+                issues.append(_say(
+                    language,
+                    f"Jira {jira}: the quoted provision only mandates technical standards or delegated acts; link the provision that itself governs the change."
+                    + (f" Provisions that name it: {evidence}" if evidence else ""),
+                    f"Jira {jira}: Die zitierte Vorschrift beauftragt nur technische Standards oder delegierte Rechtsakte; die Vorschrift verknüpfen, die die Änderung selbst regelt."
+                    + (f" Vorschriften, die sie nennen: {evidence}" if evidence else ""),
+                ))
+            if _LINKED.search(grade) and evidence_column is not None and not any(
+                len(match.group(1).split()) >= 4 and not _ANSWER_CITATION.fullmatch(match.group(1).strip())
+                for match in _ANSWER_QUOTE.finditer(quote_cell)
+            ):
+                issues.append(_say(
+                    language,
+                    f"Jira {jira}: the quote column holds no regulation text ({quote_cell.strip()[:60] or 'empty'}); quote the words of the provision that supports the link.",
+                    f"Jira {jira}: Die Zitatspalte enthält keinen Regulierungstext ({quote_cell.strip()[:60] or 'leer'}); den Wortlaut der Vorschrift zitieren, die den Bezug stützt.",
+                ))
+            for citation in citations:
+                request = regulation_text.parse_unit_request(citation)
+                if not request or not loaded:
+                    continue
+                found = [(index, positions) for index in loaded for positions in [regulation_text.find_units(index, request)] if positions]
+                if not found:
+                    issues.append(_say(
+                        language,
+                        f"Jira {jira}: {citation} does not exist in the selected regulations; cite a provision you read.",
+                        f"Jira {jira}: {citation} gibt es in den ausgewählten Regulierungen nicht; eine gelesene Vorschrift zitieren.",
+                    ))
+                    continue
+                if _LINKED.search(grade):
+                    note_text = " ".join(note["original"] for note in notes if note["jira"] == jira)
+                    conflict = _scope_conflict(note_text, [index["units"][positions[0]] for index, positions in found])
+                    if conflict:
+                        title, note_scope, title_scope = conflict
+                        evidence = _concept_evidence_text(loaded, wanted, note_text, answer_citations) if wanted else ""
+                        issues.append(_say(
+                            language,
+                            f"Jira {jira}: {citation} ('{title}') applies to {title_scope}, but this release note concerns {note_scope}; link a provision whose scope covers it."
+                            + (f" Provisions that name the affected quantity: {evidence}" if evidence else ""),
+                            f"Jira {jira}: {citation} („{title}“) gilt für {title_scope}, diese Release Note betrifft aber {note_scope}; eine Vorschrift verknüpfen, deren Anwendungsbereich sie abdeckt."
+                            + (f" Vorschriften, die die betroffene Größe nennen: {evidence}" if evidence else ""),
+                        ))
+                if wanted and _LINKED.search(grade):
+                    # A cited paragraph must itself deal with the concept: Article 110(1) is about general, not specific,
+                    # credit risk adjustments even though Article 110 as a whole covers both.
+                    covered = set().union(*(regulation_text.concepts(_cited_text(index, positions[0], request)) for index, positions in found))
+                    if not wanted & covered:
+                        named = ", ".join(sorted(regulation_text.concept_name(position) for position in wanted))
+                        evidence = _concept_evidence_text(loaded, wanted, " ".join(note["original"] for note in notes if note["jira"] == jira), answer_citations)
+                        issues.append(_say(
+                            language,
+                            f"Jira {jira}: {citation} does not deal with {named}, the quantity this release note affects; link the provision that governs it, or grade the row 'no link found'."
+                            + (f" Provisions that name it: {evidence}" if evidence else ""),
+                            f"Jira {jira}: {citation} behandelt nicht {named}, die Größe, die diese Release Note betrifft; die maßgebliche Vorschrift verknüpfen oder die Zeile mit „kein Bezug gefunden“ bewerten."
+                            + (f" Vorschriften, die sie nennen: {evidence}" if evidence else ""),
+                        ))
+    if link_table and len(known) <= LINK_COVERAGE_LIMIT and not any(_mentions(jira, message) for jira in known):
+        missing = [jira for jira in known if not _mentions(jira, text)]
+        if missing:
+            listed = ", ".join(f"{jira} ({known[jira]['file']})" for jira in missing[:12])
+            issues.append(_say(
+                language,
+                f"These release notes have no row: {listed}. Give each its own row, with 'no link found' if no selected regulation governs it.",
+                f"Diese Release Notes haben keine Zeile: {listed}. Jede erhält eine eigene Zeile, mit „kein Bezug gefunden“, wenn keine ausgewählte Regulierung sie regelt.",
+            ))
+    return list(dict.fromkeys(issues))[:12]
 
 
 def _markdown_tables(text: str) -> List[List[List[str]]]:
@@ -2739,7 +3209,11 @@ def _matrix_status(cell: str) -> str:
     return "other"
 
 
-def _audit_matrix(text: str, definition: Dict[str, Any]) -> List[str]:
+def _say(language: str, english: str, german: str) -> str:
+    return german if language == "de" else english
+
+
+def _audit_matrix(text: str, definition: Dict[str, Any], language: str = "en") -> List[str]:
     """Deterministic consistency checks of a traceability matrix in the answer: status against the two values,
     the claimed regulation value against the quoted text, the cited article's title against the category, and
     categories that a referenced annex places in more than one class."""
@@ -2769,22 +3243,33 @@ def _audit_matrix(text: str, definition: Dict[str, Any]) -> List[str]:
             if len(row) < len(table[0]):
                 continue
             name = row[category]
-            label = f"row '{name}'" + (f" ({row[0]})" if row[0] and row[0] != name else "")
+            suffix = f" ({row[0]})" if row[0] and row[0] != name else ""
+            label = _say(language, f"row '{name}'{suffix}", f"Zeile „{name}“{suffix}")
             state = _matrix_status(row[status])
             code = _matrix_value(row[code_value]) if code_value is not None else None
             claimed = _matrix_value(row[regulation_value]) if regulation_value is not None else None
             if state in ("aligned", "partial", "deviation") and regulation_value is not None and claimed is None:
-                issues.append(
-                    f"{label}: status '{row[status]}' needs the value the regulation sets, but none is given ({row[regulation_value] or 'empty'}); "
-                    "quote the provision that sets it, or rate the row 'no basis found'."
-                )
+                given = row[regulation_value] or _say(language, "empty", "leer")
+                issues.append(_say(
+                    language,
+                    f"{label}: status '{row[status]}' needs the value the regulation sets, but none is given ({given}); quote the provision that sets it, or rate the row 'no basis found'.",
+                    f"{label}: Status „{row[status]}“ braucht den Wert, den die Regulierung festlegt, es ist aber keiner angegeben ({given}); die festlegende Vorschrift zitieren oder die Zeile mit „keine Grundlage gefunden“ bewerten.",
+                ))
             if state == "aligned" and code is not None and claimed is not None and abs(code - claimed) > 1e-9:
-                issues.append(f"{label}: marked aligned, but the code value ({row[code_value]}) differs from the regulation value ({row[regulation_value]}).")
+                issues.append(_say(
+                    language,
+                    f"{label}: marked aligned, but the code value ({row[code_value]}) differs from the regulation value ({row[regulation_value]}).",
+                    f"{label}: als übereinstimmend bewertet, aber der Wert im Code ({row[code_value]}) weicht vom Wert der Regulierung ({row[regulation_value]}) ab.",
+                ))
             quoted = row[evidence] if evidence is not None else ""
             percentages = {float(m.replace(",", ".")) / 100 for m in re.findall(r"(\d+(?:[.,]\d+)?)\s*%", quoted)}
             if claimed is not None and percentages and all(abs(claimed - value) > 1e-9 for value in percentages):
                 shown = ", ".join(f"{value * 100:g} %" for value in sorted(percentages))
-                issues.append(f"{label}: the regulation value {row[regulation_value]} is not what the quoted text states ({shown}).")
+                issues.append(_say(
+                    language,
+                    f"{label}: the regulation value {row[regulation_value]} is not what the quoted text states ({shown}).",
+                    f"{label}: Der Regulierungswert {row[regulation_value]} ist nicht der Wert, den das Zitat nennt ({shown}).",
+                ))
             if provision is None or not loaded:
                 continue
             reference = _ANSWER_CITATION.search(row[provision]) or _ANSWER_CITATION.search(quoted)
@@ -2799,9 +3284,11 @@ def _audit_matrix(text: str, definition: Dict[str, Any]) -> List[str]:
                 wanted = regulation_text.exposure_classes(name)
                 covered = regulation_text.exposure_classes(unit.get("title") or "")
                 if wanted and covered and not wanted & covered:
-                    issues.append(
-                        f"{label}: {unit['label']} ('{unit.get('title')}') does not cover this category; cite the article whose title covers it."
-                    )
+                    issues.append(_say(
+                        language,
+                        f"{label}: {unit['label']} ('{unit.get('title')}') does not cover this category; cite the article whose title covers it.",
+                        f"{label}: {unit['label']} („{unit.get('title')}“) deckt diese Kategorie nicht ab; den Artikel zitieren, dessen Titel sie abdeckt.",
+                    ))
                 if state == "aligned":
                     stems = set(regulation_text.tokens(name))
                     # Data names the item ("Limit"); the annex uses regulatory words ("commitments", "credit lines").
@@ -2826,10 +3313,11 @@ def _audit_matrix(text: str, definition: Dict[str, Any]) -> List[str]:
                             )
                         }, key=lambda value: (len(value), value))
                         if stems and len(groups) > 1:
-                            issues.append(
-                                f"{label}: {annex['label']} describes '{name}' items in rows {', '.join(groups)}, which carry different values; "
-                                "state which row applies and why, or rate the mapping partially aligned."
-                            )
+                            issues.append(_say(
+                                language,
+                                f"{label}: {annex['label']} describes '{name}' items in rows {', '.join(groups)}, which carry different values; state which row applies and why, or rate the mapping partially aligned.",
+                                f"{label}: {annex['label']} beschreibt „{name}“-Posten in den Zeilen {', '.join(groups)} mit unterschiedlichen Werten; angeben, welche Zeile gilt und warum, oder die Zuordnung als teilweise übereinstimmend bewerten.",
+                            ))
                 break
     return list(dict.fromkeys(issues))[:12]
 
@@ -2838,21 +3326,23 @@ def _quote_audit_feedback(audit: Optional[Dict[str, Any]], issues: List[str]) ->
     lines = ["[Automatic check by the platform, not a message from the user]"]
     failed = [item for item in (audit or {}).get("results", []) if item["status"] != "verified"]
     if failed:
-        lines.append("Some quotes in your answer do not match the regulation text they are attributed to:")
+        lines.append("Some quotes in your answer do not match the source text they are attributed to:")
     for item in failed:
-        line = f"- \"{item['quote'][:200]}\" (cited: {item.get('cited')}) -> {item['status']}"
+        source = "release note" if item.get("source") == "release_note" else "regulation"
+        line = f"- {source} quote \"{item['quote'][:200]}\" (cited: {item.get('cited')}) -> {item['status']}"
         if item.get("found_in"):
             line += f"; the text is in {item['found_in']}"
         if item.get("closest_source_text"):
             line += f"; closest source text: \"{item['closest_source_text'][:300]}\""
         lines.append(line)
     if issues:
-        lines.append("The traceability matrix contradicts itself or the regulation:")
+        lines.append("The matrix contradicts itself or the sources:")
         lines.extend(f"- {issue}" for issue in issues)
     lines.append(
-        "Return the complete corrected answer: quote the source wording exactly with the correct provision (or mark it as a "
-        "paraphrase), cite for each category the article that covers it, and make every status follow from the values. "
-        "You may read the provisions again first."
+        "Return the complete answer again with these points fixed: quote the source wording exactly with the correct provision "
+        "or Jira ID (or mark it as a paraphrase), cite only provisions and Jira IDs that exist in the selected files, and make "
+        "every status follow from the evidence. You may call the tools again first. Write it for the user as a fresh answer: "
+        "do not mention this check, corrections, discrepancies or earlier versions."
     )
     return "\n".join(lines)
 
@@ -2861,20 +3351,27 @@ def _quote_audit_footer(audit: Optional[Dict[str, Any]], language: str) -> str:
     if not audit or not audit.get("total"):
         return ""
     verified, total = audit["verified"], audit["total"]
+    sources = {item.get("source") for item in audit["results"]}
+    if sources == {"release_note"}:
+        what_en, what_de, where_en, where_de = "release-note quotes", "Release-Note-Zitaten", "the release notes", "den Release Notes"
+    elif sources == {"regulation"}:
+        what_en, what_de, where_en, where_de = "regulation quotes", "Regulierungszitaten", "the uploaded regulation text", "dem hochgeladenen Regulierungstext"
+    else:
+        what_en, what_de, where_en, where_de = "quotes", "Zitaten", "the uploaded regulations and release notes", "den hochgeladenen Regulierungen und Release Notes"
     if verified == total:
         return (
-            f"\n\n---\n✓ Zitatprüfung: alle {total} Regulierungszitate wurden wörtlich am hochgeladenen Text bestätigt."
+            f"\n\n---\n✓ Zitatprüfung: alle {total} {what_de[:-1] if what_de.endswith('n') else what_de} wurden wörtlich an {where_de} bestätigt."
             if language == "de"
-            else f"\n\n---\n✓ Quote check: all {total} regulation quotes were verified word for word against the uploaded text."
+            else f"\n\n---\n✓ Quote check: all {total} {what_en} were verified word for word against {where_en}."
         )
     failed = [item for item in audit["results"] if item["status"] != "verified"]
     details = "; ".join(
-        f"“{item['quote'][:120]}” ({item.get('cited')})" + (f" → {item['found_in']}" if item.get("found_in") and item["status"] != "not_found" else "")
+        f"“{item['quote'][:120]}” ({item.get('cited') or '—'})" + (f" → {item['found_in']}" if item.get("found_in") and item["status"] != "not_found" else "")
         for item in failed[:5]
     )
     if language == "de":
-        return f"\n\n---\n⚠ Zitatprüfung: {verified} von {total} Regulierungszitaten bestätigt. Nicht bestätigt: {details}. Diese Stellen vor Verwendung im PDF prüfen."
-    return f"\n\n---\n⚠ Quote check: {verified} of {total} regulation quotes verified. Not verified: {details}. Check these against the PDF before relying on them."
+        return f"\n\n---\n⚠ Zitatprüfung: {verified} von {total} {what_de} bestätigt. Nicht bestätigt: {details}. Diese Stellen vor Verwendung in der Quelle prüfen."
+    return f"\n\n---\n⚠ Quote check: {verified} of {total} {what_en} verified. Not verified: {details}. Check these against the source before relying on them."
 
 
 def _matrix_audit_footer(issues: List[str], language: str) -> str:
@@ -2941,7 +3438,7 @@ def run_turn(
         allowed = set(definition["tools"])
         schemas = [TOOLS[name].schema() for name in definition["tools"] if name in TOOLS]
         max_steps = definition["max_steps"]
-        quote_check_done = False
+        quote_checks = 0
 
         for iteration in range(max_steps + 1):
             request: Dict[str, Any] = {
@@ -2983,13 +3480,13 @@ def run_turn(
 
             text = "".join(live_text)
             if not calls:
-                answer = text.strip()
+                answer, repairs = _repair_quotes(_strip_correction_intro(text.strip()) if quote_checks else text.strip(), definition)
                 audit = _audit_answer_quotes(answer, definition)
-                issues = _audit_matrix(answer, definition)
+                issues = _audit_matrix(answer, definition, language) + _audit_link_matrix(answer, definition, message, language)
                 quotes_failed = bool(audit) and audit["verified"] < audit["total"]
-                if (quotes_failed or issues) and not quote_check_done and iteration < max_steps:
+                if (quotes_failed or issues) and quote_checks < 2 and iteration < max_steps:
                     # Show the draft in the work log, check its quotes, and let the agent correct them once.
-                    quote_check_done = True
+                    quote_checks += 1
                     step = {
                         "kind": "tool",
                         "id": f"quote_check_{uuid.uuid4().hex[:8]}",
@@ -3018,7 +3515,9 @@ def run_turn(
                     llm_messages.append({"role": "assistant", "content": answer})
                     llm_messages.append({"role": "user", "content": _quote_audit_feedback(audit, issues)})
                     continue
-                assistant_entry["content"] = answer + _quote_audit_footer(audit, language) + _matrix_audit_footer(issues, language)
+                assistant_entry["content"] = (
+                    answer + _quote_audit_footer(audit, language) + _repair_footer(repairs, language) + _matrix_audit_footer(issues, language)
+                )
                 break
 
             if text.strip():

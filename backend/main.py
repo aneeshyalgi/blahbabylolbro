@@ -34,6 +34,8 @@ import web_scraper
 import auth as auth_module
 import agent_runtime
 import pdf_text
+import regulation_matcher
+import lineage_agent
 import regulation_text
 
 # Static content mirrored from frontend-only tabs (Regulations hardcoded example,
@@ -104,9 +106,11 @@ NORMAL_ROOTCAUSE_SESSIONS: Dict[str, Dict[str, Any]] = {}
 # Seed default admin user on startup (idempotent)
 db.seed_default_user()
 
-# Include auth and AI agent routers
+# Include auth, AI agent, regulation matcher and lineage agent routers
 app.include_router(auth_module.router)
 app.include_router(agent_runtime.router)
+app.include_router(regulation_matcher.router)
+app.include_router(lineage_agent.router)
 
 PUBLIC_PATHS = {
     "/",
@@ -1652,6 +1656,112 @@ APPLICATION CONTEXT:
         raise HTTPException(502, f"Chat request failed: {e}") from e
 
 
+# The sandbox /api/execute runs uploaded code in. The Technical Lineage AI Agent replays code in the same sandbox.
+EXECUTION_BUILTINS: Dict[str, Any] = {
+    'len': len,
+    'range': range,
+    'enumerate': enumerate,
+    'zip': zip,
+    'map': map,
+    'filter': filter,
+    'sum': sum,
+    'min': min,
+    'max': max,
+    'abs': abs,
+    'round': round,
+    'int': int,
+    'float': float,
+    'str': str,
+    'list': list,
+    'dict': dict,
+    'set': set,
+    'tuple': tuple,
+    'print': print,
+    'isinstance': isinstance,
+    'type': type,
+    'sorted': sorted,
+    'reversed': reversed,
+    'any': any,
+    'all': all,
+    'bool': bool,
+    'next': next,
+    'iter': iter,
+    'callable': callable,
+    'getattr': getattr,
+    'hasattr': hasattr,
+    'divmod': divmod,
+    'pow': pow,
+    'format': format,
+    'Exception': Exception,
+    'ValueError': ValueError,
+    'TypeError': TypeError,
+    'KeyError': KeyError,
+    'IndexError': IndexError,
+    'AttributeError': AttributeError,
+    'ZeroDivisionError': ZeroDivisionError,
+    'StopIteration': StopIteration,
+    'ArithmeticError': ArithmeticError,
+    'RuntimeError': RuntimeError,
+    'True': True,
+    'False': False,
+    'None': None,
+}
+
+
+def _execution_input_frame(dataset_path: Path, metadata: Dict[str, Any], table_info: Dict[str, Any]) -> pd.DataFrame:
+    """The frame /api/execute runs code on: the stored input data (includes UI edits), else the Excel sheet."""
+    dataset_name = metadata.get("user_name") or ""
+    column_names = [col["name"] for col in table_info["columns"]]
+    # Prefer stored input data (includes any edits made in the UI)
+    df_original = db.get_table_data(dataset_name, table_info["id"], "input_data")
+    if df_original is None or df_original.empty or list(df_original.columns) != column_names:
+        # Fall back to loading from Excel (e.g. first run or column mismatch)
+        workbook = openpyxl.load_workbook(dataset_path, data_only=True)
+        worksheet = workbook[table_info["sheet"]]
+        rwa_filename_norm = _normalize_filename(metadata.get("filename"))
+        is_rwa_input = _is_rwa_input_filename(rwa_filename_norm)
+        is_iref_kalkulator = _is_iref_kalkulator_filename(rwa_filename_norm)
+        excel_row_offset = 1 if is_rwa_input else (2 if is_iref_kalkulator else 2)
+        data_rows = []
+        for row_idx in range(table_info["start_row"] + 1, table_info["end_row"] + 1):
+            row_data = {}
+            for col_info in table_info["columns"]:
+                excel_row = row_idx + excel_row_offset
+                excel_col = col_info["index"] + 1
+                cell = worksheet.cell(row=excel_row, column=excel_col)
+                val = None if ((is_rwa_input or is_iref_kalkulator) and _rwa_clear_cell(excel_row, excel_col, rwa_filename_norm)) else cell.value
+                row_data[col_info["name"]] = val
+            data_rows.append(row_data)
+        df_original = pd.DataFrame(data_rows, columns=column_names)
+    return df_original
+
+
+def _prepare_user_code(user_code: str) -> str:
+    """Blank pandas/numpy import lines (the sandbox provides pd and np); line numbers stay unchanged."""
+    user_code = re.sub(r'^import\s+(pandas|numpy|pd|np).*$', '', user_code, flags=re.MULTILINE)
+    user_code = re.sub(r'^from\s+(pandas|numpy)\s+import.*$', '', user_code, flags=re.MULTILINE)
+    return user_code
+
+
+def _execution_globals(df: pd.DataFrame) -> Dict[str, Any]:
+    return {'pd': pd, 'pandas': pd, 'np': np, 'numpy': np, 'df': df, '__builtins__': dict(EXECUTION_BUILTINS)}
+
+
+def _load_execution_input(dataset_id: str, table_id: Optional[str] = None) -> Tuple[pd.DataFrame, Dict[str, Any], Dict[str, Any]]:
+    """Input frame, dataset metadata and table of a dataset, exactly as /api/execute loads them."""
+    dataset_path = DATASETS_DIR / f"{dataset_id}.xlsx"
+    meta_path = DATASETS_DIR / f"{dataset_id}_meta.json"
+    if not os.path.exists(dataset_path) or not os.path.exists(meta_path):
+        raise HTTPException(404, "Dataset not found")
+    with open(meta_path) as f:
+        metadata = json.load(f)
+    tables = metadata.get("tables") or []
+    table_info = next((t for t in tables if t["id"] == table_id), None) if table_id else (tables[0] if tables else None)
+    if not table_info:
+        raise HTTPException(404, "Table not found")
+    return _execution_input_frame(dataset_path, metadata, table_info), metadata, table_info
+
+
 @app.post("/api/execute")
 async def execute_code(request: dict):
     """Execute code on dataset - fills missing values based on user code"""
@@ -1684,29 +1794,7 @@ async def execute_code(request: dict):
         if not table_info:
             raise HTTPException(404, "No tables found in dataset")
     
-    dataset_name = metadata.get("user_name") or ""
-    column_names = [col["name"] for col in table_info["columns"]]
-    # Prefer stored input data (includes any edits made in the UI)
-    df_original = db.get_table_data(dataset_name, table_info["id"], "input_data")
-    if df_original is None or df_original.empty or list(df_original.columns) != column_names:
-        # Fall back to loading from Excel (e.g. first run or column mismatch)
-        workbook = openpyxl.load_workbook(dataset_path, data_only=True)
-        worksheet = workbook[table_info["sheet"]]
-        rwa_filename_norm = _normalize_filename(metadata.get("filename"))
-        is_rwa_input = _is_rwa_input_filename(rwa_filename_norm)
-        is_iref_kalkulator = _is_iref_kalkulator_filename(rwa_filename_norm)
-        excel_row_offset = 1 if is_rwa_input else (2 if is_iref_kalkulator else 2)
-        data_rows = []
-        for row_idx in range(table_info["start_row"] + 1, table_info["end_row"] + 1):
-            row_data = {}
-            for col_info in table_info["columns"]:
-                excel_row = row_idx + excel_row_offset
-                excel_col = col_info["index"] + 1
-                cell = worksheet.cell(row=excel_row, column=excel_col)
-                val = None if ((is_rwa_input or is_iref_kalkulator) and _rwa_clear_cell(excel_row, excel_col, rwa_filename_norm)) else cell.value
-                row_data[col_info["name"]] = val
-            data_rows.append(row_data)
-        df_original = pd.DataFrame(data_rows, columns=column_names)
+    df_original = _execution_input_frame(dataset_path, metadata, table_info)
     
     # Load code
     code_path = CODE_DIR / f"{code_id}.py"
@@ -1717,69 +1805,12 @@ async def execute_code(request: dict):
         user_code = f.read()
     
     # Remove import statements since we provide pd and np pre-imported
-    import re
-    user_code = re.sub(r'^import\s+(pandas|numpy|pd|np).*$', '', user_code, flags=re.MULTILINE)
-    user_code = re.sub(r'^from\s+(pandas|numpy)\s+import.*$', '', user_code, flags=re.MULTILINE)
+    user_code = _prepare_user_code(user_code)
     
     # Execute in isolated namespace
     try:
         # Create execution environment with pandas and numpy pre-imported
-        exec_globals = {
-            'pd': pd,
-            'pandas': pd,
-            'np': np,
-            'numpy': np,
-            'df': df_original.copy(),  # Work on copy
-            '__builtins__': {
-                'len': len,
-                'range': range,
-                'enumerate': enumerate,
-                'zip': zip,
-                'map': map,
-                'filter': filter,
-                'sum': sum,
-                'min': min,
-                'max': max,
-                'abs': abs,
-                'round': round,
-                'int': int,
-                'float': float,
-                'str': str,
-                'list': list,
-                'dict': dict,
-                'set': set,
-                'tuple': tuple,
-                'print': print,
-                'isinstance': isinstance,
-                'type': type,
-                'sorted': sorted,
-                'reversed': reversed,
-                'any': any,
-                'all': all,
-                'bool': bool,
-                'next': next,
-                'iter': iter,
-                'callable': callable,
-                'getattr': getattr,
-                'hasattr': hasattr,
-                'divmod': divmod,
-                'pow': pow,
-                'format': format,
-                'Exception': Exception,
-                'ValueError': ValueError,
-                'TypeError': TypeError,
-                'KeyError': KeyError,
-                'IndexError': IndexError,
-                'AttributeError': AttributeError,
-                'ZeroDivisionError': ZeroDivisionError,
-                'StopIteration': StopIteration,
-                'ArithmeticError': ArithmeticError,
-                'RuntimeError': RuntimeError,
-                'True': True,
-                'False': False,
-                'None': None,
-            }
-        }
+        exec_globals = _execution_globals(df_original.copy())  # Work on copy
         
         # Execute code
         exec(user_code, exec_globals)
@@ -4815,5 +4846,8 @@ agent_runtime.register_platform(
     list_regulation_documents=_list_regulation_documents,
     regulation_index=_regulation_index,
     regulation_embeddings=_regulation_embeddings,
+    load_execution_input=_load_execution_input,
+    prepare_user_code=_prepare_user_code,
+    execution_globals=_execution_globals,
 )
 

@@ -8,9 +8,11 @@ export const DEFAULT_TAB_ORDER = [
   "data",
   "compare-clusters",
   "technical-lineage",
+  "technical-lineage-agent",
   "content-lineage",
   "release-notes",
   "regulations",
+  "regulation-matcher",
   "root-cause",
   "rootcause-ai-agents",
 ] as const;
@@ -19,6 +21,7 @@ export const TAB_LABELS: Record<string, string> = {
   code: "Code",
   "data-modal": "Data",
   "technical-lineage": "Technical Lineage",
+  "technical-lineage-agent": "Technical Lineage AI Agent",
   data: "Results",
   clustering: "Cluster",
   "content-lineage": "Content Lineage",
@@ -27,6 +30,7 @@ export const TAB_LABELS: Record<string, string> = {
   "rootcause-ai-agents": "Rootcause AI Agents",
   "semantic-lineage": "Semantic Lineage",
   regulations: "Regulation",
+  "regulation-matcher": "Regulation–Release Note Matcher",
   "release-notes": "Release Notes",
   "create-ai-agents": "Create AI Agents",
 };
@@ -40,6 +44,7 @@ export const TAB_ID_TO_MESSAGE_KEY: Record<string, string> = {
   code: "code",
   "data-modal": "dataModal",
   "technical-lineage": "technicalLineage",
+  "technical-lineage-agent": "technicalLineageAgent",
   data: "data",
   clustering: "clustering",
   "content-lineage": "contentLineage",
@@ -47,5 +52,6 @@ export const TAB_ID_TO_MESSAGE_KEY: Record<string, string> = {
   "root-cause": "rootCause",
   "semantic-lineage": "semanticLineage",
   regulations: "regulations",
+  "regulation-matcher": "regulationMatcher",
   "release-notes": "releaseNotes",
 };
