@@ -21,7 +21,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 
 import database as db
-import release_note_pdf
+import pdf_text
 
 
 APP_DATA_ROOT = Path(os.environ.get("APP_DATA_ROOT", "."))
@@ -619,7 +619,7 @@ def input_change_agent_node(state: AgentState) -> AgentState:
 def _release_note_records(path: Path) -> Iterable[tuple[str, Dict[str, Any], str]]:
     """Yield (sheet or page name, record, plain text) for every row of a workbook or passage of a PDF."""
     if path.suffix.lower() == ".pdf":
-        for page in release_note_pdf.pdf_release_note_pages(path)["pages"]:
+        for page in pdf_text.pdf_release_note_pages(path)["pages"]:
             for record in page["records"]:
                 yield f"Page {page['page']}", record, str(record.get("Text") or "")
         return

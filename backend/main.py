@@ -18,6 +18,7 @@ import re
 import base64
 import mimetypes
 import shutil
+import threading
 import time
 from datetime import date, datetime
 from io import BytesIO
@@ -32,7 +33,8 @@ import database as db
 import web_scraper
 import auth as auth_module
 import agent_runtime
-import release_note_pdf
+import pdf_text
+import regulation_text
 
 # Static content mirrored from frontend-only tabs (Regulations hardcoded example,
 # Release notes summary) so the chatbot can answer about them regardless of the
@@ -144,6 +146,9 @@ RESULTS_DIR = Path(os.environ.get("RESULTS_DIR", str(APP_DATA_ROOT / "results"))
 RELEASE_NOTES_DIR = Path(
     os.environ.get("RELEASE_NOTES_DIR", str(APP_DATA_ROOT / "uploads" / "release_notes"))
 )
+REGULATIONS_DIR = Path(
+    os.environ.get("REGULATIONS_DIR", str(APP_DATA_ROOT / "uploads" / "regulations"))
+)
 
 RELEASE_NOTES_SHEET_RANGES: Dict[str, Tuple[str, str]] = {
     "rwa release notes": ("A1", "J4"),
@@ -188,6 +193,7 @@ DATASETS_DIR.mkdir(parents=True, exist_ok=True)
 CODE_DIR.mkdir(parents=True, exist_ok=True)
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 RELEASE_NOTES_DIR.mkdir(parents=True, exist_ok=True)
+REGULATIONS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Filenames that get hardcoded table handling (no detector). Compare using .strip().lower().
 RWA_INPUT_HARDCODED_FILENAMES = {
@@ -891,8 +897,10 @@ async def upload_code(
     # Save file
     content = await file.read()
     code_string = content.decode('utf-8')
-    
-    with open(file_path, "w") as f:
+
+    # newline="" keeps the file's own line endings; text mode on Windows would turn "\r\n" into "\r\r\n",
+    # doubling every line number that lineage and the AI agents cite.
+    with open(file_path, "w", encoding="utf-8", newline="") as f:
         f.write(code_string)
     
     # Basic validation
@@ -1563,6 +1571,18 @@ def _build_chat_context() -> Dict[str, Any]:
         "regulations": {
             "example_hardcoded_rows": EXAMPLE_REGULATIONS,
             "live_scraped_eur_lex": web_scraper.get_status(),
+            "uploaded_regulation_pdfs": [
+                {
+                    "filename": item.get("filename"),
+                    "pages": item.get("page_count"),
+                    "title": item.get("document_title"),
+                    "articles_indexed": item.get("article_count"),
+                    "annexes_indexed": item.get("annex_count"),
+                    "index_status": item.get("index_status"),
+                    "uploaded": item.get("upload_date"),
+                }
+                for item in _list_regulation_documents()
+            ],
         },
         "release_notes": {
             "uploaded_workbooks": release_note_workbooks,
@@ -3929,7 +3949,7 @@ def _release_note_kind(metadata: Dict[str, Any]) -> str:
 def _pdf_release_note_context(metadata: Dict[str, Any], file_path: Path) -> Optional[Dict[str, Any]]:
     """Release-note context for a PDF: one "sheet" per page whose records are text passages."""
     try:
-        extracted = release_note_pdf.pdf_release_note_pages(file_path)
+        extracted = pdf_text.pdf_release_note_pages(file_path)
     except Exception:
         return None
     return {
@@ -3982,9 +4002,14 @@ def _chat_release_note_workbook_context(metadata: Dict[str, Any]) -> Optional[Di
             "sheets": [],
         }
 
+        # Uploads are stored under a UUID, so recognise the special workbook by its original name.
+        is_special_workbook = SPECIAL_RELEASE_NOTES_FILENAME in {
+            _normalize_filename(file_path.name),
+            _normalize_filename(metadata.get("filename")),
+        }
         for worksheet in workbook.worksheets[:CHAT_RELEASE_NOTES_MAX_SHEETS_PER_WORKBOOK]:
             if (
-                _normalize_filename(file_path.name) == SPECIAL_RELEASE_NOTES_FILENAME
+                is_special_workbook
                 and _normalize_sheet_name(worksheet.title) != SPECIAL_RELEASE_NOTES_VISIBLE_SHEET
             ):
                 continue
@@ -4108,7 +4133,7 @@ def _create_release_note_metadata_for_existing_file(workbook_path: Path) -> None
     page_count = None
     try:
         if is_pdf:
-            page_count = release_note_pdf.inspect_pdf(workbook_path)
+            page_count = pdf_text.inspect_pdf(workbook_path)
             sheet_names: List[str] = []
         else:
             workbook = openpyxl.load_workbook(
@@ -4248,7 +4273,7 @@ def _store_release_note(filename: str, content: bytes) -> Dict[str, Any]:
     try:
         temporary_path.write_bytes(content)
         if is_pdf:
-            page_count = release_note_pdf.inspect_pdf(temporary_path)
+            page_count = pdf_text.inspect_pdf(temporary_path)
             sheet_names: List[str] = []
         else:
             workbook = openpyxl.load_workbook(
@@ -4468,6 +4493,305 @@ def delete_release_notes(release_note_id: str):
     return {"message": "Release notes workbook deleted", "id": release_note_id}
 
 
+# ---------------------------------------------------------------------------
+# Uploaded regulations (PDF only). Each file is indexed in the background into its structure
+# (parts, titles, chapters, articles, annexes) and paragraph-level passages, plus an embedding
+# index when OpenAI is configured. The regulation tools of the AI agents search, read and
+# verify quotes against this index (see regulation_text.py).
+# ---------------------------------------------------------------------------
+
+REGULATION_MAX_BYTES = 50 * 1024 * 1024
+_REGULATION_ID_PATTERN = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+_REGULATION_INDEX_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+_REGULATION_EMBEDDING_CACHE: Dict[str, Tuple[float, Any]] = {}
+_REGULATION_INDEX_LOCK = threading.Lock()
+
+
+def _regulation_paths(regulation_id: str) -> Tuple[Path, Path]:
+    if not _REGULATION_ID_PATTERN.match(regulation_id or ""):
+        raise HTTPException(404, "Regulation not found")
+    return REGULATIONS_DIR / f"{regulation_id}.json", REGULATIONS_DIR / f"{regulation_id}.index.json"
+
+
+def _regulation_embeddings_path(regulation_id: str) -> Path:
+    _regulation_paths(regulation_id)
+    return REGULATIONS_DIR / f"{regulation_id}.embeddings.npy"
+
+
+def _read_regulation_json(path: Path) -> Dict[str, Any]:
+    """Read a metadata file, retrying briefly while the indexer replaces it (Windows locks it meanwhile)."""
+    for attempt in range(10):
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except PermissionError:
+            if attempt == 9:
+                raise
+            time.sleep(0.05)
+    raise OSError(f"{path} could not be read")
+
+
+def _regulation_metadata(regulation_id: str) -> Dict[str, Any]:
+    metadata_path, _ = _regulation_paths(regulation_id)
+    if not metadata_path.exists():
+        raise HTTPException(404, "Regulation not found")
+    try:
+        return _read_regulation_json(metadata_path)
+    except (OSError, json.JSONDecodeError) as e:
+        raise HTTPException(500, "Regulation metadata is invalid") from e
+
+
+def _write_regulation_metadata(metadata: Dict[str, Any]) -> None:
+    metadata_path, _ = _regulation_paths(metadata["id"])
+    temporary = metadata_path.with_name(f"{metadata_path.stem}.{uuid.uuid4().hex[:8]}.tmp")
+    temporary.write_text(json.dumps(metadata), encoding="utf-8")
+    # On Windows the replace fails while another request is reading the file; retry briefly.
+    for attempt in range(20):
+        try:
+            os.replace(temporary, metadata_path)
+            return
+        except PermissionError:
+            if attempt == 19:
+                temporary.unlink(missing_ok=True)
+                raise
+            time.sleep(0.05)
+
+
+def _list_regulation_documents() -> List[Dict[str, Any]]:
+    documents = []
+    for metadata_path in REGULATIONS_DIR.glob("*.json"):
+        if metadata_path.name.endswith(".index.json"):
+            continue
+        try:
+            metadata = _read_regulation_json(metadata_path)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if (REGULATIONS_DIR / str(metadata.get("stored_filename", ""))).exists():
+            documents.append(metadata)
+    documents.sort(key=lambda item: item.get("upload_date", ""), reverse=True)
+    return documents
+
+
+def _regulation_progress_reporter(metadata: Dict[str, Any]):
+    """Record indexing progress in the metadata (at most twice a second, and on every stage change) so the
+    Regulations tab can show it; stops indexing when the document was deleted meanwhile."""
+    state = {"at": 0.0, "stage": None}
+    metadata_path, _ = _regulation_paths(metadata["id"])
+
+    def report(stage: str, done: int, total: int) -> None:
+        now = time.monotonic()
+        if stage == state["stage"] and now - state["at"] < 0.5:
+            return
+        state.update(at=now, stage=stage)
+        if not metadata_path.exists():
+            raise RuntimeError("the regulation was deleted while it was being indexed")
+        metadata["index_progress"] = {"stage": stage, "done": done, "total": total}
+        try:
+            _write_regulation_metadata(metadata)
+        except OSError:
+            pass  # a skipped progress update must never stop indexing
+
+    return report
+
+
+def _index_regulation(regulation_id: str) -> None:
+    """Parse an uploaded regulation into its structured index, then embed its passages."""
+    with _REGULATION_INDEX_LOCK:  # one PDF at a time: parsing a large regulation is CPU- and memory-heavy
+        try:
+            metadata = _regulation_metadata(regulation_id)
+        except HTTPException:
+            return
+        _, index_path = _regulation_paths(regulation_id)
+        embeddings_path = _regulation_embeddings_path(regulation_id)
+        for stale in ("index_error", "semantic", "semantic_error", "quality"):
+            metadata.pop(stale, None)
+        progress = _regulation_progress_reporter(metadata)
+        try:
+            index = regulation_text.build_regulation_index(REGULATIONS_DIR / metadata["stored_filename"], progress=progress)
+            temporary = index_path.with_suffix(".tmp")
+            temporary.write_text(json.dumps(index, ensure_ascii=False), encoding="utf-8")
+            os.replace(temporary, index_path)
+            quality = index["quality"]
+            metadata.update({
+                "index_version": regulation_text.INDEX_VERSION,
+                "document_title": index.get("document_title"),
+                "passage_count": quality["passages"],
+                "article_count": quality["articles"],
+                "annex_count": quality["annexes"],
+                "table_count": quality["tables"],
+                "has_text": quality["passages"] > 0,
+                "truncated": quality["truncated"],
+                "language": quality["language"],
+                "quality": quality,
+            })
+            embeddings_path.unlink(missing_ok=True)
+            client, model = regulation_text.embedding_client()
+            if client is not None and quality["passages"]:
+                try:
+                    import numpy as np
+
+                    matrix = regulation_text.embed_passages(index, client, model, progress=progress)
+                    temporary_npy = embeddings_path.with_name(f"{regulation_id}.embeddings.tmp.npy")
+                    np.save(temporary_npy, matrix)
+                    os.replace(temporary_npy, embeddings_path)
+                    metadata["semantic"] = {"model": model, "dimensions": int(matrix.shape[1])}
+                except Exception as e:
+                    traceback.print_exc()
+                    metadata["semantic_error"] = str(e)[:300]
+            metadata["index_status"] = "ready"
+        except Exception as e:
+            traceback.print_exc()
+            metadata.update({"index_status": "failed", "index_error": str(e)[:300]})
+        metadata.pop("index_progress", None)
+        try:
+            _regulation_metadata(regulation_id)  # still uploaded?
+            _write_regulation_metadata(metadata)
+        except (OSError, HTTPException):
+            for path in (index_path, embeddings_path):
+                path.unlink(missing_ok=True)  # The document was deleted while it was being indexed.
+
+
+def _regulation_index(metadata: Dict[str, Any]) -> Dict[str, Any]:
+    """The structured index of a regulation (cached until the index file changes)."""
+    if metadata.get("index_status") == "failed":
+        raise RuntimeError(f"indexing failed: {metadata.get('index_error') or 'unknown error'}")
+    _, index_path = _regulation_paths(str(metadata.get("id")))
+    if metadata.get("index_status") != "ready" or metadata.get("index_version") != regulation_text.INDEX_VERSION or not index_path.exists():
+        raise RuntimeError("it is still being indexed; try again in a minute")
+    mtime = index_path.stat().st_mtime
+    cached = _REGULATION_INDEX_CACHE.get(str(index_path))
+    if cached and cached[0] == mtime:
+        return cached[1]
+    index = json.loads(index_path.read_text(encoding="utf-8"))
+    _REGULATION_INDEX_CACHE[str(index_path)] = (mtime, index)
+    return index
+
+
+def _regulation_embeddings(metadata: Dict[str, Any]):
+    """The passage embeddings of a regulation, or None when it has no semantic index."""
+    path = _regulation_embeddings_path(str(metadata.get("id")))
+    if not metadata.get("semantic") or not path.exists():
+        return None
+    mtime = path.stat().st_mtime
+    cached = _REGULATION_EMBEDDING_CACHE.get(str(path))
+    if cached and cached[0] == mtime:
+        return cached[1]
+    import numpy as np
+
+    matrix = np.load(path)
+    _REGULATION_EMBEDDING_CACHE[str(path)] = (mtime, matrix)
+    return matrix
+
+
+def _reindex_outdated_regulations() -> None:
+    """Re-index regulations indexed by an older parser, or left half-indexed by a restart."""
+    for metadata in _list_regulation_documents():
+        if metadata.get("index_version") != regulation_text.INDEX_VERSION or metadata.get("index_status") == "indexing":
+            try:
+                metadata["index_status"] = "indexing"
+                metadata["index_progress"] = {"stage": "queued", "done": 0, "total": 0}
+                _write_regulation_metadata(metadata)
+            except (OSError, HTTPException):
+                continue
+            _index_regulation(str(metadata.get("id")))
+
+
+@app.on_event("startup")
+def _schedule_regulation_reindex() -> None:
+    threading.Thread(target=_reindex_outdated_regulations, name="regulation-reindex", daemon=True).start()
+
+
+def _store_regulation(filename: str, content: bytes, background_tasks: BackgroundTasks) -> Dict[str, Any]:
+    original_filename = Path(filename).name
+    if Path(original_filename).suffix.lower() != ".pdf":
+        raise HTTPException(400, "Only PDF files are supported for regulations")
+    if not content:
+        raise HTTPException(400, "The uploaded file is empty")
+    if len(content) > REGULATION_MAX_BYTES:
+        raise HTTPException(413, "Regulation PDFs must be 50 MB or smaller")
+
+    regulation_id = str(uuid.uuid4())
+    stored_filename = f"{regulation_id}.pdf"
+    temporary_path = REGULATIONS_DIR / f"{regulation_id}.tmp.pdf"
+    try:
+        temporary_path.write_bytes(content)
+        page_count = pdf_text.inspect_pdf(temporary_path)
+        os.replace(temporary_path, REGULATIONS_DIR / stored_filename)
+    except Exception as e:
+        temporary_path.unlink(missing_ok=True)
+        raise HTTPException(400, f"Invalid PDF: {e}") from e
+
+    metadata = {
+        "id": regulation_id,
+        "filename": original_filename,
+        "stored_filename": stored_filename,
+        "size": len(content),
+        "upload_date": _german_now_timestamp().isoformat(),
+        "page_count": page_count,
+        "index_status": "indexing",
+        "index_progress": {"stage": "queued", "done": 0, "total": 0},
+    }
+    _write_regulation_metadata(metadata)
+    background_tasks.add_task(_index_regulation, regulation_id)
+    return metadata
+
+
+@app.get("/api/regulations/documents")
+def list_regulation_documents():
+    return {"documents": _list_regulation_documents()}
+
+
+@app.post("/api/regulations/documents")
+async def upload_regulation(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
+    return _store_regulation(file.filename or "", await file.read(), background_tasks)
+
+
+@app.post("/api/regulations/documents/from-upload")
+def complete_regulation_upload(request: ChunkedUploadRequest, background_tasks: BackgroundTasks):
+    """Create a regulation from a finished chunked upload (used by the browser for every upload)."""
+    content = _assemble_upload(request.upload_id, request.total_chunks, REGULATION_MAX_BYTES)
+    return _store_regulation(request.filename, content, background_tasks)
+
+
+@app.get("/api/regulations/documents/{regulation_id}/file")
+def download_regulation(regulation_id: str, inline: bool = False):
+    metadata = _regulation_metadata(regulation_id)
+    file_path = REGULATIONS_DIR / metadata["stored_filename"]
+    if not file_path.exists():
+        raise HTTPException(404, "Regulation file not found")
+    return FileResponse(
+        file_path,
+        media_type="application/pdf",
+        filename=metadata["filename"],
+        content_disposition_type="inline" if inline else "attachment",
+    )
+
+
+@app.delete("/api/regulations/documents/{regulation_id}")
+def delete_regulation(regulation_id: str):
+    metadata = _regulation_metadata(regulation_id)
+    metadata_path, index_path = _regulation_paths(regulation_id)
+    try:
+        for path in (REGULATIONS_DIR / metadata["stored_filename"], index_path, _regulation_embeddings_path(regulation_id), metadata_path):
+            path.unlink(missing_ok=True)
+    except OSError as e:
+        raise HTTPException(409, "The regulation is in use by another process. Close any preview or download and try again.") from e
+    _REGULATION_INDEX_CACHE.pop(str(index_path), None)
+    _REGULATION_EMBEDDING_CACHE.pop(str(_regulation_embeddings_path(regulation_id)), None)
+    return {"message": "Regulation deleted", "id": regulation_id}
+
+
+@app.post("/api/regulations/documents/{regulation_id}/reindex")
+def reindex_regulation(regulation_id: str, background_tasks: BackgroundTasks):
+    metadata = _regulation_metadata(regulation_id)
+    if metadata.get("index_status") == "indexing":
+        return metadata
+    metadata["index_status"] = "indexing"
+    metadata["index_progress"] = {"stage": "queued", "done": 0, "total": 0}
+    _write_regulation_metadata(metadata)
+    background_tasks.add_task(_index_regulation, regulation_id)
+    return metadata
+
+
 # Semantic matching endpoint - Disabled for now
 # @app.post("/api/match-columns")
 # def match_columns(request: ColumnMatchRequest):
@@ -4488,5 +4812,8 @@ agent_runtime.register_platform(
     analyze_code_lineage=_analyze_code_content_lineage,
     list_release_note_workbooks=_list_release_note_workbooks,
     release_note_workbook_context=_chat_release_note_workbook_context,
+    list_regulation_documents=_list_regulation_documents,
+    regulation_index=_regulation_index,
+    regulation_embeddings=_regulation_embeddings,
 )
 

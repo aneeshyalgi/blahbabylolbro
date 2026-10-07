@@ -17,6 +17,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { API_ENDPOINTS } from "@/lib/api-config";
 import { useToast } from "@/hooks/use-toast";
+import { RegulationDocumentsSection } from "@/components/regulation-documents-section";
 
 interface RegulationRow {
   regulation_name: string;
@@ -167,6 +168,8 @@ export function ParseRegulationsTabContent() {
 
   return (
     <div className="space-y-6">
+      <RegulationDocumentsSection />
+
       <Card>
         <CardHeader>
           <CardTitle>{t("title")}</CardTitle>

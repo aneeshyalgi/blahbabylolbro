@@ -4,6 +4,7 @@ import type { CSSProperties } from "react";
 import {
   Activity,
   BarChart3,
+  BookOpen,
   Bot,
   Calculator,
   ClipboardCheck,
@@ -14,6 +15,7 @@ import {
   GitCompare,
   LayoutDashboard,
   ListOrdered,
+  ListTree,
   Network,
   Scale,
   Search,
@@ -63,6 +65,10 @@ const TOOL_ICONS: Record<string, LucideIcon> = {
   network: Network,
   "file-search": FileSearch,
   calculator: Calculator,
+  scale: Scale,
+  "book-open": BookOpen,
+  "list-tree": ListTree,
+  "shield-check": ShieldCheck,
 };
 
 export function agentAccent(color?: string): string {

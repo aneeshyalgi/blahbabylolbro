@@ -1,28 +1,23 @@
-"""Text extraction for PDF release notes.
+"""Text extraction from uploaded release-note PDFs.
 
-Excel release notes are read row by row; a PDF has no rows, so its text is split
-into short passages ("records") per page. Each record carries the page number and,
-when one appears in the passage, a Jira ID, so the same matching code that reads
-Excel rows (agent search, chat context, RootCause) can read PDFs as well.
+A PDF has no rows, so its text is split into short passages per page; each passage carries the Jira
+ID it mentions. Regulation PDFs have their own structured parser in regulation_text.py.
 """
 from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from pypdf import PdfReader
 
-MAX_PAGES = 300
-# Bounds the text one PDF contributes, like the row/column caps applied to workbooks.
-MAX_TEXT_CHARS = 100_000
 CHUNK_CHARS = 700
 
 JIRA_PATTERN = re.compile(r"\b[A-Z][A-Z0-9]+-\d+\b")
 ITEM_START = re.compile(r"^(?:[-•*▪●◦]|\d+[.)]|[A-Z][A-Z0-9]+-\d+\b)\s*")
 SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+")
 
-_CACHE: Dict[str, Tuple[Tuple[float, int], Dict[str, Any]]] = {}
+_CACHE: Dict[Tuple[str, str], Tuple[Tuple[float, int], Any]] = {}
 
 
 def _open(path: Path) -> PdfReader:
@@ -78,7 +73,8 @@ def _passages(text: str) -> List[str]:
         if not line:
             flush()
             continue
-        if current and (ITEM_START.match(line) or length + len(line) > CHUNK_CHARS):
+        starts_new = ITEM_START.match(line)
+        if current and (starts_new or length + len(line) > CHUNK_CHARS):
             flush()
         current.append(line)
         length += len(line) + 1
@@ -86,45 +82,55 @@ def _passages(text: str) -> List[str]:
     return passages
 
 
-def _extract(path: Path) -> Dict[str, Any]:
+def _page_texts(path: Path, max_pages: int) -> Tuple[int, List[str]]:
     reader = _open(path)
-    page_count = len(reader.pages)
-    pages: List[Dict[str, Any]] = []
-    total = 0
-    truncated = page_count > MAX_PAGES
-    for index, page in enumerate(reader.pages[:MAX_PAGES], start=1):
+    texts = []
+    for page in reader.pages[:max_pages]:
         try:
-            text = page.extract_text() or ""
+            texts.append(page.extract_text() or "")
         except Exception:
-            text = ""
-        records: List[Dict[str, Any]] = []
-        for passage in _passages(text):
-            if total >= MAX_TEXT_CHARS:
-                truncated = True
-                break
-            passage = passage[: MAX_TEXT_CHARS - total]
-            total += len(passage)
-            record: Dict[str, Any] = {"Page": index}
-            jira = JIRA_PATTERN.search(passage)
-            if jira:
-                record["Jira ID"] = jira.group(0)
-            record["Text"] = passage
-            records.append(record)
-        pages.append({"page": index, "records": records})
-        if total >= MAX_TEXT_CHARS:
-            truncated = truncated or index < page_count
-            break
-    return {"page_count": page_count, "pages": pages, "truncated": truncated}
+            texts.append("")
+    return len(reader.pages), texts
 
 
-def pdf_release_note_pages(path: Path) -> Dict[str, Any]:
-    """Pages of a PDF release note as {"page", "records"}; cached until the file changes."""
+def _cached(path: Path, kind: str, build):
     stat = path.stat()
     signature = (stat.st_mtime, stat.st_size)
-    key = str(path)
+    key = (str(path), kind)
     cached = _CACHE.get(key)
     if cached and cached[0] == signature:
         return cached[1]
-    result = _extract(path)
+    result = build()
     _CACHE[key] = (signature, result)
     return result
+
+
+def pdf_release_note_pages(path: Path, max_pages: int = 300, max_chars: int = 100_000) -> Dict[str, Any]:
+    """Pages of a PDF release note as {"page", "records"}; records carry the Jira ID they mention."""
+
+    def build() -> Dict[str, Any]:
+        page_count, texts = _page_texts(path, max_pages)
+        pages: List[Dict[str, Any]] = []
+        total = 0
+        truncated = page_count > max_pages
+        for index, text in enumerate(texts, start=1):
+            records: List[Dict[str, Any]] = []
+            for passage in _passages(text):
+                if total >= max_chars:
+                    truncated = True
+                    break
+                passage = passage[: max_chars - total]
+                total += len(passage)
+                record: Dict[str, Any] = {"Page": index}
+                jira = JIRA_PATTERN.search(passage)
+                if jira:
+                    record["Jira ID"] = jira.group(0)
+                record["Text"] = passage
+                records.append(record)
+            pages.append({"page": index, "records": records})
+            if total >= max_chars:
+                truncated = truncated or index < page_count
+                break
+        return {"page_count": page_count, "pages": pages, "truncated": truncated}
+
+    return _cached(path, "release_notes", build)

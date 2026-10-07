@@ -13,14 +13,16 @@ export type AgentDefinition = {
   temperature: number;
   /** Release-note file ids the search tool is limited to; empty means every uploaded file. */
   release_note_sources: string[];
+  /** Regulation PDF ids the regulation tools are limited to; empty means every uploaded regulation. */
+  regulation_sources: string[];
 };
 
-/** An uploaded release-note file (Excel workbook or PDF), as listed by /api/release-notes. */
-export type ReleaseNoteFile = {
+/** An uploaded source file an agent can search: a release note (Excel or PDF) or a regulation PDF. */
+export type SourceFile = {
   id: string;
   filename: string;
   upload_date: string;
-  sheets: string[];
+  sheets?: string[];
   kind?: "excel" | "pdf";
   page_count?: number;
 };
@@ -130,4 +132,5 @@ export const EMPTY_DEFINITION: AgentDefinition = {
   max_steps: 8,
   temperature: 0.2,
   release_note_sources: [],
+  regulation_sources: [],
 };

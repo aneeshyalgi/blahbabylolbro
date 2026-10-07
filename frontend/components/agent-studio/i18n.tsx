@@ -155,7 +155,8 @@ const EN = {
   "editor.addItem": "Add item",
   "editor.sources": "Release-note sources",
   "editor.sourcesHint": "Choose which uploaded release notes the Search release notes tool may read. All files are selected by default, including files uploaded later; untick files to leave them out.",
-  "editor.sourcesAll": "Searches all {count} files, including future uploads",
+  "editor.sourcesAll.one": "Searches this file and any future uploads",
+  "editor.sourcesAll.other": "Searches all {count} files, including future uploads",
   "editor.sourcesKeepOne": "At least one file must stay selected",
   "editor.sourcesSome": "Searches {count} of {total} files",
   "editor.sourcesUseAll": "Use all files",
@@ -164,6 +165,9 @@ const EN = {
   "editor.sourcesMissing": "File no longer available",
   "editor.sourcesPages": "PDF · {count} pages",
   "editor.sourcesSheets": "Excel · {count} sheets",
+  "editor.regulationSources": "Regulation sources",
+  "editor.regulationSourcesHint": "Choose which uploaded regulation PDFs the regulation tools may read. All files are selected by default, including files uploaded later; untick files to leave them out.",
+  "editor.regulationSourcesEmpty": "No regulations uploaded yet. Upload regulation PDFs in the Regulation tab.",
 
   "voice.languageName": "English",
   "voice.start": "Dictate in {language}",
@@ -411,7 +415,8 @@ const DE: Record<StudioTextKey, string> = {
   "editor.addItem": "Eintrag hinzufügen",
   "editor.sources": "Release-Note-Quellen",
   "editor.sourcesHint": "Wählen Sie, welche hochgeladenen Release Notes das Tool „Release Notes durchsuchen“ lesen darf. Standardmäßig sind alle Dateien ausgewählt, auch später hochgeladene; entfernen Sie Haken, um Dateien auszuschließen.",
-  "editor.sourcesAll": "Durchsucht alle {count} Dateien, auch künftige Uploads",
+  "editor.sourcesAll.one": "Durchsucht diese Datei und alle künftigen Uploads",
+  "editor.sourcesAll.other": "Durchsucht alle {count} Dateien, auch künftige Uploads",
   "editor.sourcesKeepOne": "Mindestens eine Datei muss ausgewählt bleiben",
   "editor.sourcesSome": "Durchsucht {count} von {total} Dateien",
   "editor.sourcesUseAll": "Alle Dateien verwenden",
@@ -420,6 +425,9 @@ const DE: Record<StudioTextKey, string> = {
   "editor.sourcesMissing": "Datei nicht mehr verfügbar",
   "editor.sourcesPages": "PDF · {count} Seiten",
   "editor.sourcesSheets": "Excel · {count} Blätter",
+  "editor.regulationSources": "Regulierungsquellen",
+  "editor.regulationSourcesHint": "Wählen Sie, welche hochgeladenen Regulierungs-PDFs die Regulierungs-Tools lesen dürfen. Standardmäßig sind alle Dateien ausgewählt, auch später hochgeladene; entfernen Sie Haken, um Dateien auszuschließen.",
+  "editor.regulationSourcesEmpty": "Noch keine Regulierungen hochgeladen. Laden Sie Regulierungs-PDFs im Tab „Regulierung“ hoch.",
 
   "voice.languageName": "Deutsch",
   "voice.start": "Auf {language} diktieren",
@@ -558,7 +566,23 @@ const TOOL_TEXT_DE: Record<string, { label: string; description: string }> = {
   },
   search_release_notes: {
     label: "Release Notes durchsuchen",
-    description: "Durchsucht hochgeladene Release Notes (Excel und PDF) nach Feld, Position, Thema oder Jira-ID und liefert Jira-ID, Problem- und Lösungsbeschreibung.",
+    description: "Durchsucht hochgeladene Release Notes (Excel und PDF) nach Feld, Position, Thema oder Jira-ID und liefert Jira-ID, Problem- und Lösungsbeschreibung. Ohne Suchbegriff listet es alle Zeilen auf.",
+  },
+  regulation_outline: {
+    label: "Gliederung der Regulierung",
+    description: "Zeigt den Aufbau der hochgeladenen Regulierungen – Teile, Titel, Kapitel, Abschnitte mit ihren Artikeln und die Anhänge; mit „within“ alle Artikel eines Teils mit Titel und Seiten.",
+  },
+  verify_regulation_quotes: {
+    label: "Zitate prüfen",
+    description: "Prüft Zitate wörtlich am zitierten Artikel und Absatz und meldet falsche Fundstellen, Umschreibungen und nicht belegte Texte mit dem nächstliegenden Originalwortlaut.",
+  },
+  search_regulations: {
+    label: "Regulierungen durchsuchen",
+    description: "Durchsucht die hochgeladenen Regulierungs-PDFs (z. B. CRR, CRD, ITS) nach Stichworten und Bedeutung, auf Deutsch oder Englisch, und liefert Passagen auf Absatzebene mit Dokument, Fundstelle und Seite.",
+  },
+  read_regulation_article: {
+    label: "Regulierungsartikel lesen",
+    description: "Liefert einen Artikel oder Anhang einer hochgeladenen Regulierung wörtlich, Absatz für Absatz mit Seiten, samt Stellung in der Regulierung und Verweisen, damit er zitiert und mit der Umsetzung verglichen werden kann.",
   },
   calculator: {
     label: "Rechner",

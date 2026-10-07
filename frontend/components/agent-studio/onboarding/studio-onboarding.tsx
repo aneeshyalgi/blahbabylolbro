@@ -639,7 +639,7 @@ function ToolsScreen({ copy, tools }: { copy: OnboardingCopy; tools: ToolInfo[] 
   return (
     <div>
       <ScreenHeading eyebrow={copy.tools.eyebrow} title={copy.tools.title} intro={copy.tools.intro} />
-      <div className="mt-7 grid grid-cols-5 gap-2">
+      <div className="mt-7 grid grid-cols-7 gap-2">
         {names.map((name, nameIndex) => {
           const tool = catalog.get(name);
           const selected = name === active;

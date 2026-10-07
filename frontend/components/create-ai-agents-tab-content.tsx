@@ -33,7 +33,7 @@ import {
   type AgentDefinition,
   type AgentTemplate,
   type ContextOptions,
-  type ReleaseNoteFile,
+  type SourceFile,
   type SavedAgent,
   type ToolInfo,
 } from "@/components/agent-studio/types";
@@ -77,8 +77,10 @@ function AgentStudio() {
   const [deleting, setDeleting] = useState(false);
   const [contextOptions, setContextOptions] = useState<ContextOptions | null>(null);
   const [contextLoading, setContextLoading] = useState(false);
-  const [releaseNoteFiles, setReleaseNoteFiles] = useState<ReleaseNoteFile[]>([]);
+  const [releaseNoteFiles, setReleaseNoteFiles] = useState<SourceFile[]>([]);
   const [releaseNoteFilesLoading, setReleaseNoteFilesLoading] = useState(true);
+  const [regulationFiles, setRegulationFiles] = useState<SourceFile[]>([]);
+  const [regulationFilesLoading, setRegulationFilesLoading] = useState(true);
   // Changes whenever a different draft or agent is opened so the test bench starts a fresh conversation.
   const [editSession, setEditSession] = useState(0);
   // Foundation selected on the studio home (null = blank canvas); kept here so the guided tour can follow it.
@@ -102,17 +104,26 @@ function AgentStudio() {
 
   const loadReleaseNoteFiles = useCallback(() => {
     setReleaseNoteFilesLoading(true);
-    requestJson<{ workbooks: ReleaseNoteFile[] }>(API_ENDPOINTS.releaseNotes)
+    requestJson<{ workbooks: SourceFile[] }>(API_ENDPOINTS.releaseNotes)
       .then((payload) => setReleaseNoteFiles(payload.workbooks))
       .catch(() => setReleaseNoteFiles([]))
       .finally(() => setReleaseNoteFilesLoading(false));
+  }, []);
+
+  const loadRegulationFiles = useCallback(() => {
+    setRegulationFilesLoading(true);
+    requestJson<{ documents: SourceFile[] }>(API_ENDPOINTS.regulationDocuments)
+      .then((payload) => setRegulationFiles(payload.documents.map((document) => ({ ...document, kind: "pdf" as const }))))
+      .catch(() => setRegulationFiles([]))
+      .finally(() => setRegulationFilesLoading(false));
   }, []);
 
   useEffect(() => {
     void loadAgents();
     requestJson<{ tools: ToolInfo[] }>(API_ENDPOINTS.agentTools).then((payload) => setTools(payload.tools)).catch(() => setTools([]));
     loadReleaseNoteFiles();
-  }, [loadAgents, loadReleaseNoteFiles]);
+    loadRegulationFiles();
+  }, [loadAgents, loadReleaseNoteFiles, loadRegulationFiles]);
 
   useEffect(() => {
     let cancelled = false;
@@ -384,6 +395,9 @@ function AgentStudio() {
             releaseNoteFiles={releaseNoteFiles}
             releaseNoteFilesLoading={releaseNoteFilesLoading}
             onReloadReleaseNoteFiles={loadReleaseNoteFiles}
+            regulationFiles={regulationFiles}
+            regulationFilesLoading={regulationFilesLoading}
+            onReloadRegulationFiles={loadRegulationFiles}
           />
         </div>
         <div data-tour="save-bar" className="flex shrink-0 items-center justify-between gap-2 border-t border-[#1c222b] bg-[#080c12] px-5 py-3">

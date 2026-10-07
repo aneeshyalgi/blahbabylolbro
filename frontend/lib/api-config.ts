@@ -67,6 +67,12 @@ export const API_ENDPOINTS = {
   regulationsScrape: `${API_BASE_URL}/api/regulations/scrape`,
   regulationsStop: `${API_BASE_URL}/api/regulations/stop`,
   regulationsClear: `${API_BASE_URL}/api/regulations/results`,
+  regulationDocuments: `${API_BASE_URL}/api/regulations/documents`,
+  regulationDocumentsFromUpload: `${API_BASE_URL}/api/regulations/documents/from-upload`,
+  regulationDocumentFile: (id: string) => `${API_BASE_URL}/api/regulations/documents/${id}/file`,
+  regulationDocumentView: (id: string) => `${API_BASE_URL}/api/regulations/documents/${id}/file?inline=true`,
+  regulationDocument: (id: string) => `${API_BASE_URL}/api/regulations/documents/${id}`,
+  regulationReindex: (id: string) => `${API_BASE_URL}/api/regulations/documents/${id}/reindex`,
 
   // Release notes workbooks
   releaseNotes: `${API_BASE_URL}/api/release-notes`,

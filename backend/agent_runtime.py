@@ -31,6 +31,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 import database as db
+import regulation_text
 
 
 APP_DATA_ROOT = Path(os.environ.get("APP_DATA_ROOT", "."))
@@ -443,15 +444,33 @@ def _tool_workspace_overview(args: Dict[str, Any]) -> ToolResult:
         workbooks = [item.get("filename") for item in _platform("list_release_note_workbooks")()[:20]]
     except Exception:
         workbooks = []
+    try:
+        regulations = [
+            {
+                "file": item.get("filename"),
+                "title": item.get("document_title"),
+                "pages": item.get("page_count"),
+                "articles_indexed": item.get("article_count"),
+                "annexes_indexed": item.get("annex_count"),
+                "index_status": item.get("index_status"),
+                "semantic_search": bool(item.get("semantic")),
+            }
+            for item in _platform("list_regulation_documents")()[:20]
+        ]
+    except Exception:
+        regulations = []
     summary = _summary(
-        f"{len(datasets)} datasets, {len(code_files)} code files, {len(clusters)} clusters, {len(workbooks)} release-note workbooks",
-        f"{len(datasets)} Datensätze, {len(code_files)} Codedateien, {len(clusters)} Cluster, {len(workbooks)} Release-Note-Arbeitsmappen",
+        f"{len(datasets)} datasets, {len(code_files)} code files, {len(clusters)} clusters, "
+        f"{len(workbooks)} release-note files, {len(regulations)} regulations",
+        f"{len(datasets)} Datensätze, {len(code_files)} Codedateien, {len(clusters)} Cluster, "
+        f"{len(workbooks)} Release-Note-Dateien, {len(regulations)} Regulierungen",
     )
     return {
         "datasets": datasets,
         "code_files": code_files,
         "clusters": clusters,
         "release_note_workbooks": workbooks,
+        "regulation_documents": regulations,
     }, summary
 
 
@@ -722,6 +741,104 @@ def _lineage_graph(code: str) -> Dict[str, set]:
     return graph
 
 
+def _df_column(node: ast.AST) -> Optional[str]:
+    """Column name of df['X'] / df["X"], else None."""
+    if (
+        isinstance(node, ast.Subscript)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "df"
+        and isinstance(node.slice, ast.Constant)
+        and isinstance(node.slice.value, str)
+    ):
+        return node.slice.value
+    return None
+
+
+def _code_lookup_tables(code: str) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Find literal lookup dictionaries in transformation code, where they are applied with .map(), and
+    the effective value per category when lookups are chained (e.g. ProductType -> BalanceSheetType -> CCF)."""
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return [], []
+    tables: Dict[str, Dict[str, Any]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) and isinstance(node.value, ast.Dict):
+            entries = {
+                str(key.value): value.value
+                for key, value in zip(node.value.keys, node.value.values)
+                if isinstance(key, ast.Constant) and isinstance(value, ast.Constant)
+            }
+            if entries:
+                tables[node.targets[0].id] = {"name": node.targets[0].id, "line": node.lineno, "entries": entries, "applied": []}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        target = _df_column(node.targets[0])
+        if not target:
+            continue
+        for call in ast.walk(node.value):
+            if (
+                isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Attribute)
+                and call.func.attr in ("map", "replace")
+                and call.args
+                and isinstance(call.args[0], ast.Name)
+                and call.args[0].id in tables
+            ):
+                key_column = _df_column(call.func.value)
+                if key_column:
+                    tables[call.args[0].id]["applied"].append({"key_column": key_column, "target_column": target, "line": node.lineno})
+    uses = [(table, use) for table in tables.values() for use in table["applied"]]
+    chains = []
+    for first, first_use in uses:
+        for second, second_use in uses:
+            if first is second or first_use["target_column"] != second_use["key_column"]:
+                continue
+            chains.append({
+                "path": [first_use["key_column"], first_use["target_column"], second_use["target_column"]],
+                "tables": [first["name"], second["name"]],
+                "lines": [first_use["line"], second_use["line"]],
+                "effective_values": {
+                    category: second["entries"].get(str(middle), "not mapped")
+                    for category, middle in first["entries"].items()
+                },
+            })
+    return list(tables.values()), chains
+
+
+def _category_values(tables: List[Dict[str, Any]], chains: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """One row per (calculated column, category) the code assigns a literal value to. Chained lookups are
+    resolved to their original category, e.g. CCF for ProductType=Guarantee via BalanceSheetType=OffBalance."""
+    rows: List[Dict[str, Any]] = []
+    chained_targets = set()
+    for chain in chains:
+        first = next(table for table in tables if table["name"] == chain["tables"][0])
+        chained_targets.add((chain["tables"][1], chain["path"][1]))
+        for category, value in chain["effective_values"].items():
+            rows.append({
+                "column": chain["path"][2],
+                "category_column": chain["path"][0],
+                "category": category,
+                "value": value,
+                "via": f"{chain['path'][1]}={first['entries'].get(category)}",
+                "lines": chain["lines"],
+            })
+    for table in tables:
+        for use in table["applied"]:
+            if (table["name"], use["key_column"]) in chained_targets:
+                continue  # Already judged through the chain's original category.
+            for category, value in table["entries"].items():
+                rows.append({
+                    "column": use["target_column"],
+                    "category_column": use["key_column"],
+                    "category": category,
+                    "value": value,
+                    "lines": [use["line"]],
+                })
+    return rows[:80]
+
+
 def _tool_inspect_code(args: Dict[str, Any]) -> ToolResult:
     meta, code = _code_file(args.get("code_id"))
     lines = code.splitlines()
@@ -731,6 +848,7 @@ def _tool_inspect_code(args: Dict[str, Any]) -> ToolResult:
         {"column": column, "depends_on": sorted(parents)}
         for column, parents in graph.items()
     ]
+    lookup_tables, chained_lookups = _code_lookup_tables(code)
     truncated = len(numbered) > 14000
     return {
         "code_id": meta["id"],
@@ -739,11 +857,14 @@ def _tool_inspect_code(args: Dict[str, Any]) -> ToolResult:
         "description": meta.get("description"),
         "line_count": len(lines),
         "derived_columns": derived,
+        "lookup_tables": lookup_tables,
+        "chained_lookups": chained_lookups,
+        "category_values": _category_values(lookup_tables, chained_lookups),
         "code_with_line_numbers": numbered[:14000],
         "truncated": truncated,
     }, _summary(
-        f"{meta.get('filename')}: {len(lines)} lines, {len(derived)} assigned columns",
-        f"{meta.get('filename')}: {len(lines)} Zeilen, {len(derived)} zugewiesene Spalten",
+        f"{meta.get('filename')}: {len(lines)} lines, {len(derived)} assigned columns, {len(lookup_tables)} lookup tables",
+        f"{meta.get('filename')}: {len(lines)} Zeilen, {len(derived)} zugewiesene Spalten, {len(lookup_tables)} Zuordnungstabellen",
     )
 
 
@@ -864,47 +985,652 @@ def _searchable_release_notes(sources: List[str], requested: Any) -> List[Dict[s
     return chosen
 
 
+# Without a query the tool lists rows; small files are always returned in full so the model can match by
+# meaning (release notes are often German and name fields differently from the dataset columns).
+RELEASE_NOTE_LIST_LIMIT = 60
+RELEASE_NOTE_SMALL_CORPUS = 40
+
+
+def _release_note_row(context: Dict[str, Any], sheet: Dict[str, Any], record: Dict[str, Any]) -> Dict[str, Any]:
+    jira = _record_field(record, "jira")
+    if not jira:
+        found = re.search(r"\b[A-Z][A-Z0-9]+-\d+\b", json.dumps(record, default=str))
+        jira = found.group(0) if found else ""
+    return {
+        "jira_id": jira,
+        "workbook": context.get("filename"),
+        "sheet": sheet.get("name"),
+        "problem_description": _record_field(record, "problem")[:600],
+        "solution_description": _record_field(record, "solution")[:600],
+        "record": {str(k): (str(v)[:400] if isinstance(v, str) else _safe(v)) for k, v in list(record.items())[:20]},
+    }
+
+
+def _release_note_files(contexts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    files = []
+    for context in contexts:
+        columns: List[str] = []
+        rows = 0
+        for sheet in context.get("sheets", []):
+            for record in sheet.get("records", []):
+                rows += 1
+                columns.extend(str(key) for key in record if str(key) not in columns)
+        entry = {"file": context.get("filename"), "kind": context.get("kind") or "excel", "rows": rows}
+        if entry["kind"] != "pdf":
+            entry["columns"] = columns[:30]
+        files.append(entry)
+    return files
+
+
 def _tool_search_release_notes(args: Dict[str, Any]) -> ToolResult:
     query = str(args.get("query") or "").strip()
-    if not query:
-        raise ToolError("query is required, e.g. a field name, position, Jira id or topic.")
+    contexts = _searchable_release_notes(args.get("_release_note_sources") or [], args.get("files"))
+    rows = [
+        (context, sheet, record)
+        for context in contexts
+        for sheet in context.get("sheets", [])
+        for record in sheet.get("records", [])
+    ]
+    base = {
+        "searched_files": [context.get("filename") for context in contexts],
+        "files": _release_note_files(contexts),
+        "total_rows": len(rows),
+    }
+    if not query or query == "*":
+        listed = [_release_note_row(*row) for row in rows[:RELEASE_NOTE_LIST_LIMIT]]
+        return {
+            **base,
+            "mode": "list",
+            "rows": listed,
+            "truncated": len(rows) > len(listed),
+        }, _summary(
+            f"Listed {len(listed)} of {len(rows)} release-note rows",
+            f"{len(listed)} von {len(rows)} Release-Note-Zeilen aufgelistet",
+        )
+
     phrase = _normalize_text(query)
     terms = [term for term in phrase.split() if (len(term) > 2 or term.isdigit()) and term not in _STOPWORDS]
     if not terms:
         terms = [phrase]
-    contexts = _searchable_release_notes(args.get("_release_note_sources") or [], args.get("files"))
     candidates = []
-    for context in contexts:
-        for sheet in context.get("sheets", []):
-            for record in sheet.get("records", []):
-                text = _normalize_text(json.dumps(record, ensure_ascii=False, default=str))
-                matched = [term for term in terms if term in text]
-                if not matched:
-                    continue
-                score = len(matched) + (3 if phrase and phrase in text else 0)
-                jira = _record_field(record, "jira")
-                if not jira:
-                    found = re.search(r"\b[A-Z][A-Z0-9]+-\d+\b", json.dumps(record, default=str))
-                    jira = found.group(0) if found else ""
-                candidates.append({
-                    "score": score,
-                    "jira_id": jira,
-                    "workbook": context.get("filename"),
-                    "sheet": sheet.get("name"),
-                    "matched_terms": matched,
-                    "problem_description": _record_field(record, "problem")[:600],
-                    "solution_description": _record_field(record, "solution")[:600],
-                    "record": {str(k): (str(v)[:400] if isinstance(v, str) else _safe(v)) for k, v in list(record.items())[:20]},
-                })
+    unmatched = []
+    for context, sheet, record in rows:
+        text = _normalize_text(json.dumps(record, ensure_ascii=False, default=str))
+        matched = [term for term in terms if term in text]
+        if not matched:
+            unmatched.append((context, sheet, record))
+            continue
+        score = len(matched) + (3 if phrase and phrase in text else 0)
+        candidates.append({"score": score, "matched_terms": matched, **_release_note_row(context, sheet, record)})
     candidates.sort(key=lambda item: item["score"], reverse=True)
     limit = _clamp_int(args.get("limit"), 8, 1, 20)
+    result = {**base, "mode": "search", "query": query, "terms": terms, "total_matches": len(candidates), "matches": candidates[:limit]}
+    if len(rows) <= RELEASE_NOTE_SMALL_CORPUS:
+        result["other_rows"] = [_release_note_row(*row) for row in unmatched]
+        result["note"] = (
+            f"The searched files hold only {len(rows)} rows, so the rows without a keyword match are in other_rows. "
+            "Release notes are often written in German and describe fields by business terms (e.g. 'Anteilige Zinsen', "
+            "'Einzelwertberichtigungen (EWB)'): judge other_rows by meaning, not only by keywords."
+        )
+    elif not candidates:
+        result["note"] = (
+            "No row contains these keywords. The notes may be in another language (often German) or use abbreviations: "
+            "retry with synonyms or a translation, or call search_release_notes without a query to list the rows."
+        )
+    if "other_rows" in result:
+        return result, _summary(
+            f"{len(candidates)} keyword matches · all {len(rows)} rows returned",
+            f"{len(candidates)} Stichworttreffer · alle {len(rows)} Zeilen geliefert",
+        )
+    return result, _summary(f"{len(candidates)} matching release-note rows", f"{len(candidates)} passende Release-Note-Zeilen")
+
+
+_ARTICLE_REFERENCE = re.compile(r"\b(?:article|artikel|art\.?)\s*(\d+[a-z]{0,3})\b", re.IGNORECASE)
+REGULATION_TOOLS = {"regulation_outline", "search_regulations", "read_regulation_article", "verify_regulation_quotes"}
+_ANNEX_IN_QUERY = re.compile(r"\b(?:annex|anhang)\s+([IVXLC]+[a-z]?)\b", re.IGNORECASE)
+_REGULATION_SEARCH_CACHE: Dict[str, Tuple[Any, Any]] = {}
+# Tool results are cut at MAX_TOOL_RESULT_CHARS, so regulation text is budgeted below it and long
+# articles continue with from_paragraph instead of being cut off mid-sentence.
+REGULATION_READ_BUDGET = 10000
+REGULATION_EXCERPT_CHARS = 900
+REGULATION_OUTLINE_BUDGET = 10000
+_FORMULA_WARNING = (
+    "This passage contains a formula typeset with symbols that PDF text extraction cannot read reliably; "
+    "check the formula on the PDF page before relying on it."
+)
+
+
+def _article_id(value: Any) -> str:
+    """'Article 111', 'Art. 111', 'artikel 114a' or '111' -> '111' / '114a'."""
+    text = str(value or "").strip()
+    match = _ARTICLE_REFERENCE.search(text) or re.fullmatch(r"(\d+[a-z]{0,3})", text, re.IGNORECASE)
+    return match.group(1).lower() if match else ""
+
+
+def _regulation_documents(sources: List[str], requested: Any) -> List[Dict[str, Any]]:
+    """Regulation PDFs a tool may read: the agent's selected sources, narrowed by the files argument."""
+    documents = _platform("list_regulation_documents")()
+    if not documents:
+        raise ToolError("No regulations have been uploaded yet. Upload regulation PDFs in the Regulations tab.")
+    if sources:
+        documents = [item for item in documents if str(item.get("id")) in set(sources)]
+        if not documents:
+            raise ToolError(
+                "None of the regulation files selected for this agent are available any more. "
+                "Tell the user to update the agent's regulation sources."
+            )
+    if isinstance(requested, str):
+        requested = [requested]
+    wanted = [str(item).strip().casefold() for item in (requested or []) if str(item).strip()]
+    if not wanted:
+        return documents
+    exact = [
+        item for item in documents
+        if str(item.get("id")).casefold() in wanted or str(item.get("filename") or "").strip().casefold() in wanted
+    ]
+    # "CRR" or "575_2013" is enough to pick a file when nothing matches exactly.
+    chosen = exact or [
+        item for item in documents
+        if any(term in str(item.get("filename") or "").casefold() or term in str(item.get("document_title") or "").casefold() for term in wanted)
+    ]
+    if not chosen:
+        available = ", ".join(repr(item.get("filename")) for item in documents)
+        raise ToolError(f"No regulation file matches {wanted}. Files this agent can read: {available}.")
+    return chosen
+
+
+def _regulation_index_for(document: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        return _platform("regulation_index")(document)
+    except Exception as exc:
+        raise ToolError(f"Regulation '{document.get('filename')}' cannot be read: {exc}.") from exc
+
+
+def _regulation_search_index(document: Dict[str, Any], index: Dict[str, Any]) -> Any:
+    key = str(document.get("id"))
+    cached = _REGULATION_SEARCH_CACHE.get(key)
+    if cached and cached[0] is index:
+        return cached[1]
+    search = regulation_text.SearchIndex(index)
+    _REGULATION_SEARCH_CACHE[key] = (index, search)
+    return search
+
+
+def _regulation_embeddings_for(document: Dict[str, Any]) -> Any:
+    try:
+        return _platform("regulation_embeddings")(document)
+    except Exception:
+        return None
+
+
+def _regulation_unit_filter(within: str, units: Optional[List[Dict[str, Any]]] = None) -> Optional[Callable[[Dict[str, Any]], bool]]:
+    """'TITLE II Standardised approach' or 'Exposures to institutions': every word must appear in the unit's
+    headings. Part/chapter/section headings are matched first, so 'Standardised approach' selects that chapter
+    rather than every article that mentions the approach in its title; titles are used when no heading matches."""
+    words = [word for word in re.split(r"[\s>—\-–]+", regulation_text.fold(within)) if word]
+    if not words:
+        return None
+
+    def contains(text: str) -> bool:
+        folded = regulation_text.fold(text)
+        return all(re.search(rf"(?<![a-z0-9]){re.escape(word)}(?![a-z0-9])", folded) for word in words)
+
+    phrase = " ".join(words)
+
+    def heading_title(element: str) -> str:
+        return " ".join(re.split(r"[\s—\-–]+", regulation_text.fold(element.split(" — ", 1)[-1]))).strip()
+
+    def by_heading(unit: Dict[str, Any]) -> bool:
+        return any(heading_title(element) == phrase for element in unit.get("path") or [])
+
+    def by_path(unit: Dict[str, Any]) -> bool:
+        return contains(" ".join(unit.get("path") or []))
+
+    def by_anything(unit: Dict[str, Any]) -> bool:
+        return contains(" ".join(unit.get("path") or []) + f" {unit['label']} {unit.get('title') or ''}")
+
+    # "Standardised approach" is the chapter of that name, not "Alternative standardised approach".
+    for candidate in (by_heading, by_path):
+        if units is not None and any(candidate(unit) for unit in units):
+            return candidate
+    return by_anything
+
+
+def _unit_part(unit: Dict[str, Any], levels: int = 2) -> Optional[str]:
+    return " > ".join((unit.get("path") or [])[-levels:]) or None
+
+
+def _unit_pages(unit: Dict[str, Any]) -> str:
+    return str(unit["page_start"]) if unit["page_start"] == unit["page_end"] else f"{unit['page_start']}-{unit['page_end']}"
+
+
+def _unit_hint(document: Dict[str, Any], index: Dict[str, Any], request: Dict[str, Any]) -> str:
+    name = document.get("filename")
+    units = index["units"]
+    if request["kind"] == "annex":
+        annexes = [unit["label"] for unit in units if unit["kind"] == "annex"]
+        return f"'{name}' has {', '.join(annexes) if annexes else 'no annexes'}."
+    if request["kind"] == "recitals":
+        return f"'{name}' has no recitals (consolidated texts usually drop them)."
+    numbers = [unit for unit in units if unit["kind"] == "article"]
+    if not numbers:
+        return f"'{name}' has no detected article headings."
+    target = regulation_text._article_key(request["number"] or "0")
+    nearest = sorted(numbers, key=lambda unit: abs(regulation_text._article_key(unit["number"])[0] - target[0]))[:4]
+    first, last = numbers[0]["number"], numbers[-1]["number"]
+    in_range = regulation_text._article_key(first) <= target <= regulation_text._article_key(last)
+    note = " It falls inside the document's numbering, so it was most likely deleted by an amendment." if in_range else ""
+    return (
+        f"'{name}' has no Article {request['number']} (articles {first}–{last}).{note} Nearest: "
+        + ", ".join(f"{unit['label']} ({unit.get('title') or 'untitled'})" for unit in nearest) + "."
+    )
+
+
+def _tool_regulation_outline(args: Dict[str, Any]) -> ToolResult:
+    documents = _regulation_documents(args.get("_regulation_sources") or [], args.get("files") or args.get("file"))
+    within = str(args.get("within") or "").strip()
+    depth = _clamp_int(args.get("depth"), 2, 1, 5)
+    results = []
+    errors = []
+    for document in documents:
+        try:
+            index = _regulation_index_for(document)
+        except ToolError as exc:
+            errors.append(str(exc))
+            continue
+        units = index["units"]
+        entry: Dict[str, Any] = {"document": document.get("filename"), "title": index.get("document_title")}
+        unit_filter = _regulation_unit_filter(within, units) if within else None
+        if unit_filter:
+            selected = [unit for unit in units if unit_filter(unit)]
+            entry["within"] = within
+            entry["total_units"] = len(selected)
+            listing = []
+            used = 0
+            for unit in selected:
+                item = {"unit": unit["label"], "title": unit.get("title"), "part": _unit_part(unit, 1), "pages": _unit_pages(unit)}
+                used += len(json.dumps(item, ensure_ascii=False))
+                if used > REGULATION_OUTLINE_BUDGET // max(1, len(documents)):
+                    break
+                listing.append(item)
+            entry["units"] = listing
+            if len(listing) < len(selected):
+                entry["truncated"] = f"Showing {len(listing)} of {len(selected)}; narrow 'within' to see the rest."
+        else:
+            nodes: Dict[Tuple[str, ...], Dict[str, Any]] = {}
+            for unit in units:
+                if unit["kind"] != "article":
+                    continue
+                key = tuple((unit.get("path") or [])[:depth])
+                node = nodes.setdefault(key, {"heading": " > ".join(key) or "(before the first heading)", "first": unit["label"], "count": 0, "page_start": unit["page_start"]})
+                node["last"] = unit["label"]
+                node["count"] += 1
+                node["page_end"] = unit["page_end"]
+            structure = []
+            used = 0
+            for node in nodes.values():
+                item = {
+                    "heading": node["heading"],
+                    "articles": node["first"] if node["first"] == node["last"] else f"{node['first']} – {node['last']}",
+                    "article_count": node["count"],
+                    "pages": f"{node['page_start']}-{node['page_end']}",
+                }
+                used += len(json.dumps(item, ensure_ascii=False))
+                if used > REGULATION_OUTLINE_BUDGET // max(1, len(documents)):
+                    entry["truncated"] = "Lower depth or pass within to see the rest."
+                    break
+                structure.append(item)
+            entry["structure"] = structure
+            entry["annexes"] = [
+                {"unit": unit["label"], "title": unit.get("title"), "pages": _unit_pages(unit)} for unit in units if unit["kind"] == "annex"
+            ]
+            quality = index.get("quality") or {}
+            entry["index"] = {
+                "articles": quality.get("articles"),
+                "first_article": quality.get("first_article"),
+                "last_article": quality.get("last_article"),
+                "article_numbers_absent": quality.get("article_number_gap_count"),
+                "pages": quality.get("page_count"),
+                "language": quality.get("language"),
+                "semantic_search": bool(document.get("semantic")),
+            }
+            entry["tip"] = "Pass within (e.g. 'Standardised approach' or 'TITLE II') to list the articles of a part with their titles."
+        results.append(entry)
+    if not results:
+        raise ToolError(" ".join(errors) or "No regulation could be read.")
+    total = sum(len(entry.get("units") or entry.get("structure") or []) for entry in results)
+    return {"documents": results, "unavailable": errors or None}, _summary(
+        f"Outline of {len(results)} regulation(s), {total} entries" + (f" within '{within}'" if within else ""),
+        f"Gliederung von {len(results)} Regulierung(en), {total} Einträge" + (f" in '{within}'" if within else ""),
+    )
+
+
+def _tool_search_regulations(args: Dict[str, Any]) -> ToolResult:
+    query = str(args.get("query") or "").strip()
+    meaning = str(args.get("meaning") or "").strip()
+    if not query and not meaning and not args.get("articles"):
+        return _tool_regulation_outline(args)  # nothing to search for: show the structure to browse instead
+    documents = _regulation_documents(args.get("_regulation_sources") or [], args.get("files"))
+    within = str(args.get("within") or "").strip()
+    requested = {_article_id(item) for item in (args.get("articles") or [])} | {m.lower() for m in _ARTICLE_REFERENCE.findall(query)}
+    requested.discard("")
+    annexes = {m.upper() for m in _ANNEX_IN_QUERY.findall(query)}
+    text_query = " ".join(filter(None, [_ANNEX_IN_QUERY.sub(" ", _ARTICLE_REFERENCE.sub(" ", query)).strip(), meaning]))
+
+    def asked(unit: Dict[str, Any]) -> bool:
+        return (unit["kind"] == "article" and str(unit.get("number") or "").lower() in requested) or (
+            unit["kind"] == "annex" and str(unit.get("number") or "").upper() in annexes
+        )
+
+    query_vector = None
+    vector_tried = False
+    semantic_files: List[str] = []
+    expansions: List[str] = []
+    groups: List[Tuple[Tuple[Dict[str, Any], Dict[str, Any]], Dict[int, Dict[str, Any]]]] = []
+    loaded: List[Tuple[Dict[str, Any], Dict[str, Any]]] = []
+    unavailable: List[str] = []
+    for document in documents:
+        try:
+            index = _regulation_index_for(document)
+        except ToolError as exc:
+            unavailable.append(str(exc))
+            continue
+        loaded.append((document, index))
+        if not text_query:
+            continue
+        embeddings = _regulation_embeddings_for(document)
+        if embeddings is not None and not vector_tried:
+            vector_tried = True
+            try:
+                query_vector = regulation_text.embed_query("\n".join(filter(None, [query, meaning])))
+            except Exception:
+                query_vector = None  # keyword search still works
+        if embeddings is not None and query_vector is not None:
+            semantic_files.append(str(document.get("filename")))
+        found, expansions = regulation_text.search_candidates(
+            index, _regulation_search_index(document, index), text_query, embeddings, query_vector
+        )
+        unit_filter = _regulation_unit_filter(within, index["units"]) if within else None
+        if unit_filter:
+            found = {i: signals for i, signals in found.items() if unit_filter(index["units"][index["passages"][i]["unit"]])}
+        groups.append(((document, index), found))
+
+    # Requested articles come first: their best-matching passages, else their opening passage.
+    candidates: List[Tuple[float, Dict[str, Any], Dict[str, Any], int, Dict[str, Any]]] = []
+    matched_units: set = set()
+    for (document, index), i, score, signals in regulation_text.fuse_candidates(groups):
+        unit_position = index["passages"][i]["unit"]
+        if asked(index["units"][unit_position]):
+            score += 0.5
+            matched_units.add((str(document.get("id")), unit_position))
+        candidates.append((score, document, index, i, signals))
+    for document, index in loaded:
+        for position, unit in enumerate(index["units"]):
+            if asked(unit) and (str(document.get("id")), position) not in matched_units:
+                first = next((i for i, p in enumerate(index["passages"]) if p["unit"] == position and p["kind"] != "footnote"), None)
+                if first is not None:
+                    candidates.append((1.0, document, index, first, {"requested": True}))
+    if not candidates:
+        if unavailable and len(unavailable) == len(documents):
+            raise ToolError(" ".join(unavailable))
+        return {
+            "query": query,
+            "within": within or None,
+            "searched_files": [item.get("filename") for item in documents],
+            "matches": [],
+            "note": "Nothing matched. Rephrase with the regulation's own terms, add a 'meaning', or browse with regulation_outline.",
+            "unavailable": unavailable or None,
+        }, _summary("No matching regulation passages", "Keine passenden Regulierungspassagen")
+
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    limit = _clamp_int(args.get("limit"), 8, 1, 20)
+    matches: List[Dict[str, Any]] = []
+    per_unit: Dict[Tuple[str, int], int] = {}
+    unit_order: List[Tuple[Dict[str, Any], Dict[str, Any]]] = []
+    for score, document, index, i, signals in candidates:
+        passage = index["passages"][i]
+        unit = index["units"][passage["unit"]]
+        key = (str(document.get("id")), passage["unit"])
+        if key not in per_unit:
+            per_unit[key] = 0
+            unit_order.append((document, unit))
+        if per_unit[key] >= 2 or len(matches) >= limit:
+            continue
+        per_unit[key] += 1
+        match: Dict[str, Any] = {
+            "document": document.get("filename"),
+            "reference": regulation_text.passage_reference(unit, passage),
+            "title": unit.get("title"),
+            "part": _unit_part(unit),
+            "page": regulation_text.page_label(passage),
+            "text": passage["text"][:REGULATION_EXCERPT_CHARS],
+        }
+        if len(passage["text"]) > REGULATION_EXCERPT_CHARS:
+            match["text_truncated"] = True
+        if passage.get("points"):
+            match["points"] = passage["points"]
+        if passage.get("context"):
+            match["context"] = passage["context"]
+        if passage["kind"] == "table":
+            match["kind"] = "table"
+        if passage.get("formula"):
+            match["formula_warning"] = _FORMULA_WARNING
+        if signals.get("requested"):
+            match["why"] = "requested article"
+        else:
+            match["why"] = {key: value for key, value in signals.items() if value is not None}
+        matches.append(match)
+    articles_to_read = [
+        {"document": document.get("filename"), "unit": unit["label"], "title": unit.get("title"), "part": _unit_part(unit)}
+        for document, unit in unit_order[:6]
+    ]
     return {
         "query": query,
-        "terms": terms,
-        "searched_files": [context.get("filename") for context in contexts],
-        "total_matches": len(candidates),
-        "matches": candidates[:limit],
-    }, _summary(f"{len(candidates)} matching release-note rows", f"{len(candidates)} passende Release-Note-Zeilen")
+        "meaning": meaning or None,
+        "within": within or None,
+        "searched_files": [item.get("filename") for item in documents],
+        "semantic_search": semantic_files or ("not needed (article lookup)" if not text_query else "off for these files (keyword search with synonyms only)"),
+        "expanded_terms": expansions[:12] or None,
+        "total_candidates": len(candidates),
+        "matches": matches,
+        "articles_to_read": articles_to_read,
+        "next_step": "Read the governing article in full with read_regulation_article before citing it; search results are excerpts.",
+        "unavailable": unavailable or None,
+    }, _summary(
+        f"{len(matches)} passages from {len(articles_to_read)} articles in {len(documents)} regulation file(s)",
+        f"{len(matches)} Passagen aus {len(articles_to_read)} Artikeln in {len(documents)} Regulierungsdatei(en)",
+    )
+
+
+def _tool_read_regulation_article(args: Dict[str, Any]) -> ToolResult:
+    raw = args.get("article")
+    request = regulation_text.parse_unit_request(raw)
+    if request is None:
+        raise ToolError("article is required, e.g. '111', 'Article 111(2)', 'Article 4(1)(39)' or 'Annex I'.")
+    paragraph = str(args.get("paragraph") or request["paragraph"] or "").strip() or None
+    point = str(args.get("point") or request["point"] or "").strip().lower().strip("()") or None
+    start_from = str(args.get("from_paragraph") or "").strip() or None
+    documents = _regulation_documents(args.get("_regulation_sources") or [], args.get("file") or args.get("files"))
+    results: List[Dict[str, Any]] = []
+    misses: List[str] = []
+    budget = REGULATION_READ_BUDGET
+    for document in documents:
+        try:
+            index = _regulation_index_for(document)
+        except ToolError as exc:
+            misses.append(str(exc))
+            continue
+        positions = regulation_text.find_units(index, request)
+        if not positions:
+            misses.append(_unit_hint(document, index, request))
+            continue
+        for position in positions:
+            unit = index["units"][position]
+            passages = [p for p in index["passages"] if p["unit"] == position and p["kind"] != "footnote"]
+            available = list(dict.fromkeys(str(p["paragraph"]) for p in passages if p.get("paragraph")))
+            selected = passages
+            if paragraph:
+                selected = [p for p in passages if str(p.get("paragraph") or "") == paragraph]
+                if not selected:
+                    misses.append(
+                        f"{unit['label']} in '{document.get('filename')}' has no paragraph {paragraph}"
+                        + (f"; its paragraphs are {', '.join(available)}." if available else " (it is not divided into numbered paragraphs).")
+                    )
+                    continue
+                if point:
+                    lead, rest = selected[:1], selected[1:]
+                    pointed = [p for p in rest if point in (p.get("points") or [])]
+                    if point not in (lead[0].get("points") or []) and not pointed:
+                        misses.append(f"{unit['label']}({paragraph}) has no point ({point}) in '{document.get('filename')}'.")
+                        continue
+                    selected = lead + pointed
+            elif start_from and start_from in available:
+                first = next(i for i, p in enumerate(passages) if str(p.get("paragraph") or "") == start_from)
+                selected = passages[first:]
+            blocks: List[Dict[str, Any]] = []
+            for passage in selected:
+                label = passage.get("paragraph") or (f"row {passage['group']}" if passage.get("group") else None)
+                pages = list(range(passage["page"], passage.get("page_end", passage["page"]) + 1))
+                if blocks and blocks[-1]["paragraph"] == label:
+                    joiner = "\n" if passage["kind"] == "table" or blocks[-1].get("_table") else " "
+                    blocks[-1]["text"] += joiner + passage["text"]
+                    blocks[-1]["pages"] = sorted(set(blocks[-1]["pages"]) | set(pages))
+                    blocks[-1]["_table"] = passage["kind"] == "table"
+                else:
+                    blocks.append({"paragraph": label, "pages": pages, "text": passage["text"], "_table": passage["kind"] == "table"})
+                if passage.get("formula"):
+                    blocks[-1]["formula_warning"] = _FORMULA_WARNING
+            shown: List[Dict[str, Any]] = []
+            next_paragraph = None
+            for block in blocks:
+                block.pop("_table", None)
+                if shown and len(block["text"]) > budget:
+                    next_paragraph = block["paragraph"]
+                    break
+                if len(block["text"]) > budget:
+                    block["text"] = block["text"][: max(budget, 2000)]
+                    block["text_truncated"] = True
+                budget -= len(block["text"])
+                shown.append(block)
+            text = " ".join(block["text"] for block in shown)
+            result: Dict[str, Any] = {
+                "document": document.get("filename"),
+                "unit": unit["label"] + (f"({paragraph})" if paragraph else "") + (f"({point})" if point else ""),
+                "title": unit.get("title"),
+                "part": _unit_part(unit, 5),
+                "pages": _unit_pages(unit),
+                "paragraphs": shown,
+                "references": regulation_text.references(" ".join(p["text"] for p in selected), unit["label"]),
+            }
+            amendments = sorted({p["amendment"] for p in selected if p.get("amendment")})
+            if amendments:
+                result["consolidation_markers"] = amendments
+            if not paragraph and available:
+                result["paragraphs_in_article"] = available
+            footnotes = [
+                {"footnote": p["footnote"], "page": p["page"], "text": p["text"][:300]}
+                for p in index["passages"]
+                if p["kind"] == "footnote" and p["unit"] == position and f"({p['footnote']})" in text
+            ][:6]
+            if footnotes:
+                result["footnotes"] = footnotes
+            if next_paragraph:
+                result["truncated"] = True
+                result["continue_with"] = {"article": unit["label"], "from_paragraph": next_paragraph}
+            results.append(result)
+            if budget <= 0:
+                break
+        if budget <= 0:
+            break
+    if not results:
+        raise ToolError(" ".join(misses) + " Use search_regulations or regulation_outline to find the right provision.")
+    labels = ", ".join(f"{item['unit']} ({item['document']})" for item in results)
+    return {"results": results, "not_found": misses or None}, _summary(f"Read {labels}", f"Gelesen: {labels}")
+
+
+_VERIFY_RANK = {"verified": 4, "wrong_paragraph": 3, "found_in_other_unit": 2, "paraphrased": 1, "not_found": 0}
+
+
+def _tool_verify_regulation_quotes(args: Dict[str, Any]) -> ToolResult:
+    quotes = args.get("quotes")
+    if isinstance(quotes, dict):
+        quotes = [quotes]
+    if not isinstance(quotes, list) or not quotes:
+        raise ToolError("quotes is required: a list of {quote, article} pairs, e.g. [{\"quote\": \"100 % for items in bucket 1\", \"article\": \"Article 111(2)\"}].")
+    if len(quotes) > 25:
+        raise ToolError("Verify at most 25 quotes per call.")
+    documents = _regulation_documents(args.get("_regulation_sources") or [], args.get("files"))
+    loaded = []
+    for document in documents:
+        try:
+            loaded.append((document, _regulation_index_for(document)))
+        except ToolError:
+            continue
+    if not loaded:
+        raise ToolError("None of the regulation files can be read yet.")
+    results = []
+    for item in quotes:
+        item = item if isinstance(item, dict) else {"quote": str(item)}
+        quote = str(item.get("quote") or "").strip().strip("\"“”‘’'")
+        cited = str(item.get("article") or item.get("citation") or "").strip()
+        wanted_file = str(item.get("file") or "").strip().casefold()
+        entry: Dict[str, Any] = {"quote": quote[:240], "cited": cited or None}
+        reference_only = re.fullmatch(
+            r"(?:(?:article|artikel|art\.?|annex|anhang|paragraph|point|absatz)\s*[\w()., -]*)", quote, re.IGNORECASE
+        ) and len(quote.split()) <= 6
+        if reference_only or len(quote) < 15 or len(quote.split()) < 4:
+            entry["status"] = "not_a_quote"
+            entry["note"] = (
+                "Put the regulation's own words in 'quote' (at least a phrase of four words) and the provision in 'article'; "
+                "a reference such as 'Article 111(2)' cannot be verified."
+            )
+            results.append(entry)
+            continue
+        request = regulation_text.parse_unit_request(cited) if cited else None
+        best: Optional[Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]] = None
+        for document, index in loaded:
+            if wanted_file and wanted_file not in str(document.get("filename") or "").casefold():
+                continue
+            positions = regulation_text.find_units(index, request) if request else []
+            outcome = regulation_text.verify_quote(index, quote, positions or None)
+            if outcome["status"] == "verified" and request and request.get("paragraph") and request["paragraph"] not in (outcome.get("paragraphs") or []):
+                outcome["status"] = "wrong_paragraph"
+            score = (_VERIFY_RANK.get(outcome["status"], 0), outcome.get("similarity", 1.0))
+            if best is None or score > (_VERIFY_RANK.get(best[2]["status"], 0), best[2].get("similarity", 1.0)):
+                best = (document, index, outcome)
+        if best is None:
+            entry["status"] = "not_found"
+            entry["note"] = "No selected regulation file matches the file given for this quote."
+            results.append(entry)
+            continue
+        document, index, outcome = best
+        entry["status"] = outcome["status"]
+        entry["document"] = document.get("filename")
+        unit_position = outcome.get("unit")
+        if unit_position is not None:
+            unit = index["units"][unit_position]
+            paragraphs = outcome.get("paragraphs") or []
+            entry["found_in"] = unit["label"] + (f"({paragraphs[0]})" if len(paragraphs) == 1 and unit["kind"] == "article" else "")
+        if outcome.get("pages"):
+            entry["pages"] = outcome["pages"]
+        if outcome["status"] == "found_in_other_unit":
+            entry["note"] = f"The text is in {entry.get('found_in')}, not in {cited}: correct the citation."
+        elif outcome["status"] == "wrong_paragraph":
+            entry["note"] = f"The text is in {entry.get('found_in')}, not in paragraph {request['paragraph']}: correct the citation."
+        elif outcome["status"] in ("paraphrased", "not_found"):
+            entry["similarity"] = outcome.get("similarity")
+            entry["closest_source_text"] = outcome.get("closest_text")
+            entry["note"] = (
+                "Not verbatim. Quote the source text exactly (closest_source_text) or present it as a paraphrase."
+                if outcome["status"] == "paraphrased" else
+                "Not found in the regulation. Do not present it as a quote; re-read the article and quote it exactly."
+            )
+        results.append(entry)
+    verified = sum(1 for entry in results if entry["status"] == "verified")
+    return {"verified": verified, "total": len(results), "results": results}, _summary(
+        f"{verified} of {len(results)} quotes verified",
+        f"{verified} von {len(results)} Zitaten bestätigt",
+    )
 
 
 _CALC_BINARY = {
@@ -1044,7 +1770,9 @@ TOOLS: Dict[str, ToolSpec] = {
         ),
         ToolSpec(
             "inspect_code", "Read code", "Code & lineage", "code",
-            "Read a transformation code file with line numbers and the list of columns it assigns and their inputs.",
+            "Read a transformation code file with line numbers, the columns it assigns and their inputs, its literal lookup tables "
+            "(category -> value, and which column they fill), and the effective value per category of chained lookups "
+            "(e.g. ProductType -> BalanceSheetType -> CCF).",
             {"type": "object", "properties": {"code_id": {"type": "string", "description": "Code id (or exact code file name)."}}, "required": ["code_id"]},
             _tool_inspect_code,
         ),
@@ -1063,11 +1791,12 @@ TOOLS: Dict[str, ToolSpec] = {
         ),
         ToolSpec(
             "search_release_notes", "Search release notes", "Evidence", "file-search",
-            "Search uploaded release notes (Excel workbooks and PDFs) for a field, position, topic or Jira id. Returns ranked rows (workbook rows, or PDF passages with their page) with Jira id, problem and solution descriptions.",
+            "Search uploaded release notes (Excel workbooks and PDFs) for a field, position, topic or Jira id. Returns ranked rows (workbook rows, or PDF passages with their page) with Jira id, problem and solution descriptions, plus each file's columns. "
+            "Call it without a query to list every release-note row. Small files are always returned in full (other_rows) because notes are often German and use business terms instead of column names.",
             {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string"},
+                    "query": {"type": "string", "description": "Keywords: field name, business term (also in German), position, Jira id or topic. Omit to list all rows."},
                     "files": {
                         "type": "array",
                         "items": {"type": "string"},
@@ -1075,9 +1804,90 @@ TOOLS: Dict[str, ToolSpec] = {
                     },
                     "limit": {"type": "integer", "description": "1-20, default 8."},
                 },
-                "required": ["query"],
+                "required": [],
             },
             _tool_search_release_notes,
+        ),
+        ToolSpec(
+            "regulation_outline", "Regulation outline", "Evidence", "list-tree",
+            "Show the structure of the uploaded regulation PDFs: parts, titles, chapters and sections with their article ranges, the annexes, "
+            "and index facts. With 'within' (heading words such as 'Standardised approach' or 'TITLE II') it lists every article of that part "
+            "with its title and pages. Use it to find the provisions that govern a topic the way an expert would, through the table of contents.",
+            {
+                "type": "object",
+                "properties": {
+                    "within": {"type": "string", "description": "Optional heading words; lists the articles whose part, chapter, section or title contains all of them."},
+                    "depth": {"type": "integer", "description": "1-5 heading levels in the overview (default 2: part and title)."},
+                    "files": {"type": "array", "items": {"type": "string"}, "description": "Optional regulation file names (or part of a name, e.g. 'CRR')."},
+                },
+                "required": [],
+            },
+            _tool_regulation_outline,
+        ),
+        ToolSpec(
+            "search_regulations", "Search regulations", "Evidence", "scale",
+            "Search the uploaded regulation PDFs (e.g. CRR, CRD, ITS) by keywords and meaning, in English or German. Returns paragraph-level "
+            "passages with document, exact reference (e.g. 'Article 111(2)'), article title, part of the regulation and page, plus the articles "
+            "worth reading in full. Dataset column names rarely appear in regulations: describe the provision in 'meaning' and narrow with 'within'. "
+            "Without a query it returns the outline.",
+            {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Keywords, a regulatory concept or an article/annex reference, e.g. 'risk weight unrated institutions' or 'Annex I'."},
+                    "meaning": {"type": "string", "description": "Optional one sentence in regulatory language describing what the provision says, e.g. 'the exposure value of an off-balance-sheet item is a percentage of its nominal value'. Strongly improves matching."},
+                    "within": {"type": "string", "description": "Optional heading words limiting the search to a part, e.g. 'Standardised approach'."},
+                    "articles": {"type": "array", "items": {"type": "string"}, "description": "Optional article numbers to favour, e.g. ['111', '114']."},
+                    "files": {"type": "array", "items": {"type": "string"}, "description": "Optional regulation file names (or part of a name, e.g. 'CRR') to search."},
+                    "limit": {"type": "integer", "description": "1-20 passages, default 8 (at most 2 per article)."},
+                },
+                "required": [],
+            },
+            _tool_search_regulations,
+        ),
+        ToolSpec(
+            "read_regulation_article", "Read regulation article", "Evidence", "book-open",
+            "Return the verbatim text of an article or annex of an uploaded regulation, paragraph by paragraph with pages, its title and place "
+            "in the regulation, the articles and annexes it refers to, and footnotes. Accepts 'Article 111', 'Article 111(2)', 'Article 4(1)(39)' "
+            "or 'Annex I'. Long articles continue with from_paragraph.",
+            {
+                "type": "object",
+                "properties": {
+                    "article": {"type": "string", "description": "Article or annex, e.g. '111', 'Article 111(2)', 'Article 4(1)(39)', 'Annex I'."},
+                    "paragraph": {"type": "string", "description": "Optional paragraph number to read only that paragraph."},
+                    "point": {"type": "string", "description": "Optional point within the paragraph, e.g. 'a' or '39'."},
+                    "from_paragraph": {"type": "string", "description": "Continue a long article from this paragraph (see continue_with)."},
+                    "file": {"type": "string", "description": "Optional regulation file name (or part of it) when several regulations are uploaded."},
+                },
+                "required": ["article"],
+            },
+            _tool_read_regulation_article,
+        ),
+        ToolSpec(
+            "verify_regulation_quotes", "Verify regulation quotes", "Evidence", "shield-check",
+            "Check quotes against the regulation text before answering: each quote is verified verbatim against the cited article "
+            "(whitespace, quote marks and dashes normalised; '...' separates fragments). Reports verified quotes with pages, quotes that "
+            "sit in a different article or paragraph than cited, and paraphrases or unsupported text with the closest source wording.",
+            {
+                "type": "object",
+                "properties": {
+                    "quotes": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "quote": {"type": "string", "description": "The regulation's exact words you will quote (not the article reference)."},
+                                "article": {"type": "string", "description": "Cited provision, e.g. 'Article 111(2)' or 'Annex I'."},
+                                "file": {"type": "string"},
+                            },
+                            "required": ["quote", "article"],
+                        },
+                        "description": "Up to 25 quotes with the provision each one is cited from.",
+                    },
+                    "files": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["quotes"],
+            },
+            _tool_verify_regulation_quotes,
         ),
         ToolSpec(
             "calculator", "Calculator", "Utilities", "calculator",
@@ -1165,6 +1975,10 @@ def normalize_definition(raw: Any) -> Dict[str, Any]:
         # Release-note file ids search_release_notes is limited to; empty means every uploaded file.
         "release_note_sources": [
             source for source in _clean_list(raw.get("release_note_sources"), 20, 64) if _ID_PATTERN.match(source)
+        ],
+        # Regulation PDF ids the regulation tools are limited to; empty means every uploaded regulation.
+        "regulation_sources": [
+            source for source in _clean_list(raw.get("regulation_sources"), 20, 64) if _ID_PATTERN.match(source)
         ],
     }
     if not definition["name"]:
@@ -1270,9 +2084,10 @@ TEMPLATES: List[Dict[str, Any]] = [
             "purpose": "Show which observed changes are expected by documented releases and which are not.",
             "instructions": (
                 "1. Get the changed columns and positions with compare_executions.\n"
-                "2. For each changed field, search_release_notes with the field name, then with the position context. If the user names specific release-note files, pass them in files.\n"
-                "3. Grade every candidate as supports / partially supports / unrelated, quoting the Jira id and solution description.\n"
-                "4. List changes with no documented release note as 'unexpected'."
+                "2. Call search_release_notes without a query to read every release-note row and the files' columns (Jira ID, problem and solution description). If the user names specific release-note files, pass them in files.\n"
+                "3. Match each changed field to the rows by meaning, not only by keyword: notes are often German and name fields by business terms (e.g. 'Anteilige Zinsen' affects Carrying Amount, 'Einzelwertberichtigungen (EWB)' is EWB). For large files, search per changed field with its name and German synonyms.\n"
+                "4. Grade every candidate as supports / partially supports / unrelated, quoting the Jira id and solution description.\n"
+                "5. List changes with no documented release note as 'unexpected'."
             ),
             "tools": ["workspace_overview", "list_executions", "compare_executions", "search_release_notes", "query_data"],
             "starters": [
@@ -1346,6 +2161,49 @@ TEMPLATES: List[Dict[str, Any]] = [
             "icon": "scale",
             "color": "rose",
             "max_steps": 10,
+            "temperature": 0.1,
+        },
+    },
+    {
+        "id": "regulatory-traceability",
+        "tagline": "Traces every calculated column back to the regulation article that governs it, and shows where the implementation deviates or inputs are missing.",
+        "definition": {
+            "name": "Regulatory Traceability Mapper",
+            "description": "Maps calculated columns, code and datasets to the articles of the uploaded regulations and checks they agree.",
+            "purpose": "Show auditors and supervisors the regulatory basis of every calculated number, and where the implementation departs from it.",
+            "instructions": (
+                "1. Fix the scope: use the pinned context, or workspace_overview to find the cluster, its dataset and code, and the uploaded regulations. Call regulation_outline to see how each regulation is structured.\n"
+                "2. With inspect_code, list the calculated columns (e.g. EAD, CCF, Risk Weight, RWA, Carrying Amount) with their formulas and line numbers; its lookup_tables and chained_lookups give the value the code assigns to every category (use effective_values for chains). Use trace_lineage to get the input fields.\n"
+                "3. Locate the governing provisions. Fixed values per category in the code (risk weights, CCFs) mean the standardised approach; PD/LGD formulas mean the IRB approach. Call regulation_outline with 'within' set to that part (e.g. 'Standardised approach'): its article titles name the exposure classes (e.g. 'Exposures to institutions', 'Exposures to corporates') and the exposure-value rules, so before reading, write down for every category the article whose title covers it (e.g. Sovereigns -> 'Exposures to central governments or central banks', Banks -> 'Exposures to institutions' and its rated/unrated variants, Corporates -> 'Exposures to corporates', off-balance-sheet items -> 'Exposure value' and the annex it refers to) and read every one of them. For anything the titles do not settle, call search_regulations with the regulatory concept, a 'meaning' sentence describing what the provision says and the same 'within' (dataset names rarely appear in regulations). Batch independent calls in one step.\n"
+                "4. Read every governing article in full with read_regulation_article, and the annexes and articles it refers to when the value is set there (e.g. Annex I classifies off-balance-sheet items into buckets; Article 111 sets each bucket's percentage). Then go through inspect_code's category_values one row at a time (e.g. CCF for ProductType=Guarantee, Risk Weight for Asset Class=Banks): find the provision that assigns a value to that exact category and compare it with the code value. Do not skip or merge rows; regulations classify by the original category, not by an intermediate one. For CCFs: on-balance-sheet items (e.g. loans, deposits, securities) are taken at their accounting value (in the CRR, Article 111(1)), so a conversion factor only applies to off-balance-sheet items, whose class follows from how the annex describes the item; when a category fits more than one class (e.g. a guarantee that may or may not be a credit substitute), rate it partially aligned and name the fact that decides it.\n"
+                "5. Re-compute each mapping on one or two real rows per category with query_data and the calculator, in both the dataset and the latest execution result.\n"
+                "6. Use profile_data to check whether input fields the provision depends on (e.g. exposure class, balance-sheet treatment, rating) are missing or empty.\n"
+                "7. Run verify_regulation_quotes on every quote you will put in the matrix, citing it as precisely as possible (e.g. 'Article 111(2)'), and correct or drop each quote that is not verified.\n"
+                "8. Answer with a traceability matrix with one row per calculated column and per lookup-table entry (column, category, code line, value in code, regulation · provision · page, value in regulation, status: aligned / partially aligned / deviation / no basis found, verbatim evidence), then deviations ranked by impact, gaps and recommended actions."
+            ),
+            "tools": [
+                "workspace_overview", "list_executions", "inspect_code", "trace_lineage", "query_data", "profile_data",
+                "regulation_outline", "search_regulations", "read_regulation_article", "verify_regulation_quotes", "calculator",
+            ],
+            "starters": [
+                "Map every calculated column of the reference cluster to the governing article in the uploaded regulations.",
+                "Is the risk weight mapping in the code consistent with the uploaded CRR?",
+                "Which inputs required by the regulation are missing in the pinned dataset?",
+                "Show the regulatory basis for the CCF values used in the code.",
+            ],
+            "guardrails": [
+                "Give the regulation file, provision (paragraph and point where the text has them, e.g. Article 111(2)(a)) and page for every mapping.",
+                "Quote the regulation verbatim and only quotes that verify_regulation_quotes has verified; mark anything else as a paraphrase.",
+                "Judge each category only against the provision whose title or wording covers it (e.g. Corporates -> 'Exposures to corporates'); never against another category's article.",
+                "Rate a mapping as aligned only when the formula or parameter is shown both in the code and in the regulation text.",
+                "Treat factors and percentages as the same value when comparing (1.0 = 100 %, 0.5 = 50 %, 0.2 = 20 %).",
+                "Write 'no basis found in the uploaded regulations' instead of citing from memory.",
+                "Separate findings proven on real rows from potential concerns.",
+            ],
+            "output_format": "Traceability matrix, one row per column and lookup-table entry (column, category, code line, code value, regulation · provision · page, regulation value, status, verified verbatim evidence); then deviations ranked by impact, gaps and recommended actions.",
+            "icon": "clipboard-check",
+            "color": "orange",
+            "max_steps": 12,
             "temperature": 0.1,
         },
     },
@@ -1427,9 +2285,10 @@ TEMPLATE_TRANSLATIONS: Dict[str, Dict[str, Dict[str, Any]]] = {
             "purpose": "Zeigen, welche beobachteten Veränderungen durch dokumentierte Releases erwartet sind und welche nicht.",
             "instructions": (
                 "1. Mit compare_executions die geänderten Spalten und Positionen ermitteln.\n"
-                "2. Für jedes geänderte Feld search_release_notes mit dem Feldnamen und anschließend mit dem Positionskontext ausführen. Nennt der Nutzer bestimmte Release-Note-Dateien, diese in files übergeben.\n"
-                "3. Jeden Kandidaten als unterstützt / teilweise unterstützt / ohne Bezug bewerten und Jira-ID sowie Lösungsbeschreibung zitieren.\n"
-                "4. Veränderungen ohne dokumentierte Release Note als „unerwartet“ auflisten."
+                "2. search_release_notes ohne query aufrufen, um alle Release-Note-Zeilen und die Spalten der Dateien (Jira-ID, Problem- und Lösungsbeschreibung) zu lesen. Nennt der Nutzer bestimmte Release-Note-Dateien, diese in files übergeben.\n"
+                "3. Jedes geänderte Feld inhaltlich und nicht nur per Stichwort den Zeilen zuordnen: Release Notes sind oft deutsch und nennen Felder mit Fachbegriffen (z. B. betreffen „Anteilige Zinsen“ den Carrying Amount, „Einzelwertberichtigungen (EWB)“ sind EWB). Bei großen Dateien je geändertem Feld mit Feldnamen und deutschen Synonymen suchen.\n"
+                "4. Jeden Kandidaten als unterstützt / teilweise unterstützt / ohne Bezug bewerten und Jira-ID sowie Lösungsbeschreibung zitieren.\n"
+                "5. Veränderungen ohne dokumentierte Release Note als „unerwartet“ auflisten."
             ),
             "starters": [
                 "Welche Veränderungen zwischen den fixierten Ausführungen sind in Release Notes dokumentiert?",
@@ -1483,6 +2342,38 @@ TEMPLATE_TRANSLATIONS: Dict[str, Dict[str, Dict[str, Any]]] = {
                 "Für jeden Befund Codezeilen zitieren.",
             ],
             "output_format": "Befundtabelle (Schweregrad, Zeile, Problem, Nachweis, Empfehlung), danach ein kurzes Fazit.",
+        },
+        "regulatory-traceability": {
+            "tagline": "Führt jede berechnete Spalte auf den Artikel zurück, der sie regelt – und zeigt, wo die Umsetzung abweicht oder Eingaben fehlen.",
+            "name": "Regulatorische Rückverfolgung",
+            "description": "Ordnet berechnete Spalten, Code und Datensätze den Artikeln der hochgeladenen Regulierungen zu und prüft ihre Übereinstimmung.",
+            "purpose": "Für Prüfer und Aufsicht belegen, auf welcher regulatorischen Grundlage jede berechnete Zahl beruht und wo die Umsetzung davon abweicht.",
+            "instructions": (
+                "1. Den Umfang festlegen: fixierten Kontext verwenden oder mit workspace_overview Cluster, Datensatz, Code und hochgeladene Regulierungen ermitteln. Mit regulation_outline den Aufbau jeder Regulierung ansehen.\n"
+                "2. Mit inspect_code die berechneten Spalten (z. B. EAD, CCF, Risk Weight, RWA, Carrying Amount) mit Formeln und Zeilennummern erfassen; lookup_tables und chained_lookups liefern den Wert, den der Code jeder Kategorie zuweist (bei Ketten effective_values verwenden). Mit trace_lineage die Eingabefelder bestimmen.\n"
+                "3. Die maßgeblichen Vorschriften finden. Feste Werte je Kategorie im Code (Risikogewichte, CCF) bedeuten den Standardansatz; PD/LGD-Formeln den IRB-Ansatz. regulation_outline mit 'within' für diesen Teil aufrufen (z. B. „Standardised approach“): Die Artikeltitel nennen die Forderungsklassen (z. B. „Exposures to institutions“, „Exposures to corporates“) und die Regeln zum Risikopositionswert; vor dem Lesen für jede Kategorie den Artikel notieren, dessen Titel sie abdeckt (z. B. Sovereigns -> „Exposures to central governments or central banks“, Banks -> „Exposures to institutions“ und die Varianten für Institute mit/ohne Rating, Corporates -> „Exposures to corporates“, außerbilanzielle Posten -> „Exposure value“ und der Anhang, auf den er verweist) und jeden davon lesen. Was die Titel nicht klären, mit search_regulations suchen: regulatorischer Begriff, ein Satz in 'meaning', der beschreibt, was die Vorschrift regelt, und dasselbe 'within' (Spaltennamen kommen in Regulierungen selten vor). Unabhängige Aufrufe in einem Schritt bündeln.\n"
+                "4. Jeden maßgeblichen Artikel mit read_regulation_article vollständig lesen, ebenso die Anhänge und Artikel, auf die er verweist, wenn der Wert dort festgelegt ist (z. B. ordnet Anhang I außerbilanzielle Posten Klassen zu; Artikel 111 legt den Prozentsatz je Klasse fest). Danach die category_values aus inspect_code Zeile für Zeile durchgehen (z. B. CCF für ProductType=Guarantee, Risk Weight für Asset Class=Banks): die Vorschrift finden, die genau dieser Kategorie einen Wert zuweist, und sie mit dem Codewert vergleichen. Keine Zeile auslassen oder zusammenfassen; Regulierungen klassifizieren nach der Ausgangskategorie, nicht nach einer Zwischenstufe. Zu CCF: Bilanzielle Posten (z. B. Kredite, Einlagen, Wertpapiere) werden mit ihrem Buchwert angesetzt (in der CRR Artikel 111(1)); ein Umrechnungsfaktor gilt nur für außerbilanzielle Posten, deren Klasse sich aus der Beschreibung des Postens im Anhang ergibt. Passt eine Kategorie in mehr als eine Klasse (z. B. eine Garantie, die ein Kreditsubstitut sein kann oder nicht), als teilweise übereinstimmend bewerten und die entscheidende Tatsache nennen.\n"
+                "5. Jede Zuordnung an ein bis zwei echten Zeilen je Kategorie mit query_data und dem calculator nachrechnen, sowohl im Datensatz als auch im letzten Ausführungsergebnis.\n"
+                "6. Mit profile_data prüfen, ob Eingabefelder, die die Vorschrift voraussetzt (z. B. Forderungsklasse, Bilanzierung, Rating), fehlen oder leer sind.\n"
+                "7. Jedes Zitat, das in die Matrix kommt, mit verify_regulation_quotes prüfen, möglichst genau zitiert (z. B. „Article 111(2)“), und jedes nicht bestätigte Zitat korrigieren oder streichen.\n"
+                "8. Antworten mit einer Rückverfolgungsmatrix mit einer Zeile je berechneter Spalte und je Eintrag einer Zuordnungstabelle (Spalte, Kategorie, Codezeile, Wert im Code, Regulierung · Vorschrift · Seite, Wert in der Regulierung, Status: übereinstimmend / teilweise / Abweichung / keine Grundlage gefunden, wörtlicher Nachweis), danach Abweichungen nach Auswirkung geordnet, Lücken und empfohlene Maßnahmen."
+            ),
+            "starters": [
+                "Ordne jede berechnete Spalte des Referenzclusters dem maßgeblichen Artikel der hochgeladenen Regulierungen zu.",
+                "Ist die Risikogewicht-Zuordnung im Code mit der hochgeladenen CRR vereinbar?",
+                "Welche vom Artikel geforderten Eingabefelder fehlen im fixierten Datensatz?",
+                "Zeige die regulatorische Grundlage der im Code verwendeten CCF-Werte.",
+            ],
+            "guardrails": [
+                "Für jede Zuordnung Regulierungsdatei, Vorschrift (Absatz und Buchstabe, wo der Text sie hat, z. B. Artikel 111(2)(a)) und Seite angeben.",
+                "Die Regulierung wörtlich zitieren und nur Zitate verwenden, die verify_regulation_quotes bestätigt hat; alles andere als Umschreibung kennzeichnen.",
+                "Jede Kategorie nur an der Vorschrift messen, deren Titel oder Wortlaut sie abdeckt (z. B. Corporates -> „Exposures to corporates“), nie am Artikel einer anderen Kategorie.",
+                "Eine Zuordnung nur dann als übereinstimmend bewerten, wenn Formel oder Parameter sowohl im Code als auch im Regulierungstext gezeigt sind.",
+                "„Keine Grundlage in den hochgeladenen Regulierungen gefunden“ schreiben, statt aus dem Gedächtnis zu zitieren.",
+                "Prüffeststellungen an echten Zeilen von bloßen Hinweisen trennen.",
+                "Faktoren und Prozentangaben beim Vergleich als gleichen Wert behandeln (1,0 = 100 %, 0,5 = 50 %, 0,2 = 20 %).",
+            ],
+            "output_format": "Rückverfolgungsmatrix, eine Zeile je Spalte und Zuordnungseintrag (Spalte, Kategorie, Codezeile, Wert im Code, Regulierung · Vorschrift · Seite, Wert in der Regulierung, Status, bestätigter wörtlicher Nachweis); danach Abweichungen nach Auswirkung, Lücken und empfohlene Maßnahmen.",
         },
     }
 }
@@ -1576,6 +2467,24 @@ def _release_note_scope_text(sources: List[str]) -> str:
     )
 
 
+def _regulation_scope_text(sources: List[str]) -> str:
+    try:
+        names = {str(item.get("id")): item.get("filename") for item in _platform("list_regulation_documents")()}
+    except Exception:
+        names = {}
+    files = [names[source] for source in sources if names.get(source)]
+    if not files:
+        return (
+            "Regulation scope: the regulation files selected for this agent are no longer available, so the "
+            "regulation tools will fail. Tell the user to choose the regulation sources again."
+        )
+    return (
+        "Regulation scope: the agent designer limited the regulation tools to these files: "
+        + ", ".join(f"'{name}'" for name in files)
+        + ". Only cite regulations from these files."
+    )
+
+
 def build_system_prompt(definition: Dict[str, Any], language: str = "en") -> str:
     enabled = [TOOLS[name] for name in definition["tools"] if name in TOOLS]
     sections = [
@@ -1603,6 +2512,23 @@ def build_system_prompt(definition: Dict[str, Any], language: str = "en") -> str
         sections.append("You have no tools. Answer from the conversation only and say when data would be needed.")
     if definition.get("release_note_sources") and "search_release_notes" in definition["tools"]:
         sections.append(_release_note_scope_text(definition["release_note_sources"]))
+    regulation_tools = REGULATION_TOOLS & set(definition["tools"])
+    if regulation_tools:
+        if definition.get("regulation_sources"):
+            sections.append(_regulation_scope_text(definition["regulation_sources"]))
+        rules = (
+            "Regulation rules: state what a regulation requires only from text returned by the regulation tools, citing document, "
+            "provision as precisely as the text allows (e.g. 'Article 111(2)(a)') and page. Quote verbatim; never quote or paraphrase a "
+            "regulation from memory as if it came from the uploaded documents. Search results are excerpts: read the governing article "
+            "before relying on it. If the uploaded regulations do not cover a point, say so. A passage with a formula_warning must be "
+            "checked on the PDF page."
+        )
+        if "verify_regulation_quotes" in regulation_tools:
+            rules += (
+                " Before the final answer, run verify_regulation_quotes on every quote you will present and fix each one that is not "
+                "'verified' (correct the citation, quote the closest source text exactly, or drop the quote)."
+            )
+        sections.append(rules)
     sections.append(
         "Non-negotiable operating rules:\n"
         "- Never invent ids, values, rows, formulas or Jira tickets. Every number you state must come from a tool result or the calculator.\n"
@@ -1685,6 +2611,7 @@ def _execute_tool(
     raw_arguments: str,
     allowed: set,
     release_note_sources: Optional[List[str]] = None,
+    regulation_sources: Optional[List[str]] = None,
 ) -> Tuple[Dict[str, Any], Any]:
     """Run a tool; returns (payload for the model, summary as a str or {en, de} dict)."""
     try:
@@ -1702,6 +2629,8 @@ def _execute_tool(
     arguments = {key: value for key, value in arguments.items() if not str(key).startswith("_")}
     if name == "search_release_notes":
         arguments["_release_note_sources"] = list(release_note_sources or [])
+    if name in REGULATION_TOOLS:
+        arguments["_regulation_sources"] = list(regulation_sources or [])
     try:
         data, summary = TOOLS[name].handler(arguments)
         return {"ok": True, "result": _safe(data)}, summary
@@ -1720,6 +2649,239 @@ def _parse_arguments(raw: str) -> Dict[str, Any]:
         return value if isinstance(value, dict) else {}
     except json.JSONDecodeError:
         return {}
+
+
+# Automatic quote check: every quote an answer attributes to a regulation provision is verified against
+# the uploaded text before the answer is final, whatever the model did on its own.
+_ANSWER_QUOTE = re.compile(r"[“\"„]([^“”\"„\n]{20,700})[”\"“]")
+_ANSWER_CITATION = re.compile(
+    r"\b(?:Article|Artikel|Art\.)\s*\d{1,4}[a-z]{0,3}(?:\s*\(\s*\d{1,3}[a-z]?\s*\))?(?:\s*\(\s*[a-z0-9]{1,4}\s*\))?"
+    r"|\b(?:Annex|Anhang)\s+[IVXLC]+\b"
+)
+_PARAPHRASE_MARK = re.compile(r"paraphras|sinngemäß|umschreib|summar|zusammengefasst", re.IGNORECASE)
+QUOTE_AUDIT_LIMIT = 25
+
+
+def _answer_quotes(text: str) -> List[Dict[str, str]]:
+    """Quotes in an answer that are attributed to a regulation provision on the same line (sentence or
+    table row). Quotes marked as paraphrases, and quotes without a provision, are not audited."""
+    found: List[Dict[str, str]] = []
+    seen: set = set()
+    for line in text.splitlines():
+        for match in _ANSWER_QUOTE.finditer(line):
+            quote = match.group(1).strip()
+            if len(quote.split()) < 4 or _PARAPHRASE_MARK.search(line[max(0, match.start() - 40):match.start()]):
+                continue
+            before = list(_ANSWER_CITATION.finditer(line[:match.start()]))
+            after = _ANSWER_CITATION.search(line[match.end():])
+            citation = before[-1].group(0) if before else (after.group(0) if after else None)
+            if not citation or (quote, citation) in seen:
+                continue
+            seen.add((quote, citation))
+            found.append({"quote": quote, "article": citation})
+    return found[:QUOTE_AUDIT_LIMIT]
+
+
+def _audit_answer_quotes(text: str, definition: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if not (REGULATION_TOOLS & set(definition.get("tools") or [])):
+        return None
+    quotes = _answer_quotes(text)
+    if not quotes:
+        return None
+    payload, _ = _execute_tool(
+        "verify_regulation_quotes", json.dumps({"quotes": quotes}), {"verify_regulation_quotes"},
+        None, definition.get("regulation_sources"),
+    )
+    return payload.get("result") if payload.get("ok") else None
+
+
+def _markdown_tables(text: str) -> List[List[List[str]]]:
+    tables: List[List[List[str]]] = []
+    current: List[List[str]] = []
+    for line in text.splitlines() + [""]:
+        stripped = line.strip()
+        if stripped.startswith("|") and stripped.count("|") >= 3:
+            cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+            if not all(re.fullmatch(r":?-{2,}:?", cell) for cell in cells if cell):
+                current.append(cells)
+        elif current:
+            tables.append(current)
+            current = []
+    return tables
+
+
+def _column(headers: List[str], pattern: str, exclude: Tuple[int, ...] = ()) -> Optional[int]:
+    for position, header in enumerate(headers):
+        if position not in exclude and re.search(pattern, header, re.IGNORECASE):
+            return position
+    return None
+
+
+def _matrix_value(cell: str) -> Optional[float]:
+    """'0.2', '20 %', '20%', '1,0' -> fraction; None when the cell holds no single value."""
+    match = re.search(r"(-?\d+(?:[.,]\d+)?)\s*(%)?", cell or "")
+    if not match:
+        return None
+    value = float(match.group(1).replace(",", "."))
+    return value / 100 if match.group(2) or value > 1.5 else value
+
+
+def _matrix_status(cell: str) -> str:
+    text = regulation_text.fold(cell)
+    if re.search(r"partial|teilweise", text):
+        return "partial"
+    if re.search(r"deviat|abweich|not aligned|misaligned|nicht", text):
+        return "deviation"
+    if re.search(r"no basis|keine grundlage", text):
+        return "no_basis"
+    if re.search(r"aligned|ubereinstimm|übereinstimm|konform|compliant", text):
+        return "aligned"
+    return "other"
+
+
+def _audit_matrix(text: str, definition: Dict[str, Any]) -> List[str]:
+    """Deterministic consistency checks of a traceability matrix in the answer: status against the two values,
+    the claimed regulation value against the quoted text, the cited article's title against the category, and
+    categories that a referenced annex places in more than one class."""
+    if not (REGULATION_TOOLS & set(definition.get("tools") or [])):
+        return []
+    try:
+        loaded = [
+            (document, _regulation_index_for(document))
+            for document in _regulation_documents(definition.get("regulation_sources") or [], None)
+        ]
+    except ToolError:
+        loaded = []
+    issues: List[str] = []
+    for table in _markdown_tables(text):
+        headers = [regulation_text.fold(cell) for cell in table[0]]
+        category = _column(headers, r"categor|kategorie")
+        status = _column(headers, r"^status|bewertung")
+        regulation_value = _column(headers, r"regulation value|value in (the )?regulation|regulatory value|wert in der regulierung|regulierungswert")
+        code_value = _column(headers, r"code value|value in code|wert im code|codewert")
+        provision = _column(headers, r"provision|vorschrift|article|artikel|fundstelle|regulation|regulierung", exclude=tuple(
+            position for position in (regulation_value, code_value) if position is not None
+        ))
+        evidence = _column(headers, r"evidence|nachweis|quote|zitat|beleg")
+        if category is None or status is None:
+            continue
+        for row in table[1:]:
+            if len(row) < len(table[0]):
+                continue
+            name = row[category]
+            label = f"row '{name}'" + (f" ({row[0]})" if row[0] and row[0] != name else "")
+            state = _matrix_status(row[status])
+            code = _matrix_value(row[code_value]) if code_value is not None else None
+            claimed = _matrix_value(row[regulation_value]) if regulation_value is not None else None
+            if state in ("aligned", "partial", "deviation") and regulation_value is not None and claimed is None:
+                issues.append(
+                    f"{label}: status '{row[status]}' needs the value the regulation sets, but none is given ({row[regulation_value] or 'empty'}); "
+                    "quote the provision that sets it, or rate the row 'no basis found'."
+                )
+            if state == "aligned" and code is not None and claimed is not None and abs(code - claimed) > 1e-9:
+                issues.append(f"{label}: marked aligned, but the code value ({row[code_value]}) differs from the regulation value ({row[regulation_value]}).")
+            quoted = row[evidence] if evidence is not None else ""
+            percentages = {float(m.replace(",", ".")) / 100 for m in re.findall(r"(\d+(?:[.,]\d+)?)\s*%", quoted)}
+            if claimed is not None and percentages and all(abs(claimed - value) > 1e-9 for value in percentages):
+                shown = ", ".join(f"{value * 100:g} %" for value in sorted(percentages))
+                issues.append(f"{label}: the regulation value {row[regulation_value]} is not what the quoted text states ({shown}).")
+            if provision is None or not loaded:
+                continue
+            reference = _ANSWER_CITATION.search(row[provision]) or _ANSWER_CITATION.search(quoted)
+            request = regulation_text.parse_unit_request(reference.group(0)) if reference else None
+            if not request:
+                continue
+            for _, index in loaded:
+                positions = regulation_text.find_units(index, request)
+                if not positions:
+                    continue
+                unit = index["units"][positions[0]]
+                wanted = regulation_text.exposure_classes(name)
+                covered = regulation_text.exposure_classes(unit.get("title") or "")
+                if wanted and covered and not wanted & covered:
+                    issues.append(
+                        f"{label}: {unit['label']} ('{unit.get('title')}') does not cover this category; cite the article whose title covers it."
+                    )
+                if state == "aligned":
+                    stems = set(regulation_text.tokens(name))
+                    # Data names the item ("Limit"); the annex uses regulatory words ("commitments", "credit lines").
+                    phrases = [
+                        regulation_text.fold(phrase)
+                        for group in regulation_text.GLOSSARY
+                        if any(regulation_text._phrase_in(phrase, regulation_text.fold(name), set(regulation_text._words(name))) for phrase in group)
+                        for phrase in group
+                        if len(phrase) > 4
+                    ]
+                    annexes = [unit] if unit["kind"] == "annex" else []
+                    for referenced in regulation_text.references(regulation_text.unit_text(index, positions[0]), unit["label"]):
+                        if referenced.startswith("Annex"):
+                            annexes += [index["units"][i] for i in regulation_text.find_units(index, regulation_text.parse_unit_request(referenced))]
+                    for annex in annexes:
+                        annex_position = index["units"].index(annex)
+                        groups = sorted({
+                            p["group"] for p in index["passages"]
+                            if p["unit"] == annex_position and p.get("group") and (
+                                stems & set(regulation_text.tokens(p["text"]))
+                                or any(phrase in regulation_text.fold(p["text"]) for phrase in phrases)
+                            )
+                        }, key=lambda value: (len(value), value))
+                        if stems and len(groups) > 1:
+                            issues.append(
+                                f"{label}: {annex['label']} describes '{name}' items in rows {', '.join(groups)}, which carry different values; "
+                                "state which row applies and why, or rate the mapping partially aligned."
+                            )
+                break
+    return list(dict.fromkeys(issues))[:12]
+
+
+def _quote_audit_feedback(audit: Optional[Dict[str, Any]], issues: List[str]) -> str:
+    lines = ["[Automatic check by the platform, not a message from the user]"]
+    failed = [item for item in (audit or {}).get("results", []) if item["status"] != "verified"]
+    if failed:
+        lines.append("Some quotes in your answer do not match the regulation text they are attributed to:")
+    for item in failed:
+        line = f"- \"{item['quote'][:200]}\" (cited: {item.get('cited')}) -> {item['status']}"
+        if item.get("found_in"):
+            line += f"; the text is in {item['found_in']}"
+        if item.get("closest_source_text"):
+            line += f"; closest source text: \"{item['closest_source_text'][:300]}\""
+        lines.append(line)
+    if issues:
+        lines.append("The traceability matrix contradicts itself or the regulation:")
+        lines.extend(f"- {issue}" for issue in issues)
+    lines.append(
+        "Return the complete corrected answer: quote the source wording exactly with the correct provision (or mark it as a "
+        "paraphrase), cite for each category the article that covers it, and make every status follow from the values. "
+        "You may read the provisions again first."
+    )
+    return "\n".join(lines)
+
+
+def _quote_audit_footer(audit: Optional[Dict[str, Any]], language: str) -> str:
+    if not audit or not audit.get("total"):
+        return ""
+    verified, total = audit["verified"], audit["total"]
+    if verified == total:
+        return (
+            f"\n\n---\n✓ Zitatprüfung: alle {total} Regulierungszitate wurden wörtlich am hochgeladenen Text bestätigt."
+            if language == "de"
+            else f"\n\n---\n✓ Quote check: all {total} regulation quotes were verified word for word against the uploaded text."
+        )
+    failed = [item for item in audit["results"] if item["status"] != "verified"]
+    details = "; ".join(
+        f"“{item['quote'][:120]}” ({item.get('cited')})" + (f" → {item['found_in']}" if item.get("found_in") and item["status"] != "not_found" else "")
+        for item in failed[:5]
+    )
+    if language == "de":
+        return f"\n\n---\n⚠ Zitatprüfung: {verified} von {total} Regulierungszitaten bestätigt. Nicht bestätigt: {details}. Diese Stellen vor Verwendung im PDF prüfen."
+    return f"\n\n---\n⚠ Quote check: {verified} of {total} regulation quotes verified. Not verified: {details}. Check these against the PDF before relying on them."
+
+
+def _matrix_audit_footer(issues: List[str], language: str) -> str:
+    if not issues:
+        return ""
+    heading = "⚠ Konsistenzprüfung – bitte vor Verwendung klären:" if language == "de" else "⚠ Consistency check – resolve before relying on these rows:"
+    return "\n\n" + heading + "\n" + "\n".join(f"- {issue}" for issue in issues)
 
 
 def run_turn(
@@ -1779,6 +2941,7 @@ def run_turn(
         allowed = set(definition["tools"])
         schemas = [TOOLS[name].schema() for name in definition["tools"] if name in TOOLS]
         max_steps = definition["max_steps"]
+        quote_check_done = False
 
         for iteration in range(max_steps + 1):
             request: Dict[str, Any] = {
@@ -1820,7 +2983,42 @@ def run_turn(
 
             text = "".join(live_text)
             if not calls:
-                assistant_entry["content"] = text.strip()
+                answer = text.strip()
+                audit = _audit_answer_quotes(answer, definition)
+                issues = _audit_matrix(answer, definition)
+                quotes_failed = bool(audit) and audit["verified"] < audit["total"]
+                if (quotes_failed or issues) and not quote_check_done and iteration < max_steps:
+                    # Show the draft in the work log, check its quotes, and let the agent correct them once.
+                    quote_check_done = True
+                    step = {
+                        "kind": "tool",
+                        "id": f"quote_check_{uuid.uuid4().hex[:8]}",
+                        "tool": "verify_regulation_quotes",
+                        "label": "Automatische Zitat- und Konsistenzprüfung" if language == "de" else "Automatic quote and consistency check",
+                        "arguments": {"quotes": (audit or {}).get("total", 0), "matrix_issues": len(issues)},
+                        "status": "running",
+                    }
+                    yield {"type": "step_start", "step": dict(step)}
+                    assistant_entry["timeline"].append({"kind": "note", "text": answer})
+                    verified, total = (audit or {}).get("verified", 0), (audit or {}).get("total", 0)
+                    preview = json.dumps({"quotes": audit, "matrix_issues": issues}, ensure_ascii=False, indent=2, default=str)
+                    step.update({
+                        "status": "ok",
+                        "summary": (
+                            f"{verified} von {total} Zitaten bestätigt · {len(issues)} Widersprüche – zur Korrektur zurückgegeben"
+                            if language == "de"
+                            else f"{verified} of {total} quotes verified · {len(issues)} inconsistencies – sent back for correction"
+                        ),
+                        "preview": preview[:MAX_STEP_PREVIEW_CHARS] + ("\n…" if len(preview) > MAX_STEP_PREVIEW_CHARS else ""),
+                        "duration_ms": 0,
+                    })
+                    assistant_entry["timeline"].append(step)
+                    yield {"type": "step_end", "step": dict(step)}
+                    live_text = []
+                    llm_messages.append({"role": "assistant", "content": answer})
+                    llm_messages.append({"role": "user", "content": _quote_audit_feedback(audit, issues)})
+                    continue
+                assistant_entry["content"] = answer + _quote_audit_footer(audit, language) + _matrix_audit_footer(issues, language)
                 break
 
             if text.strip():
@@ -1850,7 +3048,8 @@ def run_turn(
                 yield {"type": "step_start", "step": dict(step)}
                 step_started = time.monotonic()
                 payload, summary = _execute_tool(
-                    call["name"], call["arguments"], allowed, definition.get("release_note_sources")
+                    call["name"], call["arguments"], allowed,
+                    definition.get("release_note_sources"), definition.get("regulation_sources"),
                 )
                 result_text = json.dumps(payload, ensure_ascii=False, default=str)
                 if len(result_text) > MAX_TOOL_RESULT_CHARS:
@@ -2036,6 +3235,7 @@ def generate_agent(request: GeneratePayload):
             }
             # File choices are made by the user in the editor; a refinement keeps them.
             raw["release_note_sources"] = request.base_definition.get("release_note_sources") or []
+            raw["regulation_sources"] = request.base_definition.get("regulation_sources") or []
         definition = normalize_definition(raw)
         if not definition["tools"]:
             definition["tools"] = list(DEFAULT_TOOLS)

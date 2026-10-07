@@ -4,7 +4,7 @@
  */
 import type { StudioLocale } from "../i18n";
 
-export const TOUR_TEMPLATE_ID = "release-note-matcher";
+export const TOUR_TEMPLATE_ID = "regulatory-traceability";
 
 export type DeckScreen = "language" | "welcome" | "how" | "anatomy" | "tools" | "trust" | "ready";
 export const DECK_SCREENS: DeckScreen[] = ["language", "welcome", "how", "anatomy", "tools", "trust", "ready"];
@@ -25,7 +25,7 @@ export type TourStepId =
   | "refine"
   | "procedure"
   | "tools"
-  | "sources"
+  | "regulationSources"
   | "saveBar"
   | "testBench"
   | "pinContext"
@@ -57,7 +57,7 @@ export const TOUR_STEPS: TourStepDef[] = [
   { id: "refine", view: "workbench", target: "refine" },
   { id: "procedure", view: "workbench", target: "procedure" },
   { id: "tools", view: "workbench", target: "tools" },
-  { id: "sources", view: "workbench", target: "sources" },
+  { id: "regulationSources", view: "workbench", target: "regulation-sources" },
   { id: "saveBar", view: "workbench", target: "save-bar" },
   { id: "testBench", view: "workbench", target: "test-bench" },
   { id: "pinContext", view: "workbench", target: "pin-context" },
@@ -121,7 +121,7 @@ const EN: OnboardingCopy = {
     wellDone: "Well done — continuing…",
     stepOf: "Step {n} of {total}",
     keyboard: "← → to navigate · Esc to leave",
-    chapters: ["Language", "Welcome", "How it works", "Building blocks", "The ten tools", "Trust & safety", "Hands-on"],
+    chapters: ["Language", "Welcome", "How it works", "Building blocks", "The fourteen tools", "Trust & safety", "Hands-on"],
     minutes: "About 8 minutes",
   },
   language: {
@@ -145,7 +145,7 @@ const EN: OnboardingCopy = {
     learn: [
       "How an agent works, from your question to its answer",
       "The eight building blocks every agent is made of",
-      "The ten tools agents can use, and what each one does",
+      "The fourteen tools agents can use, and what each one does",
       "The safety rules every agent follows",
       "Hands-on: create, test and save your first agent",
     ],
@@ -248,12 +248,12 @@ const EN: OnboardingCopy = {
   },
   tools: {
     eyebrow: "Chapter 3 · Tools",
-    title: "The ten tools",
+    title: "The fourteen tools",
     intro: "Tools are how an agent sees your workspace. All of them are read-only: they can read and calculate, but never change, delete or upload anything. Select a tool to see an example call.",
     exampleLabel: "Example call",
     items: {
       workspace_overview: {
-        text: "Lists everything that exists: datasets with their tables and columns, code files, clusters with their latest run, and uploaded release-note workbooks. Agents call it first to find the right IDs.",
+        text: "Lists everything that exists: datasets with their tables and columns, code files, clusters with their latest run, uploaded release notes and uploaded regulations. Agents call it first to find the right IDs.",
         call: "workspace_overview()",
         result: "2 datasets, 2 code files, 2 clusters, 1 release-note workbook",
       },
@@ -293,9 +293,29 @@ const EN: OnboardingCopy = {
         result: "4 upstream, 0 downstream fields",
       },
       search_release_notes: {
-        text: "Searches uploaded release-note workbooks for a field, position, topic or Jira ID and returns the Jira ID with its problem and solution description.",
+        text: "Searches uploaded release notes (Excel workbooks and PDFs) for a field, position, topic or Jira ID and returns the Jira ID with its problem and solution description.",
         call: "search_release_notes(\"Carrying Amount\")",
         result: "Jira 112752 · 1 matching release-note row",
+      },
+      regulation_outline: {
+        text: "Shows how an uploaded regulation is structured — parts, titles, chapters and sections with their articles, and the annexes — so the agent finds the governing provisions through the table of contents, like an expert would.",
+        call: "regulation_outline(within: \"Standardised approach Risk weights\")",
+        result: "48 articles · Article 114 Exposures to central governments … Article 134",
+      },
+      search_regulations: {
+        text: "Searches the regulation PDFs uploaded in the Regulations tab by keywords and meaning, in English or German, and returns paragraph-level passages with document, exact reference and page.",
+        call: "search_regulations(\"risk weight unrated institutions\", within: \"Standardised approach\")",
+        result: "CRR · Article 121(3) · page 176",
+      },
+      read_regulation_article: {
+        text: "Returns an article or annex word for word, paragraph by paragraph with pages, its place in the regulation and the provisions it refers to, so the agent can quote it and compare it with the code.",
+        call: "read_regulation_article(\"Article 111(2)\")",
+        result: "Article 111(2) Exposure value · page 163 · refers to Annex I",
+      },
+      verify_regulation_quotes: {
+        text: "Checks every quote against the regulation text before the answer is shown: verbatim and in the cited article and paragraph, or flagged with the closest source wording.",
+        call: "verify_regulation_quotes([\"100 % for items in bucket 1\" → Article 111(2)])",
+        result: "1 of 1 quotes verified · page 163",
       },
       calculator: {
         text: "Evaluates arithmetic exactly, so differences and percentages are never estimated. Agents use it whenever numbers are compared or summed.",
@@ -328,10 +348,10 @@ const EN: OnboardingCopy = {
     checklistTitle: "In the tour you will",
     checklist: [
       "Find your way around the studio",
-      "Pick the Release Note Matcher and read its blueprint",
+      "Pick the Regulatory Traceability Mapper and read its blueprint",
       "Open it in the editor",
-      "Explore every section of the editor, including which release-note files it may search",
-      "Learn how to test, pin context and read a run",
+      "Explore every section of the editor, including which regulation PDFs it may read",
+      "Learn how to test, pin a cluster and read a run, including the automatic quote check",
       "Know how to save it to your library",
     ],
   },
@@ -366,7 +386,7 @@ const EN: OnboardingCopy = {
       title: "Choose a foundation",
       body: [
         "A foundation is your starting point. “Blank canvas” means the designer writes a completely new agent from your own description.",
-        "The six templates are ready-made agents for common regulatory tasks. Each card shows how many procedure steps and tools it has.",
+        "The seven templates are ready-made agents for common regulatory tasks. Each card shows how many procedure steps and tools it has.",
         "Selecting a card does not create anything yet — it only loads its blueprint further down.",
       ],
     },
@@ -374,16 +394,17 @@ const EN: OnboardingCopy = {
       chapter: "Stage 1 · Foundation",
       title: "Select a template",
       body: [
-        "We will use the Release Note Matcher. It checks which changes between two runs are documented in your uploaded release notes — Excel workbooks or PDFs — and flags the changes no release announced.",
+        "We will use the Regulatory Traceability Mapper. It traces every calculated column of a cluster — such as EAD, CCF, Risk Weight and RWA — back to the provision of your uploaded regulation that governs it, compares the code's values with the regulation text and shows where the implementation deviates or inputs are missing.",
+        "It reads the regulation PDFs uploaded in the Regulations tab, for example the CRR. Upload at least one there and wait until its indexing has finished before you test the agent.",
       ],
-      action: "Click the highlighted Release Note Matcher card.",
+      action: "Click the highlighted Regulatory Traceability Mapper card.",
     },
     blueprint: {
       chapter: "Stage 2 · Brief",
       title: "Read the blueprint",
       body: [
         "The blueprint previews exactly what the template contains: its purpose, its numbered procedure and the tools it is allowed to use.",
-        "The Release Note Matcher works in four steps: find what changed with compare_executions, search the release notes for every changed field with search_release_notes, grade each candidate as supporting, partially supporting or unrelated, and list the unexpected changes.",
+        "The Regulatory Traceability Mapper works in eight steps: fix the scope and look at the regulation's outline; read the code's formulas and lookup tables; find the governing article for every category; read those articles word for word, including the annexes they refer to; recompute each mapping on real rows; check that the inputs the regulation needs are filled; verify every quote; and answer with a traceability matrix.",
       ],
     },
     brief: {
@@ -391,7 +412,7 @@ const EN: OnboardingCopy = {
       title: "Describe or tailor",
       body: [
         "With a template selected you have two options. “Use as-is” opens the template unchanged.",
-        "“Tailor with AI” rewrites the template around what you type here — for example “Only grade changes to Carrying Amount and answer in German”. The suggestions under the box are ready-made tailoring ideas.",
+        "“Tailor with AI” rewrites the template around what you type here — for example “Only map the Risk Weight column” or “Add the regulation's paragraph and point to every row”. The suggestions under the box are ready-made tailoring ideas.",
         "With Blank canvas selected, this same box is where you describe a completely new agent.",
       ],
     },
@@ -407,7 +428,7 @@ const EN: OnboardingCopy = {
       chapter: "Stage 3 · Test & refine",
       title: "Your draft",
       body: [
-        "The header shows the agent's name and description — here, the Release Note Matcher. The “Draft” badge means it is not saved yet — it only exists in this browser tab until you press “Save agent”.",
+        "The header shows the agent's name and description — here, the Regulatory Traceability Mapper. The “Draft” badge means it is not saved yet — it only exists in this browser tab until you press “Save agent”.",
         "Once saved, this area also shows the “Run” and “Configure” tabs and buttons to duplicate or delete the agent.",
       ],
     },
@@ -415,7 +436,7 @@ const EN: OnboardingCopy = {
       chapter: "Stage 3 · Test & refine",
       title: "The editor",
       body: [
-        "The left half is the agent's complete specification, section by section: identity, refine with AI, instructions, tools, release-note sources, starters, guardrails, answer format and advanced settings.",
+        "The left half is the agent's complete specification, section by section: identity, refine with AI, instructions, tools, regulation sources, starters, guardrails, answer format and advanced settings.",
         "Every change you make here is used immediately by the test bench on the right — even before you save.",
       ],
     },
@@ -423,7 +444,7 @@ const EN: OnboardingCopy = {
       chapter: "Stage 3 · Test & refine",
       title: "Refine with AI",
       body: [
-        "Describe a change in your own words, for example “Mark changes above 5% without a release note as high priority”, and press Apply. The designer rewrites the specification and keeps everything that still fits — including your release-note file selection.",
+        "Describe a change in your own words, for example “Also check the SME supporting factor” or “List every deviation with its RWA impact”, and press Apply. The designer rewrites the specification and keeps everything that still fits — including your choice of regulation PDFs.",
         "If you do not like the result, “Undo” restores the previous version.",
       ],
     },
@@ -431,7 +452,7 @@ const EN: OnboardingCopy = {
       chapter: "Stage 3 · Test & refine",
       title: "Purpose and procedure",
       body: [
-        "Purpose is one sentence describing the agent's job. Below it, each numbered card is one step of the procedure the agent follows. In the Release Note Matcher, step 2 is where it calls search_release_notes once per changed field, and again with the position context.",
+        "Purpose is one sentence describing the agent's job. Below it, each numbered card is one step of the procedure. In the mapper, step 3 is the heart: fixed values per category in the code point to the standardised approach, so the agent lists that part of the regulation with regulation_outline and picks, for every category, the article whose title covers it — Sovereigns → “Exposures to central governments or central banks”, Banks → “Exposures to institutions”. Step 7 makes it verify every quote before it answers.",
         "Press Enter inside a step to split it into a new step, Shift+Enter for a line break, and Backspace in an empty step to delete it. Hover a step to move it up or down.",
         "The “Insert tool” chips put a tool's exact name at your cursor, so a step always refers to a tool the agent can call. “Plain text” lets you edit all steps as one text.",
       ],
@@ -442,23 +463,23 @@ const EN: OnboardingCopy = {
       body: [
         "Each card is one tool. Cards with a coloured border and a check are switched on; faded cards are off. Click a card to switch it.",
         "The agent can only use tools that are switched on. Fewer tools make a more focused agent — but every tool named in the procedure must be on.",
-        "The Release Note Matcher uses five: workspace_overview and list_executions to find the runs, compare_executions to see what changed, search_release_notes to find the documentation, and query_data to check values on individual rows.",
+        "The mapper uses eleven: workspace_overview and list_executions to find the cluster and its run; inspect_code and trace_lineage to read formulas, lookup tables and input fields; query_data, profile_data and calculator to recompute values on real rows and spot missing inputs; and the four regulation tools — regulation_outline, search_regulations, read_regulation_article and verify_regulation_quotes — to find, read and verify the governing text.",
       ],
     },
-    sources: {
+    regulationSources: {
       chapter: "Stage 3 · Test & refine",
-      title: "Release-note sources",
+      title: "Regulation sources",
       body: [
-        "Because search_release_notes is switched on, this section appears. It decides which uploaded release notes — Excel workbooks or PDFs from the Release notes tab — the agent may search.",
-        "All files are ticked by default, so the agent searches every file — including ones uploaded later. Untick the files it should ignore, for example to keep only the notes of the release you are checking, and it can no longer read them: the search tool enforces the limit, the agent cannot widen it. “Use all files” ticks everything again.",
-        "During a conversation you can still narrow a single question further, e.g. “only check the R7.18 PDF”. If a selected file is later deleted, it is flagged here in red.",
+        "Because the regulation tools are switched on, this section appears. It decides which regulation PDFs from the Regulations tab the agent may read.",
+        "All files are ticked by default, so the agent reads every uploaded regulation — including ones uploaded later. Untick the files it should ignore, for example an older CRR version when you only want to check against the current one; the regulation tools enforce the limit, the agent cannot widen it. “Use all files” ticks everything again.",
+        "A PDF can only be read once its indexing in the Regulations tab has finished. If a selected file is later deleted, it is flagged here in red.",
       ],
     },
     saveBar: {
       chapter: "Stage 3 · Test & refine",
       title: "Saving",
       body: [
-        "This bar shows the save state. A draft must be saved before it appears in your library and before it keeps conversation history. The release-note file selection is saved with the agent.",
+        "This bar shows the save state. A draft must be saved before it appears in your library and before it keeps conversation history. The choice of regulation PDFs is saved with the agent.",
         "For saved agents, “Discard” restores the last saved version and “Save changes” stores your edits.",
       ],
     },
@@ -466,7 +487,7 @@ const EN: OnboardingCopy = {
       chapter: "Stage 3 · Test & refine",
       title: "The test bench",
       body: [
-        "The right half is a live test environment. It runs exactly the configuration on the left — unsaved edits included — against your real data.",
+        "The right half is a live test environment. It runs exactly the configuration on the left — unsaved edits included — against your real data and your uploaded regulations.",
         "Test conversations are not saved, so you can experiment freely. “Reset” starts over.",
       ],
     },
@@ -475,16 +496,16 @@ const EN: OnboardingCopy = {
       title: "Pin context",
       body: [
         "“Pin context” tells the agent exactly which data you mean before it starts. You can pin executions, clusters and datasets.",
-        "The Release Note Matcher compares two runs, so pin the base execution first — it becomes A — and the compared execution second — it becomes B. Differences are always B − A.",
-        "If you chose base and comparison clusters on the Cluster tab, one click pins their latest runs.",
+        "The mapper checks one cluster, so pin the cluster you want to map — often the one marked “reference”. From it the agent finds the code, the dataset and the latest run by itself.",
+        "Without a pin, name the cluster in your question; the first starter question uses the reference cluster.",
       ],
     },
     composer: {
       chapter: "Stage 3 · Test & refine",
       title: "Ask your first question",
       body: [
-        "Type a question and press Enter, or click one of the starter questions above — for example “Which of the changes between the pinned executions are documented in release notes?”. Shift+Enter adds a new line.",
-        "While the agent works, the square button stops it. The run uses your real data and the AI provider, so it can take a few seconds.",
+        "Type a question and press Enter, or click a starter question above — for example “Map every calculated column of the reference cluster to the governing article in the uploaded regulations.” Shift+Enter adds a new line.",
+        "A full mapping reads several articles and recomputes real rows, so it can take a minute or two. The square button stops it. The run uses your real data and the AI provider.",
       ],
       action: "Try it now if you like — or press Next to continue.",
     },
@@ -492,10 +513,9 @@ const EN: OnboardingCopy = {
       chapter: "Stage 3 · Test & refine",
       title: "Reading a run",
       body: [
-        "Above each answer, “Worked for … · N tool calls” summarises the run. Click it to open the trace.",
-        "Each row is one tool call: the tool, a short result, the arguments it used and how long it took. Click a row to see the exact data that was returned to the agent.",
-        "For the Release Note Matcher, open the search_release_notes rows: they list which files were searched and the matching Jira IDs with their solution descriptions, so you can check every grade in the answer.",
-        "Under a finished answer you can copy it or download it as a Markdown file. When you are happy with the agent, press “Save agent” on the left.",
+        "Above each answer, “Worked for … · N tool calls” summarises the run. Click it to open the trace: each row is one tool call with its arguments and the exact data returned. For the mapper, open the read_regulation_article rows to see the article text the agent compared with the code.",
+        "Before the answer is shown, the platform checks it: every quote word for word against the PDF, and every row of the matrix for contradictions — a status that does not follow from the values, a value the quote does not state, or an article that does not cover the category. Problems go back to the agent once (the “Automatic quote and consistency check” row).",
+        "The answer then ends with “✓ Quote check” or a ⚠ list of points to resolve before you rely on them. You can copy the answer or download it as Markdown; when you are happy with the agent, press “Save agent” on the left.",
       ],
     },
   },
@@ -505,9 +525,10 @@ const EN: OnboardingCopy = {
     tipsTitle: "Good to know",
     tips: [
       "Specific, numbered steps produce the most reliable agents.",
-      "Pin two executions — base first — for any comparison question.",
-      "Use “Release-note sources” to keep an agent on the release notes that matter.",
-      "Open the run trace whenever you want to verify a number.",
+      "Upload regulation PDFs in the Regulations tab and wait until indexing has finished before you ask.",
+      "Pin the cluster you want to map, or name it in your question.",
+      "Use “Regulation sources” to keep an agent on the regulation version that applies.",
+      "Resolve every ⚠ point under an answer, and open the run trace to read the article text behind any row.",
       "Replay this tour any time with the “Guided tour” card at the top of the agent list.",
     ],
   },
@@ -529,7 +550,7 @@ const DE: OnboardingCopy = {
     wellDone: "Sehr gut — es geht weiter…",
     stepOf: "Schritt {n} von {total}",
     keyboard: "← → zum Navigieren · Esc zum Verlassen",
-    chapters: ["Sprache", "Willkommen", "Funktionsweise", "Bausteine", "Die zehn Tools", "Vertrauen & Sicherheit", "Praxis"],
+    chapters: ["Sprache", "Willkommen", "Funktionsweise", "Bausteine", "Die vierzehn Tools", "Vertrauen & Sicherheit", "Praxis"],
     minutes: "Etwa 8 Minuten",
   },
   language: {
@@ -553,7 +574,7 @@ const DE: OnboardingCopy = {
     learn: [
       "Wie ein Agent arbeitet — von Ihrer Frage bis zu seiner Antwort",
       "Die acht Bausteine, aus denen jeder Agent besteht",
-      "Die zehn Tools, die Agenten nutzen können, und was jedes davon tut",
+      "Die vierzehn Tools, die Agenten nutzen können, und was jedes davon tut",
       "Die Sicherheitsregeln, die jeder Agent einhält",
       "Praxis: Ihren ersten Agenten erstellen, testen und speichern",
     ],
@@ -656,12 +677,12 @@ const DE: OnboardingCopy = {
   },
   tools: {
     eyebrow: "Kapitel 3 · Tools",
-    title: "Die zehn Tools",
+    title: "Die vierzehn Tools",
     intro: "Über Tools sieht ein Agent Ihren Arbeitsbereich. Alle sind schreibgeschützt: Sie können lesen und rechnen, aber niemals etwas ändern, löschen oder hochladen. Wählen Sie ein Tool, um einen Beispielaufruf zu sehen.",
     exampleLabel: "Beispielaufruf",
     items: {
       workspace_overview: {
-        text: "Listet alles auf, was existiert: Datensätze mit Tabellen und Spalten, Codedateien, Cluster mit ihrem letzten Lauf und hochgeladene Release-Note-Arbeitsmappen. Agenten rufen es zuerst auf, um die richtigen IDs zu finden.",
+        text: "Listet alles auf, was existiert: Datensätze mit Tabellen und Spalten, Codedateien, Cluster mit ihrem letzten Lauf, hochgeladene Release Notes und hochgeladene Regulierungen. Agenten rufen es zuerst auf, um die richtigen IDs zu finden.",
         call: "workspace_overview()",
         result: "2 Datensätze, 2 Codedateien, 2 Cluster, 1 Release-Note-Arbeitsmappe",
       },
@@ -701,9 +722,29 @@ const DE: OnboardingCopy = {
         result: "4 vorgelagerte, 0 nachgelagerte Felder",
       },
       search_release_notes: {
-        text: "Durchsucht hochgeladene Release-Note-Arbeitsmappen nach Feld, Position, Thema oder Jira-ID und liefert die Jira-ID mit Problem- und Lösungsbeschreibung.",
+        text: "Durchsucht hochgeladene Release Notes (Excel-Arbeitsmappen und PDFs) nach Feld, Position, Thema oder Jira-ID und liefert die Jira-ID mit Problem- und Lösungsbeschreibung.",
         call: "search_release_notes(\"Carrying Amount\")",
         result: "Jira 112752 · 1 passende Release-Note-Zeile",
+      },
+      regulation_outline: {
+        text: "Zeigt den Aufbau einer hochgeladenen Regulierung – Teile, Titel, Kapitel und Abschnitte mit ihren Artikeln sowie die Anhänge –, damit der Agent die maßgeblichen Vorschriften wie ein Experte über das Inhaltsverzeichnis findet.",
+        call: "regulation_outline(within: \"Standardised approach Risk weights\")",
+        result: "48 Artikel · Article 114 Exposures to central governments … Article 134",
+      },
+      search_regulations: {
+        text: "Durchsucht die im Tab „Regulierung“ hochgeladenen Regulierungs-PDFs nach Stichworten und Bedeutung, auf Deutsch oder Englisch, und liefert Passagen auf Absatzebene mit Dokument, genauer Fundstelle und Seite.",
+        call: "search_regulations(\"Risikogewicht Institute ohne Rating\", within: \"Standardised approach\")",
+        result: "CRR · Article 121(3) · Seite 176",
+      },
+      read_regulation_article: {
+        text: "Liefert einen Artikel oder Anhang wörtlich, Absatz für Absatz mit Seiten, seine Stellung in der Regulierung und die Vorschriften, auf die er verweist, damit der Agent ihn zitieren und mit dem Code vergleichen kann.",
+        call: "read_regulation_article(\"Article 111(2)\")",
+        result: "Article 111(2) Exposure value · Seite 163 · verweist auf Anhang I",
+      },
+      verify_regulation_quotes: {
+        text: "Prüft jedes Zitat am Regulierungstext, bevor die Antwort erscheint: wörtlich und im zitierten Artikel und Absatz – oder markiert mit dem nächstliegenden Originalwortlaut.",
+        call: "verify_regulation_quotes([\"100 % for items in bucket 1\" → Article 111(2)])",
+        result: "1 von 1 Zitaten bestätigt · Seite 163",
       },
       calculator: {
         text: "Rechnet exakt, damit Differenzen und Prozentwerte nie geschätzt werden. Agenten nutzen ihn, sobald Zahlen verglichen oder summiert werden.",
@@ -736,10 +777,10 @@ const DE: OnboardingCopy = {
     checklistTitle: "In der Tour werden Sie",
     checklist: [
       "sich im Studio zurechtfinden",
-      "den Release-Note-Abgleich wählen und seinen Bauplan lesen",
-      "ihn im Editor öffnen",
-      "jeden Bereich des Editors kennenlernen — auch, welche Release-Note-Dateien er durchsuchen darf",
-      "lernen, wie man testet, Kontext fixiert und eine Ausführung liest",
+      "die Regulatorische Rückverfolgung wählen und ihren Bauplan lesen",
+      "sie im Editor öffnen",
+      "jeden Bereich des Editors kennenlernen — auch, welche Regulierungs-PDFs sie lesen darf",
+      "lernen, wie man testet, einen Cluster fixiert und eine Ausführung liest — samt automatischer Zitatprüfung",
       "wissen, wie man sie in der Bibliothek speichert",
     ],
   },
@@ -774,7 +815,7 @@ const DE: OnboardingCopy = {
       title: "Grundlage wählen",
       body: [
         "Die Grundlage ist Ihr Ausgangspunkt. „Leere Arbeitsfläche“ bedeutet, dass der Designer einen völlig neuen Agenten aus Ihrer eigenen Beschreibung schreibt.",
-        "Die sechs Vorlagen sind fertige Agenten für typische regulatorische Aufgaben. Jede Karte zeigt, wie viele Ablaufschritte und Tools sie hat.",
+        "Die sieben Vorlagen sind fertige Agenten für typische regulatorische Aufgaben. Jede Karte zeigt, wie viele Ablaufschritte und Tools sie hat.",
         "Eine Karte auszuwählen, erstellt noch nichts — es lädt nur ihren Bauplan weiter unten.",
       ],
     },
@@ -782,16 +823,17 @@ const DE: OnboardingCopy = {
       chapter: "Stufe 1 · Grundlage",
       title: "Eine Vorlage auswählen",
       body: [
-        "Wir verwenden den Release-Note-Abgleich. Er prüft, welche Veränderungen zwischen zwei Läufen in Ihren hochgeladenen Release Notes — Excel-Arbeitsmappen oder PDFs — dokumentiert sind, und markiert die Veränderungen, die kein Release angekündigt hat.",
+        "Wir verwenden die Regulatorische Rückverfolgung. Sie führt jede berechnete Spalte eines Clusters — etwa EAD, CCF, Risk Weight und RWA — auf die Vorschrift Ihrer hochgeladenen Regulierung zurück, die sie regelt, vergleicht die Werte im Code mit dem Regulierungstext und zeigt, wo die Umsetzung abweicht oder Eingaben fehlen.",
+        "Sie liest die im Tab „Regulierung“ hochgeladenen PDFs, zum Beispiel die CRR. Laden Sie dort mindestens eine hoch und warten Sie, bis die Indexierung abgeschlossen ist, bevor Sie den Agenten testen.",
       ],
-      action: "Klicken Sie auf die hervorgehobene Karte „Release-Note-Abgleich“.",
+      action: "Klicken Sie auf die hervorgehobene Karte „Regulatorische Rückverfolgung“.",
     },
     blueprint: {
       chapter: "Stufe 2 · Beschreibung",
       title: "Den Bauplan lesen",
       body: [
         "Der Bauplan zeigt genau, was die Vorlage enthält: ihren Zweck, ihren nummerierten Ablauf und die Tools, die sie nutzen darf.",
-        "Der Release-Note-Abgleich arbeitet in vier Schritten: mit compare_executions ermitteln, was sich geändert hat, mit search_release_notes für jedes geänderte Feld die Release Notes durchsuchen, jeden Kandidaten als unterstützt, teilweise unterstützt oder ohne Bezug bewerten und die unerwarteten Veränderungen auflisten.",
+        "Die Regulatorische Rückverfolgung arbeitet in acht Schritten: Umfang festlegen und die Gliederung der Regulierung ansehen; Formeln und Zuordnungstabellen des Codes lesen; für jede Kategorie den maßgeblichen Artikel finden; diese Artikel wörtlich lesen, samt der Anhänge, auf die sie verweisen; jede Zuordnung an echten Zeilen nachrechnen; prüfen, ob die von der Regulierung benötigten Eingaben gefüllt sind; jedes Zitat prüfen; und mit einer Rückverfolgungsmatrix antworten.",
       ],
     },
     brief: {
@@ -799,7 +841,7 @@ const DE: OnboardingCopy = {
       title: "Beschreiben oder anpassen",
       body: [
         "Mit einer ausgewählten Vorlage haben Sie zwei Möglichkeiten. „Unverändert verwenden“ öffnet die Vorlage so, wie sie ist.",
-        "„Mit KI anpassen“ schreibt die Vorlage anhand Ihrer Eingabe um — zum Beispiel „Nur Veränderungen am Carrying Amount bewerten“. Die Vorschläge unter dem Feld sind fertige Anpassungsideen.",
+        "„Mit KI anpassen“ schreibt die Vorlage anhand Ihrer Eingabe um — zum Beispiel „Nur die Spalte Risk Weight zuordnen“ oder „In jeder Zeile Absatz und Buchstabe der Vorschrift angeben“. Die Vorschläge unter dem Feld sind fertige Anpassungsideen.",
         "Ist die leere Arbeitsfläche gewählt, beschreiben Sie in genau diesem Feld einen völlig neuen Agenten.",
       ],
     },
@@ -815,7 +857,7 @@ const DE: OnboardingCopy = {
       chapter: "Stufe 3 · Testen & verfeinern",
       title: "Ihr Entwurf",
       body: [
-        "Die Kopfzeile zeigt Name und Beschreibung des Agenten — hier den Release-Note-Abgleich. Das Abzeichen „Entwurf“ bedeutet, dass er noch nicht gespeichert ist — er existiert nur in diesem Browser-Tab, bis Sie „Agent speichern“ wählen.",
+        "Die Kopfzeile zeigt Name und Beschreibung des Agenten — hier die Regulatorische Rückverfolgung. Das Abzeichen „Entwurf“ bedeutet, dass er noch nicht gespeichert ist — er existiert nur in diesem Browser-Tab, bis Sie „Agent speichern“ wählen.",
         "Nach dem Speichern zeigt dieser Bereich auch die Tabs „Ausführen“ und „Konfigurieren“ sowie Schaltflächen zum Duplizieren und Löschen.",
       ],
     },
@@ -823,7 +865,7 @@ const DE: OnboardingCopy = {
       chapter: "Stufe 3 · Testen & verfeinern",
       title: "Der Editor",
       body: [
-        "Die linke Hälfte ist die vollständige Spezifikation des Agenten, Abschnitt für Abschnitt: Identität, Überarbeitung mit KI, Anweisungen, Tools, Release-Note-Quellen, Gesprächseinstiege, Leitplanken, Antwortformat und erweiterte Einstellungen.",
+        "Die linke Hälfte ist die vollständige Spezifikation des Agenten, Abschnitt für Abschnitt: Identität, Überarbeitung mit KI, Anweisungen, Tools, Regulierungsquellen, Gesprächseinstiege, Leitplanken, Antwortformat und erweiterte Einstellungen.",
         "Jede Änderung hier wird sofort von der Testumgebung rechts verwendet — auch vor dem Speichern.",
       ],
     },
@@ -831,7 +873,7 @@ const DE: OnboardingCopy = {
       chapter: "Stufe 3 · Testen & verfeinern",
       title: "Mit KI überarbeiten",
       body: [
-        "Beschreiben Sie eine Änderung in eigenen Worten, zum Beispiel „Veränderungen über 5 % ohne Release Note als hohe Priorität markieren“, und wählen Sie „Anwenden“. Der Designer schreibt die Spezifikation um und behält alles bei, was weiterhin passt — auch Ihre Auswahl der Release-Note-Dateien.",
+        "Beschreiben Sie eine Änderung in eigenen Worten, zum Beispiel „Auch den KMU-Faktor prüfen“ oder „Jede Abweichung mit ihrer RWA-Auswirkung auflisten“, und wählen Sie „Anwenden“. Der Designer schreibt die Spezifikation um und behält alles bei, was weiterhin passt — auch Ihre Auswahl der Regulierungs-PDFs.",
         "Gefällt Ihnen das Ergebnis nicht, stellt „Rückgängig“ die vorherige Version wieder her.",
       ],
     },
@@ -839,7 +881,7 @@ const DE: OnboardingCopy = {
       chapter: "Stufe 3 · Testen & verfeinern",
       title: "Zweck und Ablauf",
       body: [
-        "Der Zweck ist ein Satz, der die Aufgabe des Agenten beschreibt. Darunter ist jede nummerierte Karte ein Schritt des Ablaufs, dem der Agent folgt. Beim Release-Note-Abgleich ruft er in Schritt 2 search_release_notes für jedes geänderte Feld auf und anschließend mit dem Positionskontext.",
+        "Der Zweck ist ein Satz, der die Aufgabe des Agenten beschreibt. Darunter ist jede nummerierte Karte ein Schritt des Ablaufs. Das Herzstück ist Schritt 3: Feste Werte je Kategorie im Code deuten auf den Standardansatz, also listet der Agent diesen Teil der Regulierung mit regulation_outline auf und wählt für jede Kategorie den Artikel, dessen Titel sie abdeckt — Sovereigns → „Exposures to central governments or central banks“, Banks → „Exposures to institutions“. Schritt 7 lässt ihn jedes Zitat prüfen, bevor er antwortet.",
         "Enter in einem Schritt teilt ihn in einen neuen Schritt, Umschalt+Enter fügt einen Zeilenumbruch ein, und die Rücktaste in einem leeren Schritt löscht ihn. Fahren Sie über einen Schritt, um ihn nach oben oder unten zu verschieben.",
         "Die Chips unter „Tool einfügen“ setzen den exakten Tool-Namen an Ihre Cursorposition, sodass sich ein Schritt immer auf ein aufrufbares Tool bezieht. „Freitext“ bearbeitet alle Schritte als einen Text.",
       ],
@@ -850,23 +892,23 @@ const DE: OnboardingCopy = {
       body: [
         "Jede Karte ist ein Tool. Karten mit farbigem Rand und Haken sind eingeschaltet, blasse Karten sind aus. Ein Klick schaltet um.",
         "Der Agent kann nur eingeschaltete Tools nutzen. Weniger Tools ergeben einen fokussierteren Agenten — aber jedes im Ablauf genannte Tool muss eingeschaltet sein.",
-        "Der Release-Note-Abgleich nutzt fünf: workspace_overview und list_executions, um die Läufe zu finden, compare_executions, um Veränderungen zu sehen, search_release_notes, um die Dokumentation zu finden, und query_data, um Werte einzelner Zeilen zu prüfen.",
+        "Die Regulatorische Rückverfolgung nutzt elf: workspace_overview und list_executions, um Cluster und Lauf zu finden; inspect_code und trace_lineage, um Formeln, Zuordnungstabellen und Eingabefelder zu lesen; query_data, profile_data und calculator, um Werte an echten Zeilen nachzurechnen und fehlende Eingaben zu erkennen; und die vier Regulierungs-Tools — regulation_outline, search_regulations, read_regulation_article und verify_regulation_quotes —, um den maßgeblichen Text zu finden, zu lesen und zu prüfen.",
       ],
     },
-    sources: {
+    regulationSources: {
       chapter: "Stufe 3 · Testen & verfeinern",
-      title: "Release-Note-Quellen",
+      title: "Regulierungsquellen",
       body: [
-        "Weil search_release_notes eingeschaltet ist, erscheint dieser Abschnitt. Er legt fest, welche hochgeladenen Release Notes — Excel-Arbeitsmappen oder PDFs aus dem Tab „Release Notes“ — der Agent durchsuchen darf.",
-        "Standardmäßig sind alle Dateien angehakt, der Agent durchsucht also jede Datei — auch später hochgeladene. Entfernen Sie die Haken bei Dateien, die er ignorieren soll, zum Beispiel um nur die Release Notes des geprüften Releases zu behalten, kann er sie nicht mehr lesen: Das Suchtool setzt die Grenze durch, der Agent kann sie nicht erweitern. „Alle Dateien verwenden“ hakt wieder alles an.",
-        "In einer Unterhaltung können Sie eine einzelne Frage weiter eingrenzen, z. B. „nur die PDF zu R7.18 prüfen“. Wird eine ausgewählte Datei später gelöscht, wird sie hier rot markiert.",
+        "Weil die Regulierungs-Tools eingeschaltet sind, erscheint dieser Abschnitt. Er legt fest, welche Regulierungs-PDFs aus dem Tab „Regulierung“ der Agent lesen darf.",
+        "Standardmäßig sind alle Dateien angehakt, der Agent liest also jede hochgeladene Regulierung — auch später hochgeladene. Entfernen Sie die Haken bei Dateien, die er ignorieren soll, zum Beispiel bei einer älteren CRR-Fassung, wenn nur die aktuelle gelten soll; die Regulierungs-Tools setzen die Grenze durch, der Agent kann sie nicht erweitern. „Alle Dateien verwenden“ hakt wieder alles an.",
+        "Ein PDF kann erst gelesen werden, wenn seine Indexierung im Tab „Regulierung“ abgeschlossen ist. Wird eine ausgewählte Datei später gelöscht, wird sie hier rot markiert.",
       ],
     },
     saveBar: {
       chapter: "Stufe 3 · Testen & verfeinern",
       title: "Speichern",
       body: [
-        "Diese Leiste zeigt den Speicherstatus. Ein Entwurf muss gespeichert werden, bevor er in Ihrer Bibliothek erscheint und einen Unterhaltungsverlauf behält. Die Auswahl der Release-Note-Dateien wird mit dem Agenten gespeichert.",
+        "Diese Leiste zeigt den Speicherstatus. Ein Entwurf muss gespeichert werden, bevor er in Ihrer Bibliothek erscheint und einen Unterhaltungsverlauf behält. Die Auswahl der Regulierungs-PDFs wird mit dem Agenten gespeichert.",
         "Bei gespeicherten Agenten stellt „Verwerfen“ die zuletzt gespeicherte Version wieder her, und „Änderungen speichern“ übernimmt Ihre Bearbeitungen.",
       ],
     },
@@ -874,7 +916,7 @@ const DE: OnboardingCopy = {
       chapter: "Stufe 3 · Testen & verfeinern",
       title: "Die Testumgebung",
       body: [
-        "Die rechte Hälfte ist eine Live-Testumgebung. Sie führt genau die Konfiguration links aus — inklusive nicht gespeicherter Änderungen — mit Ihren echten Daten.",
+        "Die rechte Hälfte ist eine Live-Testumgebung. Sie führt genau die Konfiguration links aus — inklusive nicht gespeicherter Änderungen — mit Ihren echten Daten und Ihren hochgeladenen Regulierungen.",
         "Testunterhaltungen werden nicht gespeichert, Sie können also frei experimentieren. „Zurücksetzen“ beginnt von vorn.",
       ],
     },
@@ -883,16 +925,16 @@ const DE: OnboardingCopy = {
       title: "Kontext fixieren",
       body: [
         "„Kontext fixieren“ teilt dem Agenten vor dem Start genau mit, welche Daten gemeint sind. Sie können Ausführungen, Cluster und Datensätze fixieren.",
-        "Der Release-Note-Abgleich vergleicht zwei Läufe: Fixieren Sie daher zuerst die Basisausführung — sie wird A — und danach die Vergleichsausführung — sie wird B. Differenzen sind immer B − A.",
-        "Haben Sie im Tab „Cluster“ Basis- und Vergleichscluster gewählt, fixiert ein Klick deren letzte Läufe.",
+        "Die Regulatorische Rückverfolgung prüft einen Cluster: Fixieren Sie den Cluster, den Sie zuordnen möchten — oft den mit „Referenz“ markierten. Code, Datensatz und letzten Lauf findet der Agent daraus selbst.",
+        "Ohne Fixierung nennen Sie den Cluster in Ihrer Frage; der erste Gesprächseinstieg verwendet den Referenzcluster.",
       ],
     },
     composer: {
       chapter: "Stufe 3 · Testen & verfeinern",
       title: "Ihre erste Frage stellen",
       body: [
-        "Geben Sie eine Frage ein und drücken Sie Enter, oder klicken Sie auf einen der Gesprächseinstiege oben — zum Beispiel „Welche Veränderungen zwischen den fixierten Ausführungen sind in Release Notes dokumentiert?“. Umschalt+Enter fügt eine neue Zeile ein.",
-        "Während der Agent arbeitet, hält ihn die quadratische Schaltfläche an. Die Ausführung nutzt Ihre echten Daten und den KI-Anbieter und kann einige Sekunden dauern.",
+        "Geben Sie eine Frage ein und drücken Sie Enter, oder klicken Sie auf einen Gesprächseinstieg oben — zum Beispiel „Ordne jede berechnete Spalte des Referenzclusters dem maßgeblichen Artikel der hochgeladenen Regulierungen zu.“ Umschalt+Enter fügt eine neue Zeile ein.",
+        "Eine vollständige Zuordnung liest mehrere Artikel und rechnet echte Zeilen nach; sie kann ein bis zwei Minuten dauern. Die quadratische Schaltfläche hält sie an. Die Ausführung nutzt Ihre echten Daten und den KI-Anbieter.",
       ],
       action: "Probieren Sie es gern aus — oder wählen Sie „Weiter“.",
     },
@@ -900,10 +942,9 @@ const DE: OnboardingCopy = {
       chapter: "Stufe 3 · Testen & verfeinern",
       title: "Eine Ausführung lesen",
       body: [
-        "Über jeder Antwort fasst „… gearbeitet · N Tool-Aufrufe“ die Ausführung zusammen. Ein Klick öffnet das Protokoll.",
-        "Jede Zeile ist ein Tool-Aufruf: das Tool, ein kurzes Ergebnis, die verwendeten Argumente und die Dauer. Ein Klick auf eine Zeile zeigt die exakten Daten, die an den Agenten zurückgegeben wurden.",
-        "Öffnen Sie beim Release-Note-Abgleich die Zeilen von search_release_notes: Sie zeigen, welche Dateien durchsucht wurden, und die passenden Jira-IDs mit ihren Lösungsbeschreibungen — so können Sie jede Bewertung in der Antwort prüfen.",
-        "Unter einer fertigen Antwort können Sie sie kopieren oder als Markdown-Datei herunterladen. Sind Sie mit dem Agenten zufrieden, wählen Sie links „Agent speichern“.",
+        "Über jeder Antwort fasst „… gearbeitet · N Tool-Aufrufe“ die Ausführung zusammen. Ein Klick öffnet das Protokoll: Jede Zeile ist ein Tool-Aufruf mit Argumenten und den exakten zurückgegebenen Daten. Öffnen Sie bei diesem Agenten die Zeilen von read_regulation_article, um den Artikeltext zu sehen, den er mit dem Code verglichen hat.",
+        "Bevor die Antwort erscheint, prüft die Plattform sie: jedes Zitat wörtlich am PDF und jede Zeile der Matrix auf Widersprüche — ein Status, der nicht aus den Werten folgt, ein Wert, den das Zitat nicht nennt, oder ein Artikel, der die Kategorie nicht abdeckt. Probleme gehen einmal zur Korrektur an den Agenten zurück (Zeile „Automatische Zitat- und Konsistenzprüfung“).",
+        "Die Antwort endet dann mit „✓ Zitatprüfung“ oder einer ⚠-Liste offener Punkte, die Sie vor der Verwendung klären sollten. Sie können die Antwort kopieren oder als Markdown herunterladen; sind Sie mit dem Agenten zufrieden, wählen Sie links „Agent speichern“.",
       ],
     },
   },
@@ -913,9 +954,10 @@ const DE: OnboardingCopy = {
     tipsTitle: "Gut zu wissen",
     tips: [
       "Konkrete, nummerierte Schritte ergeben die zuverlässigsten Agenten.",
-      "Fixieren Sie für Vergleichsfragen zwei Ausführungen — die Basis zuerst.",
-      "Mit „Release-Note-Quellen“ beschränken Sie einen Agenten auf die relevanten Release Notes.",
-      "Öffnen Sie das Ausführungsprotokoll, wann immer Sie eine Zahl überprüfen möchten.",
+      "Laden Sie Regulierungs-PDFs im Tab „Regulierung“ hoch und warten Sie, bis die Indexierung abgeschlossen ist, bevor Sie fragen.",
+      "Fixieren Sie den Cluster, den Sie zuordnen möchten, oder nennen Sie ihn in Ihrer Frage.",
+      "Mit „Regulierungsquellen“ beschränken Sie einen Agenten auf die maßgebliche Fassung der Regulierung.",
+      "Klären Sie jeden ⚠-Punkt unter einer Antwort, und öffnen Sie das Protokoll, um den Artikeltext hinter jeder Zeile zu lesen.",
       "Diese Tour starten Sie jederzeit erneut über die Karte „Einführung“ oben in der Agentenliste.",
     ],
   },

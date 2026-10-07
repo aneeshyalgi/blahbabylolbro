@@ -7,11 +7,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { useStudioText } from "./i18n";
 import { ProcedureEditor } from "./procedure-editor";
-import type { AgentDefinition, ReleaseNoteFile, ToolInfo } from "./types";
+import type { AgentDefinition, SourceFile, ToolInfo } from "./types";
 import { AGENT_COLORS, AGENT_ICONS, AgentAvatar, ToolIcon, agentAccent } from "./visuals";
 import { VoiceInputButton, appendTranscript } from "./voice-input";
 
 const CATEGORY_ORDER = ["Workspace", "Data", "Analysis", "Code & lineage", "Evidence", "Utilities"];
+// Any of these tools reads uploaded regulations, so the agent needs a regulation-source choice.
+const REGULATION_TOOLS = new Set(["regulation_outline", "search_regulations", "read_regulation_article", "verify_regulation_quotes"]);
 
 function Section({ title, hint, action, tour, children }: { title: string; hint?: string; action?: ReactNode; tour?: string; children: ReactNode }) {
   return (
@@ -81,10 +83,14 @@ function ListEditor({ values, onChange, placeholder, max }: { values: string[]; 
 }
 
 /**
- * Which uploaded release-note files the search tool may read. An empty selection means all of them
- * (files uploaded later included), so every file shows as ticked until the user unticks one.
+ * Which uploaded files (release notes or regulations) an agent's search tools may read. An empty selection
+ * means all of them (files uploaded later included), so every file shows as ticked until the user unticks one.
  */
-function ReleaseNoteSources({
+function SourceFilesPicker({
+  title,
+  hint,
+  emptyText,
+  tour,
   selected,
   onChange,
   files,
@@ -92,14 +98,18 @@ function ReleaseNoteSources({
   onReload,
   accent,
 }: {
+  title: string;
+  hint: string;
+  emptyText: string;
+  tour: string;
   selected: string[];
   onChange: (ids: string[]) => void;
-  files: ReleaseNoteFile[];
+  files: SourceFile[];
   loading: boolean;
   onReload: () => void;
   accent: string;
 }) {
-  const { t, formatDateTime } = useStudioText();
+  const { t, plural, formatDateTime } = useStudioText();
   const known = new Set(files.map((file) => file.id));
   const missing = loading ? [] : selected.filter((id) => !known.has(id));
   const allFiles = selected.length === 0;
@@ -121,9 +131,9 @@ function ReleaseNoteSources({
 
   return (
     <Section
-      tour="sources"
-      title={t("editor.sources")}
-      hint={t("editor.sourcesHint")}
+      tour={tour}
+      title={title}
+      hint={hint}
       action={
         <div className="flex items-center gap-3 text-xs">
           {selected.length ? (
@@ -138,13 +148,13 @@ function ReleaseNoteSources({
       {loading && !files.length ? (
         <p className="flex items-center gap-2 text-xs text-[#8c96a8]"><Loader2 className="h-3.5 w-3.5 animate-spin" /> {t("common.loading")}</p>
       ) : !files.length && !missing.length ? (
-        <p className="rounded-lg border border-dashed border-[#303845] px-3 py-3 text-xs leading-5 text-[#8c96a8]">{t("editor.sourcesEmpty")}</p>
+        <p className="rounded-lg border border-dashed border-[#303845] px-3 py-3 text-xs leading-5 text-[#8c96a8]">{emptyText}</p>
       ) : (
         <div className="space-y-1.5">
           <p className="text-[11px] font-medium" style={{ color: allFiles ? "#8c96a8" : accent }}>
             {!allFiles
               ? t("editor.sourcesSome", { count: availableSelected, total: files.length })
-              : t("editor.sourcesAll", { count: files.length })}
+              : plural("editor.sourcesAll", files.length)}
           </p>
           {files.map((file) => {
             const checked = isChecked(file.id);
@@ -176,7 +186,7 @@ function ReleaseNoteSources({
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-xs font-semibold text-[#e5e9ef]">{file.filename}</span>
                   <span className="block text-[11px] text-[#687386]">
-                    {pdf ? t("editor.sourcesPages", { count: file.page_count ?? 0 }) : t("editor.sourcesSheets", { count: file.sheets.length })}
+                    {pdf ? t("editor.sourcesPages", { count: file.page_count ?? 0 }) : t("editor.sourcesSheets", { count: file.sheets?.length ?? 0 })}
                     {" · "}
                     {formatDateTime(file.upload_date)}
                   </span>
@@ -209,6 +219,9 @@ export function AgentEditor({
   releaseNoteFiles,
   releaseNoteFilesLoading,
   onReloadReleaseNoteFiles,
+  regulationFiles,
+  regulationFilesLoading,
+  onReloadRegulationFiles,
 }: {
   definition: AgentDefinition;
   onChange: (definition: AgentDefinition) => void;
@@ -217,9 +230,12 @@ export function AgentEditor({
   refining: boolean;
   canUndoRefine: boolean;
   onUndoRefine: () => void;
-  releaseNoteFiles: ReleaseNoteFile[];
+  releaseNoteFiles: SourceFile[];
   releaseNoteFilesLoading: boolean;
   onReloadReleaseNoteFiles: () => void;
+  regulationFiles: SourceFile[];
+  regulationFilesLoading: boolean;
+  onReloadRegulationFiles: () => void;
 }) {
   const { t, toolLabel, toolDescription, category: categoryLabel } = useStudioText();
   const [refineText, setRefineText] = useState("");
@@ -409,12 +425,31 @@ export function AgentEditor({
       </Section>
 
       {definition.tools.includes("search_release_notes") ? (
-        <ReleaseNoteSources
+        <SourceFilesPicker
+          tour="sources"
+          title={t("editor.sources")}
+          hint={t("editor.sourcesHint")}
+          emptyText={t("editor.sourcesEmpty")}
           selected={definition.release_note_sources ?? []}
           onChange={(ids) => set("release_note_sources", ids)}
           files={releaseNoteFiles}
           loading={releaseNoteFilesLoading}
           onReload={onReloadReleaseNoteFiles}
+          accent={accent}
+        />
+      ) : null}
+
+      {definition.tools.some((name) => REGULATION_TOOLS.has(name)) ? (
+        <SourceFilesPicker
+          tour="regulation-sources"
+          title={t("editor.regulationSources")}
+          hint={t("editor.regulationSourcesHint")}
+          emptyText={t("editor.regulationSourcesEmpty")}
+          selected={definition.regulation_sources ?? []}
+          onChange={(ids) => set("regulation_sources", ids)}
+          files={regulationFiles}
+          loading={regulationFilesLoading}
+          onReload={onReloadRegulationFiles}
           accent={accent}
         />
       ) : null}
