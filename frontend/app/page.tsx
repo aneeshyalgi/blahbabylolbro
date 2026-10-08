@@ -16,13 +16,14 @@ import { PatchNotesTabContent } from "@/components/release-notes-tab-content";
 import { CreateAIAgentsTabContent } from "@/components/create-ai-agents-tab-content";
 import { RegulationMatcherTabContent } from "@/components/regulation-matcher/regulation-matcher-tab-content";
 import { LineageAgentTabContent } from "@/components/lineage-agent/lineage-agent-tab-content";
+import { ContentLineageAgentTabContent } from "@/components/content-lineage-agent/content-lineage-agent-tab-content";
 import { PlaceholderTab } from "@/components/placeholder-tab";
 import { DataAssistant } from "@/components/data-assistant";
 
 const TAB_STORAGE_KEY = "dataflow_active_tab";
 const VALID_TAB_IDS = new Set([
   "code", "data-modal", "data", "clustering",
-  "content-lineage", "technical-lineage", "technical-lineage-agent", "semantic-lineage",
+  "content-lineage", "content-lineage-agent", "technical-lineage", "technical-lineage-agent", "semantic-lineage",
   "compare-clusters", "regulations", "regulation-matcher", "release-notes",
   "root-cause", "rootcause-ai-agents", "create-ai-agents",
 ]);
@@ -40,6 +41,7 @@ const tabLabels: Record<string, string> = {
   "data-model": "Data Model",
   "data-modal": "Data Model",
   "content-lineage": "Content Lineage",
+  "content-lineage-agent": "Content Lineage AI Agents",
   "technical-lineage": "Technical Lineage",
   "technical-lineage-agent": "Technical Lineage AI Agent",
   "semantic-lineage": "Semantic Lineage",
@@ -91,6 +93,8 @@ export default function HomePage() {
         return <LineageTabContent variant="technical" />;
       case "technical-lineage-agent":
         return <LineageAgentTabContent />;
+      case "content-lineage-agent":
+        return <ContentLineageAgentTabContent />;
       case "semantic-lineage":
         return <LineageTabContent variant="semantic" />;
       case "regulations":

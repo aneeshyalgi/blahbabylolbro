@@ -18,6 +18,7 @@
     "data": "Ergebnisse",
     "clustering": "Cluster",
     "contentLineage": "Inhalts-Herkunft",
+    "contentLineageAgent": "Inhalts-Herkunft – KI-Agenten",
     "compareClusters": "Compare",
     "rootCause": "RootCause",
     "semanticLineage": "Semantische Herkunft",
@@ -1608,6 +1609,585 @@
       "dynamic_loop": "Schleife über berechnete Spalten",
       "analysis_error": "Analysefehler",
       "import": "Import"
+    }
+  },
+  "contentLineageAgent": {
+    "eyebrow": "Fachliche Herkunft · KI-Agenten",
+    "title": "Inhalts-Herkunft – KI-Agenten",
+    "subtitle": "Erklärt, was eine Meldegröße bedeutet und woraus sie besteht: die Fachbegriffe und Regeln dahinter, den Anteil jedes Werts, der von der Quelle geliefert oder von einem Fall abgeleitet wurde – bis auf den einzelnen Datensatz – und die Vorschriften, die sie definieren, wörtlich zitiert und bewertet.",
+    "tour": "Geführte Tour",
+    "history": "Analysen",
+    "historyTitle": "Frühere Analysen der Inhalts-Herkunft",
+    "historyEmpty": "Noch keine Analysen.",
+    "historyLine": "{terms} Begriffe · {rules} Regeln · {provisions} Vorschriften",
+    "status": {
+      "running": "Läuft",
+      "completed": "Abgeschlossen",
+      "failed": "Fehlgeschlagen",
+      "cancelled": "Abgebrochen",
+      "interrupted": "Unterbrochen"
+    },
+    "newRun": "Neue Analyse",
+    "backToProgress": "Zurück zur laufenden Analyse",
+    "backToResults": "Zurück zu den Ergebnissen",
+    "cancel": "Abbrechen",
+    "deleteRun": "Analyse löschen",
+    "deleteTitle": "Diese Analyse löschen?",
+    "deleteBody": "Die Analyse und ihre Ergebnisse werden endgültig gelöscht. Die Ausführung, ihr Code und ihre Daten bleiben unverändert.",
+    "errors": {
+      "load": "Die Analysen konnten nicht geladen werden",
+      "preview": "Die Ausführung konnte nicht gelesen werden",
+      "start": "Die Analyse konnte nicht gestartet werden",
+      "cancel": "Die Analyse konnte nicht abgebrochen werden",
+      "delete": "Die Analyse konnte nicht gelöscht werden",
+      "export": "Der Export ist fehlgeschlagen",
+      "noResult": "Die Analyse ist beendet, ihr Ergebnis kann aber nicht angezeigt werden."
+    },
+    "toast": {
+      "completed": "Inhalts-Herkunft fertig",
+      "completedBody": "{terms} Fachbegriffe, {rules} Regeln, {provisions} Vorschriften verknüpft",
+      "failed": "Die Analyse ist fehlgeschlagen",
+      "deleted": "Analyse gelöscht"
+    },
+    "meta": {
+      "execution": "Ausführung vom {date}",
+      "figures": "Meldegrößen: {figures}",
+      "duration": "Dauer {value}"
+    },
+    "export": {
+      "title": "Export",
+      "excel": "Excel-Arbeitsmappe",
+      "excelHint": "Glossar, Regeln und Fälle, Inhaltspfade, Segmente, regulatorische Grundlage, Datensätze und Prüfungen",
+      "drawio": "draw.io-Diagramm",
+      "drawioHint": "Über die Download-Schaltfläche in der Graph-Werkzeugleiste; das Diagramm übernimmt Ihre Anordnung"
+    },
+    "tabs": {
+      "graph": "Inhalts-Graph",
+      "figures": "Was in den Größen steckt",
+      "glossary": "Glossar & Regeln",
+      "regulation": "Regulatorische Grundlage",
+      "verification": "Prüfungen & Protokoll"
+    },
+    "kinds": {
+      "figure": "Meldegröße",
+      "concept": "Fachlicher Begriff",
+      "source": "Quelldaten",
+      "classification": "Klassifikation"
+    },
+    "verdicts": {
+      "consistent": "Konform",
+      "simplified": "Vereinfacht",
+      "deviation": "Abweichung",
+      "not_covered": "Keine regulatorische Grundlage",
+      "unverified": "Nicht verifiziert",
+      "consistentShort": "Konform",
+      "simplifiedShort": "Vereinfacht",
+      "deviationShort": "Abweichung",
+      "not_coveredShort": "Keine Grundlage",
+      "unverifiedShort": "Unverifiziert",
+      "consistentHint": "Die umgesetzte Regel entspricht den zitierten Vorschriften.",
+      "simplifiedHint": "Die Regel ist gröber als die Regulierung (z. B. ein Parameter, wo die Regulierung mehr Fälle unterscheidet), ohne ihr zu widersprechen.",
+      "deviationHint": "Ein Fall oder Parameter widerspricht einer zitierten Vorschrift.",
+      "not_coveredHint": "Keine Vorschrift der gewählten Regulierungen regelt diese Regel (z. B. eine interne Datenkonvention).",
+      "unverifiedHint": "Die KI hat Vorschriften vorgeschlagen, aber keines ihrer Zitate ließ sich im Regulierungstext verifizieren."
+    },
+    "frameworks": {
+      "credit_risk_standardised": "Kreditrisiko – Standardansatz",
+      "credit_risk_irb": "Kreditrisiko – IRB-Ansatz",
+      "securitisation": "Verbriefung",
+      "counterparty_credit_risk": "Gegenparteiausfallrisiko",
+      "market_risk": "Marktrisiko",
+      "operational_risk": "Operationelles Risiko",
+      "own_funds": "Eigenmittel",
+      "large_exposures": "Großkredite",
+      "liquidity": "Liquidität",
+      "leverage": "Verschuldungsquote",
+      "other": "Kein aufsichtlicher Rahmen"
+    },
+    "languageNames": {
+      "EN": "Englisch",
+      "DE": "Deutsch"
+    },
+    "log": {
+      "run_started": "Analyse gestartet für Ausführung {execution} von {cluster}",
+      "code_loaded": "{file} geladen ({lines} Zeilen)",
+      "data_loaded": "Eingabetabelle geladen: {rows} Datensätze × {columns} Spalten",
+      "static_done": "Statische Datenflussanalyse: {statements} Anweisungen, {writes} Spaltenzuweisungen, {lookups} Parametertabelle(n)",
+      "replay_done": "Die Wiederholung reproduziert die gespeicherte Ausführung: {cells} Werte identisch; {changes} Wertänderungen Anweisungen zugeordnet ({ms} ms)",
+      "replay_columns": "Der Code erzeugt inzwischen andere Spalten als die gespeicherte Ausführung; der Inhalt wird am wiederholten Ergebnis verfolgt",
+      "replay_mismatch": "Die Wiederholung weicht in {mismatches} von {cells} Werten von der gespeicherten Ausführung ab (die Eingabedaten haben sich womöglich geändert)",
+      "replay_error": "Wiederholung in Zeile {line} abgebrochen: {message}",
+      "figures_ignored": "Von diesem Code nicht abgeleitet und daher nicht verfolgt: {columns}",
+      "scope": "Meldegröße(n) {figures}: {terms} Fachbegriffe, {rules} fachliche Regeln mit {cases} Fällen",
+      "composed": "Inhalt ermittelt: {records} Datensätze, {paths} Inhaltspfad(e), {dimensions} fachliche(s) Segment(e)",
+      "unmapped": "[{column}] Zeile {line}: Kategorien ohne Parameter: {values}",
+      "model": "Modell: {model} · Temperatur 0 · JSON-Schema-Ausgabe",
+      "describing": "Beschreibe {terms} Fachbegriffe und {rules} fachliche Regeln in {batches} Paket(en)",
+      "described": "Paket {batch}: {terms} Begriffe und {rules} Regeln beschrieben{corrected, select, true { nach einer Korrekturrunde} other {}}",
+      "framework": "Aufsichtlicher Rahmen der Berechnung: {framework}",
+      "regulation_skipped": "{reason, select, none_selected {Regulatorischer Schritt übersprungen: keine indizierte Regulierung gewählt} other {Regulatorischer Schritt übersprungen: {message}}}",
+      "regulating": "Suche die regulatorische Grundlage von {rules} fachlichen Regeln in {regulations}",
+      "no_candidates": "{rule} {name}: keine Kandidatenvorschriften gefunden",
+      "linked": "{rule} {name}: {count} Vorschrift(en) verknüpft ({references}); Bewertung: {verdict}",
+      "quote_failed": "{rule}: {count} Zitat(e) nicht wörtlich in der Regulierung; Korrektur angefordert",
+      "reviewing": "Zweitprüfer kontrolliert {count} regulatorische Bewertung(en)",
+      "reviewed": "{rule} {name}: Bewertung vom Zweitprüfer bestätigt ({verdict})",
+      "review_corrected": "{rule} {name}: Der Zweitprüfer hat die Bewertung korrigiert ({verdict})",
+      "translating": "Übersetze {count} KI-Texte – Zielsprache: {language}",
+      "translated": "KI-Texte auf {language} verfügbar ({count} Texte; {kept} im Originalwortlaut belassen)",
+      "completed": "Inhalts-Herkunft fertig: {figures} Meldegröße(n), {terms} Fachbegriffe, {rules} Regeln, {provisions} Vorschrift(en) verknüpft",
+      "cancelled": "Analyse abgebrochen.",
+      "cancel_requested": "Abbruch angefordert.",
+      "failed": "Analyse fehlgeschlagen: {message}",
+      "llm_error": "Das Sprachmodell ist im Schritt {step} gescheitert: {message}",
+      "model_fallback": "Modell {model} ist nicht verfügbar; weiter mit {fallback}"
+    },
+    "setup": {
+      "executionsTitle": "Ausführung wählen",
+      "executionsHint": "Eine Berechnung (Code eines Clusters auf seinen Datensatz angewandt), deren Meldegrößen Sie erklären möchten",
+      "search": "Cluster suchen …",
+      "loading": "Wird geladen …",
+      "emptyTitle": "Noch keine Ausführungen",
+      "emptyBody": "Führen Sie zuerst einen Cluster im Tab Cluster aus; jede Ausführung lässt sich dann hier analysieren.",
+      "reference": "Referenz",
+      "reportingDate": "Stichtag {date}",
+      "noExecutions": "Keine gespeicherte Ausführung",
+      "executedAt": "Ausgeführt am {date}",
+      "records": "{count, plural, one {# Datensatz} other {# Datensätze}}",
+      "columns": "{count, plural, one {# Spalte} other {# Spalten}}",
+      "figuresTitle": "Meldegrößen wählen",
+      "figuresHint": "Die Größen, deren Inhalt der Agent erklärt; alles, woraus sie entstehen, wird verfolgt",
+      "figuresEmpty": "Wählen Sie eine Ausführung, um die Größen zu sehen, die ihr Code ableitet.",
+      "lines": "{count} Zeilen",
+      "derivedCount": "{count, plural, one {# abgeleitete Spalte} other {# abgeleitete Spalten}}",
+      "noDerived": "Dieser Code leitet keine Spalte ab; es gibt keinen Inhalt zu verfolgen.",
+      "usedBy": "Fließt ein in {columns}",
+      "endOfChain": "Ende einer Berechnungskette – eine typische Meldegröße",
+      "suggested": "Vorschlag",
+      "text": "Text",
+      "figuresNote": "Vorgeschlagen: die Größen am Ende einer Berechnungskette. Bis zu sechs wählbar.",
+      "regulationsTitle": "Regulierungen für die regulatorische Grundlage",
+      "regulationsHint": "Optional: indizierte Regulierungen, in denen der Agent die Vorschriften hinter jeder Regel nachschlägt",
+      "regulationsEmpty": "Noch keine Regulierung hochgeladen. Laden Sie im Tab Vorschriften eine hoch und indizieren Sie sie, um eine regulatorische Grundlage zu erhalten.",
+      "regulationMeta": "{articles} Artikel · {pages} Seiten · indiziert",
+      "regulationNotReady": "Noch nicht indiziert",
+      "regulationsNone": "Ohne Regulierung entfallen die regulatorische Grundlage und ihre Prüfung.",
+      "methodTitle": "So erstellt der Agent die Inhalts-Herkunft",
+      "methodHint": "Zuerst deterministische Fakten; die KI benennt, erklärt und bewertet sie nur, und jede Aussage wird geprüft",
+      "method": {
+        "trace": {
+          "title": "Verfolgen",
+          "body": "Wiederholt die Berechnung Anweisung für Anweisung und ordnet jeden Wert jeder Spalte der Anweisung zu, die ihn geschrieben hat."
+        },
+        "compose": {
+          "title": "Zusammensetzen",
+          "body": "Macht aus Anweisungen fachliche Regeln und Fälle und misst jeden: Datensätze, Beträge, Inhaltspfade und Segmente jeder Größe."
+        },
+        "describe": {
+          "title": "Beschreiben",
+          "body": "Die KI benennt und definiert jeden Fachbegriff und formuliert jede Regel und jeden Fall fachlich; Zahlen werden gegen den Code geprüft."
+        },
+        "regulate": {
+          "title": "Regulatorisch einordnen",
+          "body": "Durchsucht die Regulierung im Rahmen der Berechnung, verknüpft die maßgeblichen Vorschriften mit wörtlichen Zitaten und bewertet jede Regel."
+        },
+        "review": {
+          "title": "Prüfen",
+          "body": "Ein zweiter KI-Prüfer kontrolliert jede Bewertung an den zitierten Vorschriften (Vier-Augen-Prinzip) und entfernt unpassende Verknüpfungen."
+        },
+        "translate": {
+          "title": "Übersetzen",
+          "body": "Jeder KI-Text steht auf Englisch und Deutsch bereit."
+        }
+      },
+      "versusTechnicalLabel": "Technische Herkunft",
+      "versusTechnical": "Wie der Code Daten bewegt: Spalten, Anweisungen, Codezeilen.",
+      "versusContentLabel": "Inhalts-Herkunft",
+      "versusContent": "Was eine Größe bedeutet und woraus sie besteht: Fachbegriffe, Regeln und Fälle, Anteile jedes Werts und die Regulierung dahinter.",
+      "readyTitle": "Bereit, {cluster} zu erklären",
+      "readyFigures": "Meldegrößen: {figures}",
+      "readyNoFigures": "Wählen Sie mindestens eine Meldegröße",
+      "readyRegulations": "{count, plural, one {# Regulierung} other {# Regulierungen}}",
+      "readyNoRegulations": "keine Regulierung (regulatorische Grundlage entfällt)",
+      "notReadyTitle": "Ausführung und Meldegrößen wählen",
+      "notReadyBody": "Der Agent verfolgt dann, woraus jede Größe besteht und woher ihre Regeln stammen.",
+      "noLlm": "Kein Sprachmodell konfiguriert (OPENAI_API_KEY oder Azure OpenAI).",
+      "start": "Inhalts-Herkunft erstellen"
+    },
+    "progress": {
+      "running": "Analyse läuft",
+      "failed": "Analyse fehlgeschlagen",
+      "cancelled": "Analyse abgebrochen",
+      "interrupted": "Analyse unterbrochen",
+      "done": "Analyse abgeschlossen",
+      "title": "Inhalts-Herkunft von {cluster}",
+      "figures": "Meldegrößen: {figures}",
+      "cancel": "Abbrechen",
+      "new": "Neue Analyse",
+      "step": "Schritt {index}",
+      "stages": {
+        "trace": {
+          "title": "Verfolgen",
+          "body": "Berechnung wiederholen und jeden Wert zuordnen"
+        },
+        "compose": {
+          "title": "Zusammensetzen",
+          "body": "Regeln, Fälle, Inhaltspfade und Segmente"
+        },
+        "describe": {
+          "title": "Beschreiben",
+          "body": "Fachbegriffe und Regeln in Fachsprache"
+        },
+        "regulate": {
+          "title": "Regulatorisch einordnen",
+          "body": "Vorschriften, wörtliche Zitate, Bewertung"
+        },
+        "review": {
+          "title": "Prüfen",
+          "body": "Zweitprüfer kontrolliert jede Bewertung"
+        },
+        "translate": {
+          "title": "Übersetzen",
+          "body": "Jeder KI-Text auf Englisch und Deutsch"
+        }
+      },
+      "detail": {
+        "trace": "{cells} Werte reproduziert · {changes} Änderungen zugeordnet",
+        "traceMismatch": "Wiederholung weicht von der gespeicherten Ausführung ab",
+        "compose": "{terms} Begriffe · {rules} Regeln · {cases} Fälle",
+        "paths": "{count, plural, one {# Pfad} other {# Pfade}}",
+        "describe": "{done}/{total} Regeln",
+        "skipped": "übersprungen",
+        "regulate": "{done}/{total} Regeln · {provisions} Vorschriften",
+        "review": "{done}/{total} Bewertungen",
+        "translate": "{count} Texte"
+      },
+      "errorTitle": "Die Analyse wurde beendet",
+      "interruptedBody": "Der Server wurde während dieser Analyse neu gestartet. Starten Sie sie erneut.",
+      "console": "Agentenprotokoll",
+      "consoleHint": "Jeder Schritt des Agenten"
+    },
+    "graph": {
+      "search": "Begriff suchen …",
+      "rules": "Fachliche Regeln",
+      "regulation": "Regulierung ({count})",
+      "selectors": "Fallauswahl",
+      "hidden": "{count, plural, one {# Klassifikation ausgeblendet} other {# Klassifikationen ausgeblendet}}",
+      "resetLayout": "Layout zurücksetzen",
+      "drawio": "Als draw.io herunterladen",
+      "fullscreen": "Vollbild",
+      "exitFullscreen": "Vollbild beenden",
+      "movableNode": "verschiebbarer Knoten",
+      "zoomIn": "Vergrößern",
+      "zoomOut": "Verkleinern",
+      "fit": "Einpassen",
+      "legend": {
+        "figure": "Meldegröße",
+        "concept": "Fachlicher Begriff",
+        "source": "Quelldaten",
+        "rule": "Fachliche Regel",
+        "provision": "Vorschrift",
+        "value": "Wert",
+        "selector": "wählt den Fall",
+        "regulationEdge": "regulatorische Grundlage",
+        "delivered": "geliefert",
+        "derived": "abgeleitet"
+      },
+      "about": "Inhalts-Herkunft",
+      "aboutBody": "Von links nach rechts lesen: Quelldatenelemente fließen in fachliche Regeln, die fachliche Begriffe und schließlich die Meldegrößen ableiten. Die Vorschriften darüber zeigen, wo die Regulierung eine Regel festlegt. Der Balken unter jedem Begriff zeigt, wie viel seines Inhalts von der Quelle geliefert und wie viel abgeleitet wurde.",
+      "stats": {
+        "terms": "Fachbegriffe",
+        "rules": "Regeln",
+        "cases": "Fälle",
+        "provisions": "Vorschriften"
+      },
+      "tipSelect": "Klicken Sie auf einen Begriff, eine Regel oder eine Vorschrift, um Definition, Fälle mit Datensätzen und Beträgen sowie die regulatorische Grundlage zu sehen.",
+      "tipNavigate": "Hintergrund ziehen verschiebt die Ansicht, Scrollen zoomt; eine Kante überfahren zeigt, was sie trägt.",
+      "tipMove": "Ziehen Sie einen Knoten, um den Graph neu anzuordnen – seine Verbindungen folgen. Pfeiltasten verschieben den fokussierten Knoten (mit Umschalt in größeren Schritten); „Layout zurücksetzen“ stellt die automatische Anordnung wieder her.",
+      "drawioTitle": "Inhalts-Herkunft",
+      "cases": "{count, plural, one {# Fall} other {# Fälle}}",
+      "classifier": "Klassifikation",
+      "tip": {
+        "delivered": "{count} von der Quelle geliefert",
+        "derived": "{count} von der Regel abgeleitet",
+        "missing": "{count} fehlend",
+        "filled": "{filled} von {total} Datensätzen befüllt"
+      },
+      "edge": {
+        "value": "Sein Wert geht in das Ergebnis ein",
+        "selector": "Entscheidet, welcher Fall der Regel gilt",
+        "derives": "Die Regel leitet diesen Begriff ab",
+        "regulation": "Regulatorische Grundlage der Regel",
+        "inCases": "Verwendet in: {cases}"
+      },
+      "relation": {
+        "defines": "Definiert den Begriff",
+        "prescribes": "Schreibt die Regel vor",
+        "related": "Zugehörige Vorschrift"
+      },
+      "close": "Schließen",
+      "businessTerm": "Fachbegriff",
+      "reported": "Gemeldeter Wert",
+      "records": "{count} Datensätze",
+      "figureLine": "{present} von {records} Datensätzen haben einen Wert · {paths} Inhaltspfade",
+      "openFigure": "Was in dieser Größe steckt",
+      "content": "Woher der Inhalt stammt",
+      "deliveredBySource": "Von der Quelle geliefert",
+      "missing": "Fehlend",
+      "sourceData": "Quelldaten",
+      "filled": "{filled} von {total} Datensätzen befüllt",
+      "nulled": "{count} Quellwerte waren keine Zahlen ({examples}) und wurden als fehlend behandelt.",
+      "derivedBy": "Abgeleitet durch",
+      "builtFrom": "Entsteht aus",
+      "usedBy": "Verwendet von",
+      "regulatoryBasis": "Regulatorische Grundlage",
+      "openGlossary": "Im Glossar zeigen",
+      "businessRule": "Fachliche Regel {id}",
+      "derives": "Leitet ab",
+      "casesTitle": "{count, plural, one {# Fall} other {# Fälle}}",
+      "caseRecords": "{count, plural, one {# Datensatz} other {# Datensätze}} ({share})",
+      "noParameter": "kein Parameter",
+      "openAssessment": "Regulatorische Bewertung",
+      "provision": "Vorschrift",
+      "quoteVerified": "Zitat wörtlich in der Regulierung verifiziert",
+      "quoteRepaired": "Zitat auf den genauen Wortlaut der Regulierung abgeglichen",
+      "readProvision": "Ganze Vorschrift lesen"
+    },
+    "figures": {
+      "eyebrow": "Was in der Größe steckt",
+      "showInGraph": "Im Graph zeigen",
+      "total": "Gemeldete Summe",
+      "totalHint": "Summe über {records} Datensätze",
+      "records": "Datensätze",
+      "missingHint": "{count} Datensätze ohne Wert",
+      "completeHint": "Jeder Datensatz hat einen Wert",
+      "derivedShare": "Abgeleitet",
+      "derivedHint": "{delivered} Werte unverändert von der Quelle übernommen",
+      "paths": "Inhaltspfade",
+      "pathsHint": "Unterschiedliche Fallketten hinter den Werten",
+      "originsTitle": "Woher der Wert stammt",
+      "originsHint": "Jeder Wert der Größe wird entweder vom Quellsystem geliefert oder von einem Fall ihrer Regel abgeleitet.",
+      "origin": "Herkunft",
+      "amount": "Betrag",
+      "share": "Anteil",
+      "deliveredBySource": "Von der Quelle geliefert",
+      "deliveredHint": "Die Quelle hat den Wert geliefert; die Regel füllt nur fehlende Werte.",
+      "missing": "Fehlend",
+      "pathsTitle": "Inhaltspfade",
+      "pathsDescription": "Jeder Pfad ist eine Kette fachlicher Fälle, die Werte der Größe erzeugt hat – von der Größe zurück zu ihren Eingaben. Die größten Pfade stehen oben; klicken Sie auf einen Datensatz, um ihm zu folgen.",
+      "pathRecords": "{count, plural, one {# Datensatz} other {# Datensätze}}",
+      "otherPaths": "{count} kleinere Pfade mit zusammen {records} Datensätzen.",
+      "segmentsTitle": "Nach fachlichem Segment",
+      "segmentsHint": "Die Größe aufgeschlüsselt nach den Klassifikationen der Datensätze.",
+      "segment": "Segment",
+      "segmentMissing": "{count} ohne Wert",
+      "delivered": "von der Quelle geliefert",
+      "recordsTitle": "Datensatz-Verfolgung",
+      "recordsHint": "Folgen Sie einem Datensatz: wie jeder Wert der Größe entstanden ist, mit den verwendeten Werten.",
+      "recordsHintLimited": "Die ersten {shown} von {total} Datensätzen lassen sich hier verfolgen.",
+      "recordSearch": "{identifier} suchen …",
+      "record": "Datensatz",
+      "recordTitle": "Datensatz {record}",
+      "close": "Schließen",
+      "recordEmpty": "Wählen Sie links einen Datensatz (oder ein Beispiel eines Inhaltspfads), um die Herleitung seines Werts zu sehen.",
+      "byCase": "durch „{case}“",
+      "deliveredKept": "von der Quelle geliefert und übernommen",
+      "sourceValue": "Quellwert"
+    },
+    "glossary": {
+      "summaryTitle": "Was die Berechnung liefert",
+      "translatedFrom": "Übersetzung – Original: {language}",
+      "termsTitle": "Fachliches Glossar",
+      "termsHint": "Jeder Fachbegriff, aus dem die Meldegrößen entstehen, mit Definition, Inhalt und regulatorischer Grundlage.",
+      "groups": {
+        "figure": "Meldegrößen ({count})",
+        "concept": "Fachliche Begriffe ({count})",
+        "source": "Quelldatenelemente ({count})"
+      },
+      "term": "Fachbegriff",
+      "definition": "Definition",
+      "content": "Inhalt",
+      "basis": "Regulatorische Grundlage",
+      "derivedBy": "Abgeleitet durch {rule}",
+      "contentLine": "{delivered} geliefert · {derived} abgeleitet · {missing} fehlend",
+      "filled": "{filled} von {total} Datensätzen befüllt",
+      "noRule": "aus der Quelle übernommen",
+      "rulesTitle": "Fachliche Regeln und ihre Fälle",
+      "rulesHint": "Jede Regel leitet einen fachlichen Begriff ab; ihre Fälle sind die Situationen, die die Berechnung unterscheidet, mit den Datensätzen und Beträgen, die jeder erzeugt hat.",
+      "derives": "Leitet ab",
+      "from": "aus",
+      "graph": "Graph",
+      "assessment": "Bewertung",
+      "case": "Fall",
+      "whenWhat": "Wann er gilt – was er ergibt",
+      "code": "Umsetzung",
+      "records": "Datensätze",
+      "amount": "Betrag",
+      "fillsMissing": "füllt fehlende Werte",
+      "noParameter": "kein Parameter"
+    },
+    "regulation": {
+      "skippedTitle": "Keine regulatorische Grundlage in dieser Analyse",
+      "skippedNone": "Für diese Analyse wurde keine indizierte Regulierung gewählt. Laden Sie im Tab Vorschriften eine Regulierung hoch und wählen Sie sie beim Start einer neuen Analyse.",
+      "skippedUnavailable": "Der regulatorische Schritt wurde übersprungen: {reason}",
+      "eyebrow": "Regulatorische Grundlage",
+      "intro": "Für jede fachliche Regel hat der Agent die gewählten Regulierungen im Rahmen der Berechnung durchsucht, die Vorschriften verknüpft, die den Begriff definieren oder die Regel vorschreiben, sie wörtlich zitiert (gegen den Regulierungstext geprüft) und die umgesetzte Regel bewertet. Ein Zweitprüfer hat jede Bewertung kontrolliert.",
+      "framework": "Rahmen: {framework}",
+      "stats": {
+        "rules": "Regeln",
+        "consistent": "Konform",
+        "simplified": "Vereinfacht",
+        "deviation": "Abweichung",
+        "notCovered": "Keine Grundlage",
+        "quotes": "Zitate verifiziert",
+        "quotesHint": "wörtlich in der Regulierung"
+      },
+      "derives": "Leitet ab",
+      "graph": "Graph",
+      "assessment": "Bewertung",
+      "relation": {
+        "defines": "definiert den Begriff",
+        "prescribes": "schreibt die Regel vor",
+        "related": "Bezug"
+      },
+      "page": "Seite {page}",
+      "read": "Lesen",
+      "quoteVerified": "Wörtlich im Regulierungstext verifiziert",
+      "quoteRepaired": "Auf den genauen Wortlaut der Regulierung abgeglichen ({similarity} % ähnlich)",
+      "unverified": "Die KI hat Vorschriften vorgeschlagen, aber keines ihrer Zitate ließ sich im Regulierungstext verifizieren; daher wird keine Verknüpfung gezeigt.",
+      "noBasis": "Keine Vorschrift der gewählten Regulierungen regelt diese Regel.",
+      "case": "Fall",
+      "verdict": "Bewertung",
+      "provision": "Vorschrift",
+      "finding": "Feststellung",
+      "wholeRule": "Ganze Regel",
+      "reviewConfirmed": "Vom Zweitprüfer bestätigt",
+      "reviewCorrected": "Vom Zweitprüfer korrigiert",
+      "reviewMissing": "Nicht geprüft",
+      "reviewNotNeeded": "Nichts zu prüfen",
+      "retrieval": "{candidates} Kandidatenvorschriften geprüft",
+      "details": "Details",
+      "removed": "Als nicht einschlägig entfernt: {references}",
+      "originalVerdict": "Erste Bewertung:",
+      "queries": "Suchanfragen:",
+      "dropped": "{count} vorgeschlagene(s) Zitat(e) war(en) nicht wörtlich und wurde(n) verworfen."
+    },
+    "verification": {
+      "checks": "Bestandene Prüfungen",
+      "checksHint": "Deterministische Prüfungen des Inhalts und der KI-Texte",
+      "findings": "Feststellungen",
+      "findingsHint": "{critical} kritisch · {warning} Warnungen",
+      "llm": "LLM-Aufrufe",
+      "tokens": "{prompt} Prompt- · {completion} Antwort-Tokens",
+      "duration": "Dauer",
+      "checksTitle": "Prüfungen",
+      "checksIntro": "Alles, was der Agent aussagt, wird geprüft: der Inhalt gegen die gespeicherte Ausführung, die KI-Texte gegen den Code, jedes Zitat gegen die Regulierung.",
+      "status": {
+        "pass": "Bestanden",
+        "warn": "Warnung",
+        "fail": "Nicht bestanden",
+        "skipped": "Übersprungen"
+      },
+      "check": {
+        "replay": {
+          "title": "Wiederholung reproduziert die gespeicherte Ausführung",
+          "pass": "Die wiederholte Berechnung stimmt in allen {cells} Werten mit der gespeicherten Ausführung überein.",
+          "warn": "Die Wiederholung weicht in {mismatches} von {cells} Werten von der gespeicherten Ausführung ab; der Inhalt wird am wiederholten Ergebnis verfolgt."
+        },
+        "attribution": {
+          "title": "Jeder gemeldete Wert zugeordnet",
+          "pass": "Alle {values} Werte der Meldegrößen sind der Quelle oder einem Fall zugeordnet.",
+          "warn": "{attributed} von {values} Werten sind zugeordnet."
+        },
+        "reconciliation": {
+          "title": "Aufschlüsselungen stimmen mit den Summen überein",
+          "pass": "Herkünfte, Inhaltspfade und Segmente ergeben die gemeldeten Summen von {figures} Größe(n).",
+          "fail": "{differences} Aufschlüsselung(en) ergeben nicht die Summe."
+        },
+        "terms": {
+          "title": "Jeder Begriff benannt und definiert",
+          "pass": "Alle {total} Fachbegriffe haben Namen und Definition.",
+          "warn": "{named} von {total} Begriffen sind benannt; es fehlen: {missing}."
+        },
+        "cases": {
+          "title": "Jeder Fall beschrieben",
+          "pass": "Alle {total} Fälle sind fachlich beschrieben.",
+          "warn": "{described} von {total} Fällen sind beschrieben; es fehlen: {missing}."
+        },
+        "numbers": {
+          "title": "Zahlen in Regeltexten sind Parameter des Codes",
+          "pass": "Jede Zahl in den Regel- und Falltexten kommt im Code vor{corrected, select, true { (nach einer Korrekturrunde)} other {}}.",
+          "warn": "{issues} Text(e) nennen Zahlen, die keine Parameter des Codes sind."
+        },
+        "quotes": {
+          "title": "Regulatorische Zitate wörtlich",
+          "pass": "Alle {links} Zitate stehen wörtlich in der Regulierung ({corrected} auf den genauen Wortlaut abgeglichen).",
+          "warn": "{links} Zitate verifiziert; {dropped} vorgeschlagene(s) Zitat(e) war(en) nicht wörtlich und wurde(n) verworfen.",
+          "skipped": "Keine Regulierung gewählt."
+        },
+        "review": {
+          "title": "Bewertungen geprüft (Vier-Augen)",
+          "pass": "Alle {assessed} Bewertungen wurden geprüft; {corrected} korrigiert.",
+          "warn": "{reviewed} von {assessed} Bewertungen wurden geprüft.",
+          "skipped": "Keine Regulierung gewählt."
+        },
+        "unmapped": {
+          "title": "Jede Kategorie hat einen Parameter",
+          "pass": "Jede in den Daten vorkommende Kategorie hat einen Parameter.",
+          "warn": "{records} Datensätze gehören zu Kategorien ohne Parameter."
+        },
+        "complete": {
+          "title": "Meldegrößen vollständig",
+          "pass": "Jeder Datensatz hat für jede Meldegröße einen Wert.",
+          "warn": "Datensätze ohne Wert: {missing}."
+        },
+        "translation": {
+          "title": "Texte übersetzt",
+          "pass": "Jeder KI-Text steht auf Englisch und Deutsch bereit.",
+          "warn": "{kept} Text(e) behielten ihren Originalwortlaut."
+        }
+      },
+      "groundingTitle": "Hinweise zu den KI-Texten",
+      "findingsTitle": "Inhaltliche Feststellungen",
+      "findingsIntro": "Was die Inhalts-Herkunft über die Größen zeigt: Lücken, Datenprobleme und wo die umgesetzten Regeln von der Regulierung abweichen.",
+      "noFindings": "Keine Feststellungen – der Inhalt der Größen ist vollständig und regulierungskonform.",
+      "finding": {
+        "regulatory_deviation": {
+          "title": "{term}: Abweichung von der Regulierung",
+          "body": "Regel {rule} ({ruleName}) behandelt einen Fall anders, als {references} vorschreibt."
+        },
+        "regulatory_simplified": {
+          "title": "{term}: gegenüber der Regulierung vereinfacht",
+          "body": "Regel {rule} ({ruleName}) ist gröber als {references}; die betroffenen Fälle zeigt die regulatorische Grundlage."
+        },
+        "figure_missing": {
+          "title": "{term}: Werte fehlen",
+          "body": "{count} von {total} Datensätzen haben keinen Wert für diese Meldegröße."
+        },
+        "unmapped_category": {
+          "title": "{term}: Kategorien ohne Parameter",
+          "body": "Die Parametertabelle von Regel {rule} deckt {values} nicht ab; diese Datensätze erhalten keinen Wert."
+        },
+        "source_not_numeric": {
+          "title": "{term}: Quellwerte sind keine Zahlen",
+          "body": "{count} von der Quelle gelieferte Werte ({examples}) sind keine Zahlen und wurden als fehlend behandelt."
+        },
+        "mixed_provenance": {
+          "title": "{term}: gelieferte und abgeleitete Werte gemischt",
+          "body": "{delivered} Werte werden so übernommen, wie die Quelle sie liefert, {derived} leitet Regel {rule} ab. Gelieferte Werte werden nicht nachgerechnet."
+        },
+        "filter": {
+          "title": "Datensätze von den Größen ausgeschlossen",
+          "body": "Zeile {line} entfernt {rows} Datensätze, bevor die Größen berechnet werden."
+        },
+        "no_regulatory_basis": {
+          "title": "{term}: keine regulatorische Grundlage",
+          "body": "{verdict, select, unverified {Die von der KI vorgeschlagenen Vorschriften für Regel {rule} ließen sich nicht verifizieren.} other {Keine Vorschrift der gewählten Regulierungen regelt Regel {rule} ({ruleName}); sie ist eine interne Konvention.}}"
+        }
+      },
+      "openAssessment": "Bewertung öffnen",
+      "logTitle": "Agentenprotokoll",
+      "logHint": "Jeder Schritt des Agenten, in Reihenfolge."
     }
   }
 }

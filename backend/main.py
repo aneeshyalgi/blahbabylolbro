@@ -36,6 +36,7 @@ import agent_runtime
 import pdf_text
 import regulation_matcher
 import lineage_agent
+import content_lineage_agent
 import regulation_text
 
 # Static content mirrored from frontend-only tabs (Regulations hardcoded example,
@@ -106,11 +107,12 @@ NORMAL_ROOTCAUSE_SESSIONS: Dict[str, Dict[str, Any]] = {}
 # Seed default admin user on startup (idempotent)
 db.seed_default_user()
 
-# Include auth, AI agent, regulation matcher and lineage agent routers
+# Include auth, AI agent, regulation matcher and lineage agent routers (technical and content lineage)
 app.include_router(auth_module.router)
 app.include_router(agent_runtime.router)
 app.include_router(regulation_matcher.router)
 app.include_router(lineage_agent.router)
+app.include_router(content_lineage_agent.router)
 
 PUBLIC_PATHS = {
     "/",

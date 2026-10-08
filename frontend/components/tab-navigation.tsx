@@ -16,6 +16,7 @@ import {
   Sparkles,
   GitCompareArrows,
   BrainCircuit,
+  Waypoints,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
@@ -65,6 +66,8 @@ export function TabNavigation({ activeTab, onTabChange, isNavigationLocked = fal
         return <Rows3 className={iconClassName} />;
       case "content-lineage":
         return <Network className={iconClassName} />;
+      case "content-lineage-agent":
+        return <Waypoints className={iconClassName} />;
       case "compare-clusters":
         return <GitCompare className={iconClassName} />;
       case "root-cause":

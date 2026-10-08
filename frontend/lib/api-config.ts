@@ -94,6 +94,16 @@ export const API_ENDPOINTS = {
   lineageAgentExport: (id: string, format: "xlsx" | "openlineage", language: string) =>
     `${API_BASE_URL}/api/lineage-agent/runs/${id}/export?format=${format}&language=${encodeURIComponent(language)}`,
 
+  // Content lineage AI agent
+  contentLineageAgentSources: `${API_BASE_URL}/api/content-lineage-agent/sources`,
+  contentLineageAgentPreview: (executionId: string) => `${API_BASE_URL}/api/content-lineage-agent/preview?execution_id=${encodeURIComponent(executionId)}`,
+  contentLineageAgentRuns: `${API_BASE_URL}/api/content-lineage-agent/runs`,
+  contentLineageAgentRun: (id: string) => `${API_BASE_URL}/api/content-lineage-agent/runs/${id}`,
+  contentLineageAgentRunProgress: (id: string) => `${API_BASE_URL}/api/content-lineage-agent/runs/${id}?lite=true`,
+  contentLineageAgentCancel: (id: string) => `${API_BASE_URL}/api/content-lineage-agent/runs/${id}/cancel`,
+  contentLineageAgentExport: (id: string, language: string) =>
+    `${API_BASE_URL}/api/content-lineage-agent/runs/${id}/export?language=${encodeURIComponent(language)}`,
+
   // Release notes workbooks
   releaseNotes: `${API_BASE_URL}/api/release-notes`,
   releaseNotesFromUpload: `${API_BASE_URL}/api/release-notes/from-upload`,

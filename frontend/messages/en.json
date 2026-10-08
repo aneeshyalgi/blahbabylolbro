@@ -18,6 +18,7 @@
     "data": "Results",
     "clustering": "Cluster",
     "contentLineage": "Content Lineage",
+    "contentLineageAgent": "Content Lineage AI Agents",
     "compareClusters": "Compare",
     "rootCause": "Root Cause",
     "semanticLineage": "Semantic Lineage",
@@ -1608,6 +1609,585 @@
       "dynamic_loop": "Loop over computed columns",
       "analysis_error": "Analysis error",
       "import": "Import"
+    }
+  },
+  "contentLineageAgent": {
+    "eyebrow": "Business lineage · AI agents",
+    "title": "Content Lineage AI Agents",
+    "subtitle": "Explains what a reported figure means and what it is made of: the business terms and rules behind it, the share of every value delivered by the source or derived by each case, record by record, and the regulatory provisions that define it — quoted verbatim and assessed.",
+    "tour": "Guided tour",
+    "history": "Analyses",
+    "historyTitle": "Earlier content lineage analyses",
+    "historyEmpty": "No analyses yet.",
+    "historyLine": "{terms} terms · {rules} rules · {provisions} provisions",
+    "status": {
+      "running": "Running",
+      "completed": "Completed",
+      "failed": "Failed",
+      "cancelled": "Cancelled",
+      "interrupted": "Interrupted"
+    },
+    "newRun": "New analysis",
+    "backToProgress": "Back to the running analysis",
+    "backToResults": "Back to the results",
+    "cancel": "Cancel",
+    "deleteRun": "Delete analysis",
+    "deleteTitle": "Delete this analysis?",
+    "deleteBody": "The analysis and its results are deleted for good. The execution, its code and data stay unchanged.",
+    "errors": {
+      "load": "The analyses could not be loaded",
+      "preview": "The execution could not be read",
+      "start": "The analysis could not be started",
+      "cancel": "The analysis could not be cancelled",
+      "delete": "The analysis could not be deleted",
+      "export": "The export failed",
+      "noResult": "The analysis finished but its result cannot be shown."
+    },
+    "toast": {
+      "completed": "Content lineage complete",
+      "completedBody": "{terms} business terms, {rules} rules, {provisions} provisions linked",
+      "failed": "The analysis failed",
+      "deleted": "Analysis deleted"
+    },
+    "meta": {
+      "execution": "Execution of {date}",
+      "figures": "Figures: {figures}",
+      "duration": "Duration {value}"
+    },
+    "export": {
+      "title": "Export",
+      "excel": "Excel workbook",
+      "excelHint": "Glossary, rules and cases, content paths, segments, regulatory basis, records and checks",
+      "drawio": "draw.io diagram",
+      "drawioHint": "Use the download button in the graph toolbar; the diagram keeps your arrangement"
+    },
+    "tabs": {
+      "graph": "Content graph",
+      "figures": "What's in the figures",
+      "glossary": "Glossary & rules",
+      "regulation": "Regulatory basis",
+      "verification": "Checks & log"
+    },
+    "kinds": {
+      "figure": "Reported figure",
+      "concept": "Business concept",
+      "source": "Source data",
+      "classification": "Classification"
+    },
+    "verdicts": {
+      "consistent": "Consistent",
+      "simplified": "Simplified",
+      "deviation": "Deviation",
+      "not_covered": "No regulatory basis",
+      "unverified": "Not verified",
+      "consistentShort": "Consistent",
+      "simplifiedShort": "Simplified",
+      "deviationShort": "Deviation",
+      "not_coveredShort": "No basis",
+      "unverifiedShort": "Unverified",
+      "consistentHint": "The implemented rule matches the quoted provisions.",
+      "simplifiedHint": "The rule is coarser than the regulation (e.g. one parameter where the regulation distinguishes more cases) without contradicting it.",
+      "deviationHint": "A case or parameter contradicts a quoted provision.",
+      "not_coveredHint": "No provision of the selected regulations governs this rule (e.g. an internal data convention).",
+      "unverifiedHint": "The AI proposed provisions, but none of its quotes could be verified in the regulation text."
+    },
+    "frameworks": {
+      "credit_risk_standardised": "Credit risk – standardised approach",
+      "credit_risk_irb": "Credit risk – IRB approach",
+      "securitisation": "Securitisation",
+      "counterparty_credit_risk": "Counterparty credit risk",
+      "market_risk": "Market risk",
+      "operational_risk": "Operational risk",
+      "own_funds": "Own funds",
+      "large_exposures": "Large exposures",
+      "liquidity": "Liquidity",
+      "leverage": "Leverage",
+      "other": "Not a prudential framework"
+    },
+    "languageNames": {
+      "EN": "English",
+      "DE": "German"
+    },
+    "log": {
+      "run_started": "Analysis started for execution {execution} of {cluster}",
+      "code_loaded": "Loaded {file} ({lines} lines)",
+      "data_loaded": "Loaded the input table: {rows} records × {columns} columns",
+      "static_done": "Static data-flow analysis: {statements} statements, {writes} column writes, {lookups} parameter table(s)",
+      "replay_done": "Replay reproduces the stored execution: {cells} values identical; {changes} value changes attributed to statements ({ms} ms)",
+      "replay_columns": "The code now produces other columns than the stored execution; the content is traced on the replayed result",
+      "replay_mismatch": "Replay differs from the stored execution in {mismatches} of {cells} values (the input data may have changed since)",
+      "replay_error": "Replay stopped at line {line}: {message}",
+      "figures_ignored": "Not derived by this code and therefore not traced: {columns}",
+      "scope": "Reported figure(s) {figures}: {terms} business terms, {rules} business rules with {cases} cases",
+      "composed": "Content composed: {records} records, {paths} content path(s), {dimensions} business segment(s)",
+      "unmapped": "[{column}] line {line}: categories without a parameter: {values}",
+      "model": "Model: {model} · temperature 0 · JSON-schema output",
+      "describing": "Describing {terms} business terms and {rules} business rules in {batches} batch(es)",
+      "described": "Batch {batch}: {terms} terms and {rules} rules described{corrected, select, true { after a correction round} other {}}",
+      "framework": "Regulatory framework of the calculation: {framework}",
+      "regulation_skipped": "{reason, select, none_selected {Regulatory step skipped: no indexed regulation selected} other {Regulatory step skipped: {message}}}",
+      "regulating": "Looking for the regulatory basis of {rules} business rules in {regulations}",
+      "no_candidates": "{rule} {name}: no candidate provisions found",
+      "linked": "{rule} {name}: {count} provision(s) linked ({references}); verdict: {verdict}",
+      "quote_failed": "{rule}: {count} quote(s) not verbatim in the regulation; asking for a correction",
+      "reviewing": "Second reviewer checks {count} regulatory assessment(s)",
+      "reviewed": "{rule} {name}: assessment confirmed by the second reviewer ({verdict})",
+      "review_corrected": "{rule} {name}: the second reviewer corrected the assessment ({verdict})",
+      "translating": "Translating {count} AI texts into {language}",
+      "translated": "AI texts available in {language} ({count} texts; {kept} kept in the original wording)",
+      "completed": "Content lineage complete: {figures} reported figure(s), {terms} business terms, {rules} rules, {provisions} provision(s) linked",
+      "cancelled": "Analysis cancelled.",
+      "cancel_requested": "Cancellation requested.",
+      "failed": "Analysis failed: {message}",
+      "llm_error": "The language model failed in step {step}: {message}",
+      "model_fallback": "Model {model} is not available; continuing with {fallback}"
+    },
+    "setup": {
+      "executionsTitle": "Choose an execution",
+      "executionsHint": "A calculation (code of a cluster applied to its dataset) whose reported figures you want to explain",
+      "search": "Search clusters …",
+      "loading": "Loading …",
+      "emptyTitle": "No executions yet",
+      "emptyBody": "Run a cluster in the Cluster tab first; every execution can then be analysed here.",
+      "reference": "Reference",
+      "reportingDate": "Reporting date {date}",
+      "noExecutions": "No stored execution",
+      "executedAt": "Executed {date}",
+      "records": "{count, plural, one {# record} other {# records}}",
+      "columns": "{count, plural, one {# column} other {# columns}}",
+      "figuresTitle": "Choose the reported figures",
+      "figuresHint": "The figures whose content the agent explains; everything they are built from is traced",
+      "figuresEmpty": "Choose an execution to see the figures its code derives.",
+      "lines": "{count} lines",
+      "derivedCount": "{count, plural, one {# derived column} other {# derived columns}}",
+      "noDerived": "This code derives no column, so there is no content to trace.",
+      "usedBy": "Feeds into {columns}",
+      "endOfChain": "End of a calculation chain – a typical reported figure",
+      "suggested": "suggested",
+      "text": "text",
+      "figuresNote": "Suggested: the figures at the end of a calculation chain. Choose up to six.",
+      "regulationsTitle": "Regulations for the regulatory basis",
+      "regulationsHint": "Optional: indexed regulations in which the agent looks up the provisions behind every rule",
+      "regulationsEmpty": "No regulation uploaded yet. Upload and index one in the Regulation tab to get a regulatory basis.",
+      "regulationMeta": "{articles} articles · {pages} pages · indexed",
+      "regulationNotReady": "Not indexed yet",
+      "regulationsNone": "Without a regulation the regulatory basis and its review are skipped.",
+      "methodTitle": "How the agent builds the content lineage",
+      "methodHint": "Deterministic facts first; the AI only names, explains and assesses them, and every claim is checked",
+      "method": {
+        "trace": {
+          "title": "Trace",
+          "body": "Replays the calculation statement by statement and attributes every value of every column to the statement that wrote it."
+        },
+        "compose": {
+          "title": "Compose",
+          "body": "Turns statements into business rules and cases and measures each one: records, amounts, content paths and segments of every figure."
+        },
+        "describe": {
+          "title": "Describe",
+          "body": "The AI names and defines every business term and states every rule and case in business language; numbers are checked against the code."
+        },
+        "regulate": {
+          "title": "Regulate",
+          "body": "Searches the regulation within the calculation's framework, links the defining provisions with verbatim quotes and assesses each rule."
+        },
+        "review": {
+          "title": "Review",
+          "body": "A second AI reviewer checks every assessment against the quoted provisions (four-eyes principle) and removes links that don't apply."
+        },
+        "translate": {
+          "title": "Translate",
+          "body": "Every AI text is available in English and German."
+        }
+      },
+      "versusTechnicalLabel": "Technical lineage",
+      "versusTechnical": "How the code moves data: columns, statements, code lines.",
+      "versusContentLabel": "Content lineage",
+      "versusContent": "What a figure means and is made of: business terms, rules and cases, shares of every value, and the regulation behind it.",
+      "readyTitle": "Ready to explain {cluster}",
+      "readyFigures": "Figures: {figures}",
+      "readyNoFigures": "Choose at least one reported figure",
+      "readyRegulations": "{count, plural, one {# regulation} other {# regulations}}",
+      "readyNoRegulations": "no regulation (regulatory basis skipped)",
+      "notReadyTitle": "Choose an execution and its reported figures",
+      "notReadyBody": "The agent then traces what every figure is made of and where its rules come from.",
+      "noLlm": "No language model is configured (OPENAI_API_KEY or Azure OpenAI).",
+      "start": "Build content lineage"
+    },
+    "progress": {
+      "running": "Analysis running",
+      "failed": "Analysis failed",
+      "cancelled": "Analysis cancelled",
+      "interrupted": "Analysis interrupted",
+      "done": "Analysis complete",
+      "title": "Content lineage of {cluster}",
+      "figures": "figures: {figures}",
+      "cancel": "Cancel",
+      "new": "New analysis",
+      "step": "Step {index}",
+      "stages": {
+        "trace": {
+          "title": "Trace",
+          "body": "Replay the calculation and attribute every value"
+        },
+        "compose": {
+          "title": "Compose",
+          "body": "Rules, cases, content paths and segments"
+        },
+        "describe": {
+          "title": "Describe",
+          "body": "Business terms and rules in business language"
+        },
+        "regulate": {
+          "title": "Regulate",
+          "body": "Provisions, verbatim quotes, assessment"
+        },
+        "review": {
+          "title": "Review",
+          "body": "Second reviewer checks every assessment"
+        },
+        "translate": {
+          "title": "Translate",
+          "body": "Every AI text in English and German"
+        }
+      },
+      "detail": {
+        "trace": "{cells} values reproduced · {changes} changes attributed",
+        "traceMismatch": "replay differs from the stored execution",
+        "compose": "{terms} terms · {rules} rules · {cases} cases",
+        "paths": "{count, plural, one {# path} other {# paths}}",
+        "describe": "{done}/{total} rules",
+        "skipped": "skipped",
+        "regulate": "{done}/{total} rules · {provisions} provisions",
+        "review": "{done}/{total} assessments",
+        "translate": "{count} texts"
+      },
+      "errorTitle": "The analysis stopped",
+      "interruptedBody": "The server restarted while this analysis ran. Start it again.",
+      "console": "Agent log",
+      "consoleHint": "Every step the agent takes"
+    },
+    "graph": {
+      "search": "Find a term …",
+      "rules": "Business rules",
+      "regulation": "Regulation ({count})",
+      "selectors": "Case selectors",
+      "hidden": "{count, plural, one {# classification hidden} other {# classifications hidden}}",
+      "resetLayout": "Reset layout",
+      "drawio": "Download as draw.io",
+      "fullscreen": "Full screen",
+      "exitFullscreen": "Exit full screen",
+      "movableNode": "movable node",
+      "zoomIn": "Zoom in",
+      "zoomOut": "Zoom out",
+      "fit": "Fit to screen",
+      "legend": {
+        "figure": "Reported figure",
+        "concept": "Business concept",
+        "source": "Source data",
+        "rule": "Business rule",
+        "provision": "Provision",
+        "value": "value",
+        "selector": "selects the case",
+        "regulationEdge": "regulatory basis",
+        "delivered": "delivered",
+        "derived": "derived"
+      },
+      "about": "Content lineage",
+      "aboutBody": "Read from left to right: source data elements feed business rules, which derive business concepts and finally the reported figures. Provisions above show where the regulation defines a rule. The bar under each term shows how much of its content was delivered by the source and how much was derived.",
+      "stats": {
+        "terms": "Business terms",
+        "rules": "Rules",
+        "cases": "Cases",
+        "provisions": "Provisions"
+      },
+      "tipSelect": "Click a term, rule or provision to see its definition, its cases with their records and amounts, and its regulatory basis.",
+      "tipNavigate": "Drag the background to pan, scroll to zoom; hover an edge to see what it carries.",
+      "tipMove": "Drag a node to rearrange the graph – its connections follow. Arrow keys move the focused node (Shift for bigger steps); Reset layout restores the automatic arrangement.",
+      "drawioTitle": "Content lineage",
+      "cases": "{count, plural, one {# case} other {# cases}}",
+      "classifier": "classification",
+      "tip": {
+        "delivered": "{count} delivered by the source",
+        "derived": "{count} derived by the rule",
+        "missing": "{count} missing",
+        "filled": "{filled} of {total} records filled"
+      },
+      "edge": {
+        "value": "Its value goes into the result",
+        "selector": "Decides which case of the rule applies",
+        "derives": "The rule derives this term",
+        "regulation": "Regulatory basis of the rule",
+        "inCases": "Used in: {cases}"
+      },
+      "relation": {
+        "defines": "Defines the term",
+        "prescribes": "Prescribes the rule",
+        "related": "Related provision"
+      },
+      "close": "Close",
+      "businessTerm": "Business term",
+      "reported": "Reported value",
+      "records": "{count} records",
+      "figureLine": "{present} of {records} records carry a value · {paths} content paths",
+      "openFigure": "What's in this figure",
+      "content": "Where the content comes from",
+      "deliveredBySource": "Delivered by the source",
+      "missing": "Missing",
+      "sourceData": "Source data",
+      "filled": "{filled} of {total} records filled",
+      "nulled": "{count} source values were not numbers ({examples}) and were treated as missing.",
+      "derivedBy": "Derived by",
+      "builtFrom": "Built from",
+      "usedBy": "Used by",
+      "regulatoryBasis": "Regulatory basis",
+      "openGlossary": "Show in the glossary",
+      "businessRule": "Business rule {id}",
+      "derives": "Derives",
+      "casesTitle": "{count, plural, one {# case} other {# cases}}",
+      "caseRecords": "{count, plural, one {# record} other {# records}} ({share})",
+      "noParameter": "no parameter",
+      "openAssessment": "Regulatory assessment",
+      "provision": "Provision",
+      "quoteVerified": "Quote verified verbatim in the regulation",
+      "quoteRepaired": "Quote matched to the exact wording of the regulation",
+      "readProvision": "Read the whole provision"
+    },
+    "figures": {
+      "eyebrow": "What's in the figure",
+      "showInGraph": "Show in the graph",
+      "total": "Reported total",
+      "totalHint": "Sum over {records} records",
+      "records": "Records",
+      "missingHint": "{count} records without a value",
+      "completeHint": "Every record carries a value",
+      "derivedShare": "Derived",
+      "derivedHint": "{delivered} values delivered by the source as they are",
+      "paths": "Content paths",
+      "pathsHint": "Distinct chains of cases behind the values",
+      "originsTitle": "Where the value comes from",
+      "originsHint": "Every value of the figure is either delivered by the source system or derived by one case of its rule.",
+      "origin": "Origin",
+      "amount": "Amount",
+      "share": "Share",
+      "deliveredBySource": "Delivered by the source",
+      "deliveredHint": "The source delivered the value; the rule only fills values that are missing.",
+      "missing": "Missing",
+      "pathsTitle": "Content paths",
+      "pathsDescription": "Each path is one chain of business cases that produced values of the figure – from the figure back to its inputs. The largest paths come first; click a record to follow it.",
+      "pathRecords": "{count, plural, one {# record} other {# records}}",
+      "otherPaths": "{count} smaller paths with {records} records together.",
+      "segmentsTitle": "By business segment",
+      "segmentsHint": "The figure broken down by the classifications of the records.",
+      "segment": "Segment",
+      "segmentMissing": "{count} without a value",
+      "delivered": "delivered by the source",
+      "recordsTitle": "Record trace",
+      "recordsHint": "Follow one record: how each value of the figure came about, with the values it used.",
+      "recordsHintLimited": "The first {shown} of {total} records can be traced here.",
+      "recordSearch": "Search {identifier} …",
+      "record": "record",
+      "recordTitle": "Record {record}",
+      "close": "Close",
+      "recordEmpty": "Choose a record on the left (or an example of a content path) to see the derivation of its value.",
+      "byCase": "by “{case}”",
+      "deliveredKept": "delivered by the source and kept",
+      "sourceValue": "source value"
+    },
+    "glossary": {
+      "summaryTitle": "What the calculation produces",
+      "translatedFrom": "Translated from {language}",
+      "termsTitle": "Business glossary",
+      "termsHint": "Every business term the reported figures are built from, with its definition, its content and its regulatory basis.",
+      "groups": {
+        "figure": "Reported figures ({count})",
+        "concept": "Business concepts ({count})",
+        "source": "Source data elements ({count})"
+      },
+      "term": "Business term",
+      "definition": "Definition",
+      "content": "Content",
+      "basis": "Regulatory basis",
+      "derivedBy": "Derived by {rule}",
+      "contentLine": "{delivered} delivered · {derived} derived · {missing} missing",
+      "filled": "{filled} of {total} records filled",
+      "noRule": "taken from the source",
+      "rulesTitle": "Business rules and their cases",
+      "rulesHint": "Each rule derives one business concept; its cases are the situations the calculation distinguishes, with the records and amounts each one produced.",
+      "derives": "Derives",
+      "from": "from",
+      "graph": "Graph",
+      "assessment": "Assessment",
+      "case": "Case",
+      "whenWhat": "When it applies – what it yields",
+      "code": "Implementation",
+      "records": "Records",
+      "amount": "Amount",
+      "fillsMissing": "fills missing values",
+      "noParameter": "no parameter"
+    },
+    "regulation": {
+      "skippedTitle": "No regulatory basis in this analysis",
+      "skippedNone": "No indexed regulation was selected for this analysis. Upload a regulation in the Regulation tab and select it when you start a new analysis.",
+      "skippedUnavailable": "The regulatory step was skipped: {reason}",
+      "eyebrow": "Regulatory basis",
+      "intro": "For every business rule the agent searched the selected regulations within the framework of the calculation, linked the provisions that define the concept or prescribe the rule, quoted them verbatim (checked against the regulation text) and assessed the implemented rule. A second reviewer checked each assessment.",
+      "framework": "Framework: {framework}",
+      "stats": {
+        "rules": "Rules",
+        "consistent": "Consistent",
+        "simplified": "Simplified",
+        "deviation": "Deviation",
+        "notCovered": "No basis",
+        "quotes": "Quotes verified",
+        "quotesHint": "verbatim in the regulation"
+      },
+      "derives": "Derives",
+      "graph": "Graph",
+      "assessment": "Assessment",
+      "relation": {
+        "defines": "defines the term",
+        "prescribes": "prescribes the rule",
+        "related": "related"
+      },
+      "page": "page {page}",
+      "read": "Read",
+      "quoteVerified": "Verified verbatim in the regulation text",
+      "quoteRepaired": "Matched to the exact wording of the regulation ({similarity} % similar)",
+      "unverified": "The AI proposed provisions, but none of its quotes could be verified in the regulation text, so no link is shown.",
+      "noBasis": "No provision of the selected regulations governs this rule.",
+      "case": "Case",
+      "verdict": "Verdict",
+      "provision": "Provision",
+      "finding": "Finding",
+      "wholeRule": "Whole rule",
+      "reviewConfirmed": "Confirmed by the second reviewer",
+      "reviewCorrected": "Corrected by the second reviewer",
+      "reviewMissing": "Not reviewed",
+      "reviewNotNeeded": "Nothing to review",
+      "retrieval": "{candidates} candidate provisions examined",
+      "details": "Details",
+      "removed": "Removed as not applicable: {references}",
+      "originalVerdict": "First assessment:",
+      "queries": "Search queries:",
+      "dropped": "{count} proposed quote(s) were not verbatim and were dropped."
+    },
+    "verification": {
+      "checks": "Checks passed",
+      "checksHint": "Deterministic checks of the content and the AI texts",
+      "findings": "Findings",
+      "findingsHint": "{critical} critical · {warning} warnings",
+      "llm": "LLM calls",
+      "tokens": "{prompt} prompt · {completion} completion tokens",
+      "duration": "Duration",
+      "checksTitle": "Checks",
+      "checksIntro": "Everything the agent states is checked: the content against the stored execution, the AI texts against the code, every quote against the regulation.",
+      "status": {
+        "pass": "Pass",
+        "warn": "Warning",
+        "fail": "Fail",
+        "skipped": "Skipped"
+      },
+      "check": {
+        "replay": {
+          "title": "Replay reproduces the stored execution",
+          "pass": "The replayed calculation matches the stored execution in all {cells} values.",
+          "warn": "The replay differs from the stored execution in {mismatches} of {cells} values; the content is traced on the replayed result."
+        },
+        "attribution": {
+          "title": "Every reported value attributed",
+          "pass": "All {values} values of the reported figures are attributed to the source or to a case.",
+          "warn": "{attributed} of {values} values are attributed."
+        },
+        "reconciliation": {
+          "title": "Breakdowns reconcile to the totals",
+          "pass": "Origins, content paths and segments add up to the reported totals of {figures} figure(s).",
+          "fail": "{differences} breakdown(s) do not add up to the total."
+        },
+        "terms": {
+          "title": "Every term named and defined",
+          "pass": "All {total} business terms have a name and definition.",
+          "warn": "{named} of {total} terms are named; missing: {missing}."
+        },
+        "cases": {
+          "title": "Every case described",
+          "pass": "All {total} cases are described in business language.",
+          "warn": "{described} of {total} cases are described; missing: {missing}."
+        },
+        "numbers": {
+          "title": "Numbers in rule texts are parameters of the code",
+          "pass": "Every number in the rule and case texts appears in the code{corrected, select, true { (after a correction round)} other {}}.",
+          "warn": "{issues} text(s) state numbers that are not parameters of the code."
+        },
+        "quotes": {
+          "title": "Regulatory quotes verbatim",
+          "pass": "All {links} quotes are verbatim in the regulation ({corrected} matched to the exact wording).",
+          "warn": "{links} quotes verified; {dropped} proposed quote(s) were not verbatim and were dropped.",
+          "skipped": "No regulation selected."
+        },
+        "review": {
+          "title": "Assessments reviewed (four eyes)",
+          "pass": "All {assessed} assessments were reviewed; {corrected} corrected.",
+          "warn": "{reviewed} of {assessed} assessments were reviewed.",
+          "skipped": "No regulation selected."
+        },
+        "unmapped": {
+          "title": "Every category has a parameter",
+          "pass": "Every category met in the data has a parameter.",
+          "warn": "{records} records belong to categories without a parameter."
+        },
+        "complete": {
+          "title": "Reported figures complete",
+          "pass": "Every record carries a value for every reported figure.",
+          "warn": "Records without a value: {missing}."
+        },
+        "translation": {
+          "title": "Texts translated",
+          "pass": "Every AI text is available in English and German.",
+          "warn": "{kept} text(s) kept their original wording."
+        }
+      },
+      "groundingTitle": "Notes on the AI texts",
+      "findingsTitle": "Content findings",
+      "findingsIntro": "What the content lineage reveals about the figures: gaps, data issues and where the implemented rules depart from the regulation.",
+      "noFindings": "No findings – the content of the figures is complete and consistent with the regulation.",
+      "finding": {
+        "regulatory_deviation": {
+          "title": "{term}: deviation from the regulation",
+          "body": "Rule {rule} ({ruleName}) treats a case differently than {references} prescribes."
+        },
+        "regulatory_simplified": {
+          "title": "{term}: simplified against the regulation",
+          "body": "Rule {rule} ({ruleName}) is coarser than {references}; see the regulatory basis for the cases concerned."
+        },
+        "figure_missing": {
+          "title": "{term}: values missing",
+          "body": "{count} of {total} records carry no value for this reported figure."
+        },
+        "unmapped_category": {
+          "title": "{term}: categories without a parameter",
+          "body": "The parameter table of rule {rule} does not cover {values}; these records get no value."
+        },
+        "source_not_numeric": {
+          "title": "{term}: source values are not numbers",
+          "body": "{count} values delivered by the source ({examples}) are not numbers and were treated as missing."
+        },
+        "mixed_provenance": {
+          "title": "{term}: delivered and derived values mixed",
+          "body": "{delivered} values are taken from the source as delivered, {derived} are derived by rule {rule}. Delivered values are not recalculated."
+        },
+        "filter": {
+          "title": "Records excluded from the figures",
+          "body": "Line {line} removes {rows} records before the figures are calculated."
+        },
+        "no_regulatory_basis": {
+          "title": "{term}: no regulatory basis",
+          "body": "{verdict, select, unverified {The AI's proposed provisions for rule {rule} could not be verified.} other {No provision of the selected regulations governs rule {rule} ({ruleName}); it is an internal convention.}}"
+        }
+      },
+      "openAssessment": "Open the assessment",
+      "logTitle": "Agent log",
+      "logHint": "Every step the agent took, in order."
     }
   }
 }
