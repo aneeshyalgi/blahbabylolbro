@@ -2087,7 +2087,7 @@ def analyse(code: str, input_columns: List[str]) -> Dict[str, Any]:
         depth[node["id"]] = best
 
     dataset_ops = [
-        {"kind": op["kind"], "line": op["line"], "code": op.get("code"), "columns": sorted({nodes[item]["column"] for item in op["nodes"]})}
+        {"kind": op["kind"], "line": op["line"], "code": op.get("code"), "columns": sorted({nodes[item]["column"] for item in op["nodes"]}), "nodes": sorted(int(item) for item in op["nodes"])}
         for op in frame.row_ops
     ]
 

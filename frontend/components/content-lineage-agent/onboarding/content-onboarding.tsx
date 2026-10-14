@@ -8,19 +8,18 @@ import {
   BadgeCheck,
   BookOpenCheck,
   Check,
-  CircleCheck,
   Code2,
-  FileText,
+  Crosshair,
+  Flag,
+  FlaskConical,
   Languages,
   Microscope,
   MousePointerClick,
   Pause,
   Play,
-  Route,
-  Scale,
   Sparkles,
-  UserCheck,
   Waypoints,
+  Workflow,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -45,13 +44,12 @@ import {
   TOUR_STEPS,
   type ContentLocale,
   type ContentOnboardingCopy,
-  type TourRequirement,
+  type ReachKind,
   type TourStage,
   type TourStepDef,
-  type TourView,
 } from "./content-onboarding-content";
 
-export const CONTENT_ONBOARDING_STORAGE_KEY = "dataflow_content_lineage_onboarding_v1";
+export const CONTENT_ONBOARDING_STORAGE_KEY = "dataflow_content_lineage_onboarding_v2";
 
 /** What the tour needs from the content lineage tab: its state and the actions it may perform for the user. */
 export type ContentTourController = {
@@ -62,32 +60,23 @@ export type ContentTourController = {
   tourRunError: string | null;
   executionsAvailable: boolean;
   executionSelected: boolean;
-  /** Whether the selected execution derives any column (null while its preview loads). */
-  figuresAvailable: boolean | null;
-  figuresSelected: boolean;
-  regulationsAvailable: boolean;
-  regulationsSelected: boolean;
-  /** What the tour's finished analysis contains (null while unknown): steps about missing parts are left out. */
-  available: Record<TourRequirement, boolean | null>;
-  figureNodeSelected: boolean;
-  ruleSelected: boolean;
-  provisionSelected: boolean;
-  recordSelected: boolean;
+  /** Whether a field of the selected execution flows into another field (null while its fields load). */
+  fieldsAvailable: boolean | null;
+  fieldSelected: boolean;
+  /** A downstream field is selected in the lineage (its details are shown). */
+  flowFieldSelected: boolean;
   showSetup: () => void;
   /** Bring the progress view of the tour's analysis on screen; it stays there (also once finished) until a results step. */
   showProgress: () => void;
-  /** Bring the tour's finished analysis on screen in the given view. */
-  showResults: (view: TourView) => void;
+  /** Bring the tour's finished analysis on screen. */
+  showResults: () => void;
   selectFirstExecution: () => void;
-  /** Tick the suggested figures of the selected execution (as soon as its preview is there). */
-  selectSuggestedFigures: () => void;
-  selectFirstRegulation: () => void;
-  /** Start the real analysis with the selected execution, figures and regulations. */
+  /** Select the field whose content reaches the most fields (as soon as the execution's fields are there). */
+  selectSuggestedField: () => void;
+  /** Start the real analysis with the selected execution and field. */
   startRun: () => void;
-  selectFigureNode: () => void;
-  selectRule: () => void;
-  selectProvision: () => void;
-  selectRecord: () => void;
+  /** Select the most instructive next field in the lineage. */
+  selectFlowField: () => void;
 };
 
 type Phase = "deck" | "tour" | "complete";
@@ -287,10 +276,8 @@ function WelcomeDeck({
               {screen === "welcome" ? <WelcomeScreen copy={copy} /> : null}
               {screen === "difference" ? <DifferenceScreen copy={copy} /> : null}
               {screen === "pipeline" ? <PipelineScreen copy={copy} /> : null}
-              {screen === "rules" ? <RulesScreen copy={copy} language={language} /> : null}
-              {screen === "paths" ? <PathsScreen copy={copy} language={language} /> : null}
-              {screen === "graph" ? <GraphScreen copy={copy} /> : null}
-              {screen === "regulation" ? <RegulationScreen copy={copy} /> : null}
+              {screen === "forward" ? <ForwardScreen copy={copy} language={language} /> : null}
+              {screen === "view" ? <ViewScreen copy={copy} /> : null}
               {screen === "controls" ? <ControlsScreen copy={copy} /> : null}
               {screen === "ready" ? <ReadyScreen copy={copy} onStart={startTour} /> : null}
             </div>
@@ -522,7 +509,7 @@ function DifferenceScreen({ copy }: { copy: ContentOnboardingCopy }) {
   );
 }
 
-const PIPELINE_ICONS: LucideIcon[] = [Microscope, Route, BookOpenCheck, Scale, UserCheck, Languages];
+const PIPELINE_ICONS: LucideIcon[] = [Microscope, Workflow, BookOpenCheck, Languages];
 
 function PipelineScreen({ copy }: { copy: ContentOnboardingCopy }) {
   const nodes = copy.pipeline.nodes;
@@ -608,150 +595,26 @@ function PipelineScreen({ copy }: { copy: ContentOnboardingCopy }) {
   );
 }
 
-const CASE_COLORS = ["#34d399", "#a78bfa", "#f472b6", "#fbbf24", "#22d3ee", "#fb923c"];
+const REACH_TONES: Record<ReachKind, string> = { value: "#34d399", decides: "#fbbf24", tested: "#f472b6" };
+const RECORD_COLORS = ["#f5c400", "#34d399", "#38bdf8", "#a78bfa", "#fb923c"];
 
-function RulesScreen({ copy, language }: { copy: ContentOnboardingCopy; language: ContentLocale }) {
-  const { rules } = copy;
-  const [exampleIndex, setExampleIndex] = useState(0);
-  const [caseIndex, setCaseIndex] = useState(0);
-  const example = rules.examples[exampleIndex];
-  const item = example.cases[Math.min(caseIndex, example.cases.length - 1)];
-  const total = example.cases.reduce((sum, entry) => sum + entry.records, 0);
+function ForwardScreen({ copy, language }: { copy: ContentOnboardingCopy; language: ContentLocale }) {
+  const { forward } = copy;
+  const { active, setActive, playing, setPlaying } = usePlayer(forward.items.length, 5200);
+  const item = forward.items[active];
   const number = new Intl.NumberFormat(language === "de" ? "de-DE" : "en-US");
-  return (
-    <div>
-      <ScreenHeading eyebrow={rules.eyebrow} title={rules.title} intro={rules.intro} />
-      <div className="mt-5 flex gap-1 rounded-xl border border-[#1f2630] bg-[#0b1017] p-1">
-        {rules.examples.map((entry, entryIndex) => (
-          <button
-            key={entry.key}
-            type="button"
-            onClick={() => {
-              setExampleIndex(entryIndex);
-              setCaseIndex(0);
-            }}
-            className={cn("flex-1 rounded-lg px-3 py-2 text-[12.5px] font-medium transition-colors", entryIndex === exampleIndex ? "bg-[#f5c400]/12 text-[#f5c400] shadow-[inset_0_0_0_1px_rgba(245,196,0,0.25)]" : "text-[#8c96a8] hover:text-white")}
-          >
-            {entry.tab}
-          </button>
-        ))}
-      </div>
-      <div key={example.key} className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-        <div className="ob-rise rounded-2xl border border-violet-400/25 bg-[#0d0b16] p-4" style={{ animationDelay: "80ms" }}>
-          <p className="flex items-center gap-2 text-[13.5px] font-semibold text-[#ece8ff]">
-            <span className="h-2 w-2 rounded-full bg-violet-400" />
-            {example.rule}
-          </p>
-          <p className="mt-1 text-[11.5px] text-[#9d95c9]">→ {example.derives}</p>
-          <p className="mt-2 text-[12.5px] leading-[1.6] text-[#c9c4e6]">{example.statement}</p>
-          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[#1a1730]">
-            <div className="flex h-full">
-              {example.cases.map((entry, entryIndex) => (
-                <span key={entry.key} className="h-full transition-opacity duration-300" style={{ width: `${(100 * entry.records) / Math.max(1, total)}%`, background: CASE_COLORS[entryIndex], opacity: entryIndex === caseIndex ? 1 : 0.35 }} />
-              ))}
-            </div>
-          </div>
-          <ul className="mt-3 space-y-1.5">
-            {example.cases.map((entry, entryIndex) => (
-              <li key={entry.key}>
-                <button
-                  type="button"
-                  onClick={() => setCaseIndex(entryIndex)}
-                  className={cn(
-                    "flex w-full items-center gap-2.5 rounded-lg border px-3 py-2 text-left text-[12.5px] transition-all duration-300",
-                    entryIndex === caseIndex ? "border-[#f5c400]/45 bg-[#f5c400]/[0.07] text-white" : "border-[#221f33] text-[#b8b2d6] hover:border-[#3a3554]",
-                  )}
-                >
-                  <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: CASE_COLORS[entryIndex] }} />
-                  <span className="min-w-0 flex-1 truncate">{entry.label}</span>
-                  <span className="shrink-0 font-mono text-[10.5px] text-[#8c86ad]">{entry.records}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-        <div key={`${example.key}-${item.key}`} className="ob-rise space-y-2.5 rounded-2xl border border-[#1f2630] bg-[#0b1017] p-4" style={{ animationDelay: "160ms" }}>
-          <p className="flex items-center gap-2 text-[14px] font-semibold text-white">
-            <span className="h-2.5 w-2.5 rounded-full" style={{ background: CASE_COLORS[caseIndex] }} />
-            {item.label}
-          </p>
-          <Fact label={rules.whenLabel} value={item.when} />
-          <Fact label={rules.yieldsLabel} value={item.yields} />
-          {item.behind && <Fact label={rules.behindLabel} value={item.behind} mono />}
-          <div>
-            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#687386]">{rules.codeLabel}</p>
-            <p className="mt-1 whitespace-pre-wrap break-all rounded-md border border-[#1f252e] bg-[#05080c] px-2.5 py-1.5 font-mono text-[11px] leading-5 text-[#aeb8c7]">{item.code}</p>
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div className="rounded-lg border border-[#1f2630] bg-[#0d131b] px-3 py-2">
-              <p className="text-[10px] uppercase tracking-wide text-[#687386]">{rules.recordsLabel}</p>
-              <p className="mt-0.5 text-[18px] font-semibold tabular-nums text-white">{item.records} <span className="text-[11px] font-normal text-[#8c96a8]">/ {total}</span></p>
-            </div>
-            <div className="rounded-lg border border-[#1f2630] bg-[#0d131b] px-3 py-2">
-              <p className="text-[10px] uppercase tracking-wide text-[#687386]">{rules.amountLabel}</p>
-              <p className="mt-0.5 text-[18px] font-semibold tabular-nums text-white">{item.amount === null ? "–" : number.format(item.amount)}</p>
-            </div>
-          </div>
-        </div>
-      </div>
-      <p className="ob-rise mt-4 rounded-xl border border-sky-400/25 bg-sky-400/[0.05] px-4 py-3 text-xs leading-5 text-[#d6dbe3]" style={{ animationDelay: "420ms" }}>
-        {rules.deliveredNote}
-      </p>
-    </div>
-  );
-}
-
-function Fact({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
-  return (
-    <div>
-      <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#687386]">{label}</p>
-      <p className={cn("mt-0.5 text-[12.5px] leading-5 text-[#e5e9ef]", mono && "font-mono text-[12px]")}>{value}</p>
-    </div>
-  );
-}
-
-const PATH_COLORS = ["#f5c400", "#34d399", "#38bdf8", "#a78bfa", "#fb923c"];
-const TONE_COLORS = { figure: "#f5c400", concept: "#34d399", source: "#38bdf8" } as const;
-
-function PathsScreen({ copy, language }: { copy: ContentOnboardingCopy; language: ContentLocale }) {
-  const { paths } = copy;
-  const { active, setActive, playing, setPlaying } = usePlayer(paths.items.length, 4600);
-  const item = paths.items[active];
-  const number = new Intl.NumberFormat(language === "de" ? "de-DE" : "en-US");
-  const total = paths.items.reduce((sum, entry) => sum + entry.amount, 0);
-  const percent = new Intl.NumberFormat(language === "de" ? "de-DE" : "en-US", { maximumFractionDigits: 1 });
+  const total = forward.items.reduce((sum, entry) => sum + entry.end, 0);
   return (
     <div>
       <div className="flex items-end justify-between gap-6">
-        <ScreenHeading eyebrow={paths.eyebrow} title={paths.title} intro={paths.intro} />
+        <ScreenHeading eyebrow={forward.eyebrow} title={forward.title} intro={forward.intro} />
         <PlayToggle playing={playing} onToggle={() => setPlaying((current) => !current)} copy={copy} />
       </div>
-      <div className="ob-rise mt-5 rounded-2xl border border-[#1f2630] bg-[#0b1017] p-5" style={{ animationDelay: "120ms" }}>
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <p className="text-[10.5px] font-semibold uppercase tracking-[0.18em] text-[#687386]">{paths.totalLabel}</p>
-            <p className="mt-1 text-[13.5px] font-semibold text-white">{paths.figure}</p>
-          </div>
-          <p className="font-mono text-[28px] font-semibold tabular-nums text-[#f5c400]">{number.format(total)}</p>
-        </div>
-        <div className="mt-4 flex h-4 gap-[3px] overflow-hidden rounded-full">
-          {paths.items.map((entry, entryIndex) => (
-            <button
-              key={entry.key}
-              type="button"
-              aria-label={entry.record}
-              onClick={() => {
-                setActive(entryIndex);
-                setPlaying(false);
-              }}
-              className={cn("cx-segment h-full", entry.amount === 0 && "cx-hatched")}
-              style={{ flexGrow: Math.max(entry.amount, total * 0.025), background: entry.amount === 0 ? undefined : PATH_COLORS[entryIndex], opacity: entryIndex === active ? 1 : 0.35 }}
-            />
-          ))}
-        </div>
-        <div className="mt-4 grid gap-4 lg:grid-cols-[230px_minmax(0,1fr)]">
-          <ul className="space-y-1.5">
-            {paths.items.map((entry, entryIndex) => (
+      <div className="ob-rise mt-5 grid gap-4 rounded-2xl border border-[#1f2630] bg-[#0b1017] p-5 lg:grid-cols-[230px_minmax(0,1fr)]" style={{ animationDelay: "120ms" }}>
+        <div>
+          <p className="text-[10.5px] font-semibold uppercase tracking-[0.18em] text-[#687386]">{forward.recordLabel}</p>
+          <ul className="mt-2 space-y-1.5">
+            {forward.items.map((entry, entryIndex) => (
               <li key={entry.key}>
                 <button
                   type="button"
@@ -764,93 +627,78 @@ function PathsScreen({ copy, language }: { copy: ContentOnboardingCopy; language
                     entryIndex === active ? "border-[#f5c400]/50 bg-[#f5c400]/[0.07]" : "border-[#1f2630] hover:border-[#303845]",
                   )}
                 >
-                  <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: PATH_COLORS[entryIndex] }} />
-                  <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-white">{entry.record}</span>
-                  <span className="shrink-0 font-mono text-[11.5px] tabular-nums text-[#c2cad5]">{number.format(entry.amount)}</span>
+                  <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: RECORD_COLORS[entryIndex % RECORD_COLORS.length] }} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-mono text-[12px] text-white">{entry.record}</span>
+                    <span className="block truncate font-mono text-[10.5px] text-[#8c96a8]">{forward.field} = '{entry.value}'</span>
+                  </span>
+                  <span className="shrink-0 font-mono text-[11.5px] tabular-nums text-[#c2cad5]">{number.format(entry.end)}</span>
                 </button>
               </li>
             ))}
           </ul>
-          <div key={item.key} className="rounded-xl border border-[#1f2630] bg-[#06090d] p-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-[12px] text-[#8c96a8]">
-                {paths.recordLabel} <span className="font-mono text-white">{item.record}</span>
-              </p>
-              <p className="text-[12px] text-[#8c96a8]">
-                <span className="font-mono text-[14px] font-semibold text-[#f5c400]">{number.format(item.amount)}</span> · {percent.format(item.share)} % {paths.shareLabel}
-              </p>
-            </div>
-            <ol className="relative mt-3 space-y-1.5">
-              <span className="absolute bottom-3 left-[7px] top-3 w-px bg-[#252a33]" aria-hidden="true" />
-              {item.steps.map((step, stepIndex) => (
-                <li key={`${step.term}-${stepIndex}`} className="ob-rise relative flex items-center gap-3" style={{ animationDelay: `${120 + stepIndex * 140}ms` }}>
-                  <span className="relative z-10 h-[15px] w-[15px] shrink-0 rounded-full border-2 bg-[#06090d]" style={{ borderColor: TONE_COLORS[step.tone] }} />
-                  <span className="text-[12.5px] font-medium text-white">{step.term}</span>
-                  <span className="text-[#4f5968]">·</span>
-                  <span className={cn("text-[12px]", step.tone === "source" ? "text-sky-300" : "text-[#c2cad5]")}>{step.case}</span>
-                </li>
-              ))}
-            </ol>
+          <div className="mt-3 flex items-baseline justify-between rounded-lg border border-[#1f2630] bg-[#0d131b] px-3 py-2">
+            <span className="text-[10.5px] font-semibold uppercase tracking-[0.16em] text-[#687386]">{forward.endLabel}</span>
+            <span className="font-mono text-[15px] font-semibold tabular-nums text-[#f5c400]">{number.format(total)}</span>
           </div>
+        </div>
+        <div key={item.key} className="rounded-xl border border-[#1f2630] bg-[#06090d] p-4">
+          <div className="ob-rise flex flex-wrap items-center gap-2 rounded-lg border border-[#f5c400]/35 bg-[#f5c400]/[0.07] px-3 py-2">
+            <Crosshair className="h-4 w-4 text-[#f5c400]" />
+            <span className="text-[12.5px] font-semibold text-[#f5c400]">{forward.field}</span>
+            <span className="font-mono text-[12.5px] text-white">= '{item.value}'</span>
+            <span className="ml-auto font-mono text-[11px] text-[#8c96a8]">{item.record}</span>
+          </div>
+          <ol className="relative mt-2 space-y-1.5">
+            <span className="absolute bottom-4 left-[7px] top-2 w-px bg-[#252a33]" aria-hidden="true" />
+            {item.steps.map((step, stepIndex) => (
+              <li key={`${step.term}-${stepIndex}`} className="ob-rise relative flex items-start gap-3" style={{ animationDelay: `${140 + stepIndex * 150}ms` }}>
+                <span className="relative z-10 mt-1 h-[15px] w-[15px] shrink-0 rounded-full border-2 bg-[#06090d]" style={{ borderColor: REACH_TONES[step.reach] }} />
+                <span className="min-w-0 flex-1">
+                  <span className="flex flex-wrap items-baseline gap-x-2">
+                    <span className="text-[12.5px] font-medium text-white">{step.term}</span>
+                    <span className="font-mono text-[12.5px] text-[#f5c400]">= {step.value}</span>
+                    {stepIndex === item.steps.length - 1 && <Flag className="h-3 w-3 self-center text-[#f5c400]" />}
+                  </span>
+                  <span className="flex flex-wrap items-center gap-x-2 text-[11.5px] text-[#aeb8c7]">
+                    {step.how}
+                    <span className="rounded-full border px-1.5 text-[10px] font-semibold" style={{ borderColor: `${REACH_TONES[step.reach]}66`, color: REACH_TONES[step.reach] }}>{forward.reach[step.reach]}</span>
+                  </span>
+                </span>
+              </li>
+            ))}
+          </ol>
+          <p className="ob-rise mt-3 flex items-start gap-2 rounded-lg border border-pink-400/25 bg-pink-400/[0.05] px-3 py-2 text-[12px] leading-5 text-[#f3d9e8]" style={{ animationDelay: `${140 + item.steps.length * 150}ms` }}>
+            <FlaskConical className="mt-0.5 h-3.5 w-3.5 shrink-0 text-pink-300" />
+            <span><span className="mr-1 font-semibold text-pink-200">{forward.whatIfLabel}:</span>{item.whatIf}</span>
+          </p>
         </div>
       </div>
       <p className="ob-rise mt-3 flex items-center gap-2 text-[12px] text-emerald-200" style={{ animationDelay: "380ms" }}>
         <BadgeCheck className="h-4 w-4 text-emerald-300" />
-        {paths.reconciled}
+        {forward.confirmed}
       </p>
       <p className="ob-rise mt-1.5 text-xs text-[#687386]" style={{ animationDelay: "460ms" }}>
-        {paths.footnote}
+        {forward.footnote}
       </p>
     </div>
   );
 }
 
-type MiniKind = "source" | "rule" | "concept" | "figure" | "provision";
-const MINI_NODES: { id: string; kind: MiniKind; x: number; y: number; w: number; h: number }[] = [
-  { id: "art111", kind: "provision", x: 300, y: 8, w: 118, h: 30 },
-  { id: "art113", kind: "provision", x: 646, y: 8, w: 118, h: 30 },
-  { id: "productType", kind: "source", x: 8, y: 96, w: 128, h: 36 },
-  { id: "nominal", kind: "source", x: 8, y: 172, w: 128, h: 36 },
-  { id: "assetClass", kind: "source", x: 8, y: 266, w: 128, h: 36 },
-  { id: "ruleCcf", kind: "rule", x: 152, y: 100, w: 116, h: 28 },
-  { id: "ruleBase", kind: "rule", x: 152, y: 176, w: 116, h: 28 },
-  { id: "ruleWeight", kind: "rule", x: 152, y: 270, w: 116, h: 28 },
-  { id: "ccf", kind: "concept", x: 284, y: 96, w: 148, h: 36 },
-  { id: "base", kind: "concept", x: 284, y: 172, w: 148, h: 36 },
-  { id: "weight", kind: "concept", x: 284, y: 266, w: 148, h: 36 },
-  { id: "ruleEad", kind: "rule", x: 452, y: 138, w: 108, h: 28 },
-  { id: "ead", kind: "concept", x: 576, y: 134, w: 132, h: 36 },
-  { id: "ruleRwa", kind: "rule", x: 726, y: 204, w: 108, h: 28 },
-  { id: "rwa", kind: "figure", x: 846, y: 200, w: 88, h: 36 },
-];
-const MINI_EDGES: { from: string; to: string; kind: "value" | "selector" | "derives" | "regulation" }[] = [
-  { from: "productType", to: "ruleCcf", kind: "selector" },
-  { from: "productType", to: "ruleBase", kind: "selector" },
-  { from: "nominal", to: "ruleBase", kind: "value" },
-  { from: "assetClass", to: "ruleWeight", kind: "selector" },
-  { from: "ruleCcf", to: "ccf", kind: "derives" },
-  { from: "ruleBase", to: "base", kind: "derives" },
-  { from: "ruleWeight", to: "weight", kind: "derives" },
-  { from: "ccf", to: "ruleEad", kind: "value" },
-  { from: "base", to: "ruleEad", kind: "value" },
-  { from: "ruleEad", to: "ead", kind: "derives" },
-  { from: "ead", to: "ruleRwa", kind: "value" },
-  { from: "weight", to: "ruleRwa", kind: "value" },
-  { from: "ruleRwa", to: "rwa", kind: "derives" },
-  { from: "art111", to: "ruleCcf", kind: "regulation" },
-  { from: "art111", to: "ruleEad", kind: "regulation" },
-  { from: "art113", to: "ruleRwa", kind: "regulation" },
-];
-const MINI_COLORS: Record<MiniKind, string> = { figure: "#f5c400", concept: "#34d399", source: "#38bdf8", rule: "#a78bfa", provision: "#fb923c" };
-const MINI_PROVISIONS: Record<string, string> = { art111: "Art. 111(2)", art113: "Art. 113(2)" };
+/* The miniature result: the selected field and the five fields it reaches, in the columns of the real view. */
+const VIEW_STEP = 138;
+const VIEW_CARD = { w: 128, h: 64 };
+const VIEW_TOP = 24;
+const VIEW_Y: Record<string, number> = { productType: 68, bst: 0, ab: 136, ccf: 0, ead: 68, rwa: 68 };
+const VIEW_COLORS = { value: "#34d399", decides: "#fbbf24" } as const;
 
-function closure(start: string, forward: boolean): Set<string> {
+function viewClosure(links: { from: string; to: string }[], start: string, forward: boolean): Set<string> {
   const seen = new Set<string>();
   const stack = [start];
   while (stack.length) {
     const current = stack.pop()!;
-    for (const edge of MINI_EDGES) {
-      const next = forward ? (edge.from === current ? edge.to : null) : edge.to === current ? edge.from : null;
+    for (const link of links) {
+      const next = forward ? (link.from === current ? link.to : null) : link.to === current ? link.from : null;
       if (next && !seen.has(next)) {
         seen.add(next);
         stack.push(next);
@@ -860,201 +708,140 @@ function closure(start: string, forward: boolean): Set<string> {
   return seen;
 }
 
-function GraphScreen({ copy }: { copy: ContentOnboardingCopy }) {
-  const { graph } = copy;
-  const [selected, setSelected] = useState("ead");
-  const up = useMemo(() => closure(selected, false), [selected]);
-  const down = useMemo(() => closure(selected, true), [selected]);
-  const byId = new Map(MINI_NODES.map((node) => [node.id, node]));
-  const label = (id: string) => MINI_PROVISIONS[id] ?? graph.labels[id] ?? id;
+function ViewScreen({ copy }: { copy: ContentOnboardingCopy }) {
+  const { view } = copy;
+  const [selected, setSelected] = useState("bst");
+  const byKey = new Map(view.fields.map((field) => [field.key, field]));
+  const up = useMemo(() => viewClosure(view.links, selected, false), [view.links, selected]);
+  const down = useMemo(() => viewClosure(view.links, selected, true), [view.links, selected]);
+  const levels = [...new Set(view.fields.map((field) => field.level))].sort((a, b) => a - b);
+  const width = levels.length * VIEW_STEP - (VIEW_STEP - VIEW_CARD.w) + 8;
+  const height = VIEW_TOP + Math.max(...Object.values(VIEW_Y)) + VIEW_CARD.h + 4;
+  const field = byKey.get(selected)!;
+  const start = field.level === 0;
+  const position = (key: string) => ({ x: 4 + byKey.get(key)!.level * VIEW_STEP, y: VIEW_TOP + VIEW_Y[key] });
   return (
     <div>
-      <ScreenHeading eyebrow={graph.eyebrow} title={graph.title} intro={graph.intro} />
-      <div className="ob-rise mt-5 rounded-2xl border border-[#1f2630] bg-[#06090d] p-3" style={{ animationDelay: "140ms" }}>
-        <svg viewBox="0 0 942 312" className="mx-auto h-auto max-h-[250px] w-full" role="img" aria-label={graph.title}>
-          {MINI_EDGES.map((edge) => {
-            const from = byId.get(edge.from)!;
-            const to = byId.get(edge.to)!;
-            const isUp = (edge.to === selected || up.has(edge.to)) && up.has(edge.from);
-            const isDown = (edge.from === selected || down.has(edge.from)) && down.has(edge.to);
-            let path: string;
-            if (edge.kind === "regulation") {
-              const sx = from.x + from.w / 2;
-              const sy = from.y + from.h;
-              const tx = to.x + to.w / 2;
-              const ty = to.y - 2;
-              const bend = (ty - sy) / 2;
-              path = `M ${sx} ${sy} C ${sx} ${sy + bend}, ${tx} ${ty - bend}, ${tx} ${ty}`;
-            } else {
-              const sx = from.x + from.w;
-              const sy = from.y + from.h / 2;
-              const tx = to.x;
-              const ty = to.y + to.h / 2;
-              const bend = Math.max(14, (tx - sx) / 2);
-              path = `M ${sx} ${sy} C ${sx + bend} ${sy}, ${tx - bend} ${ty}, ${tx - 2} ${ty}`;
-            }
-            const base = edge.kind === "regulation" ? "#9a5a2e" : edge.kind === "selector" ? "#7a6326" : edge.kind === "derives" ? "#5d4f9a" : "#3a4350";
-            const color = isUp ? "#f5c400" : isDown ? "#38bdf8" : base;
-            return (
-              <path
-                key={`${edge.from}-${edge.to}`}
-                d={path}
-                fill="none"
-                stroke={color}
-                strokeWidth={isUp || isDown ? 2.3 : 1.5}
-                strokeDasharray={edge.kind === "regulation" ? "3 4" : edge.kind === "selector" ? "6 4" : undefined}
-                className="transition-[stroke] duration-300"
-              />
-            );
-          })}
-          {MINI_NODES.map((node) => {
-            const state = node.id === selected ? "self" : up.has(node.id) ? "up" : down.has(node.id) ? "down" : "dim";
-            const stroke = state === "self" ? "#f5c400" : state === "up" ? "rgba(245,196,0,0.55)" : state === "down" ? "rgba(56,189,248,0.6)" : node.kind === "figure" ? "rgba(245,196,0,0.45)" : "#252a33";
-            const fill = node.kind === "rule" ? "#120f1c" : node.kind === "provision" ? "#17110b" : "#0f141b";
-            return (
-              <g key={node.id} onClick={() => setSelected(node.id)} className="cursor-pointer" opacity={state === "dim" ? 0.4 : 1} style={{ transition: "opacity 300ms" }}>
-                <rect x={node.x} y={node.y} width={node.w} height={node.h} rx={node.kind === "rule" ? node.h / 2 : node.kind === "provision" ? 5 : 8} fill={fill} stroke={stroke} strokeWidth={state === "self" ? 2 : 1.2} />
-                {node.kind === "provision" ? (
-                  <rect x={node.x} y={node.y} width={node.w} height={3} rx={1.5} fill={MINI_COLORS.provision} />
-                ) : node.kind !== "rule" ? (
-                  <rect x={node.x} y={node.y + 6} width={3} height={node.h - 12} rx={1.5} fill={MINI_COLORS[node.kind]} />
-                ) : (
-                  <circle cx={node.x + 13} cy={node.y + node.h / 2} r={4} fill={MINI_COLORS.rule} />
-                )}
-                <text
-                  x={node.kind === "rule" ? node.x + 23 : node.x + 11}
-                  y={node.y + node.h / 2 + 4}
-                  fontSize={node.kind === "rule" ? (label(node.id).length > 13 ? 9.5 : 10.5) : label(node.id).length > 20 ? 10 : 11.5}
-                  fontFamily={node.kind === "provision" ? "ui-monospace, monospace" : "inherit"}
-                  fontWeight={node.kind === "figure" ? 700 : 500}
-                  fill={node.kind === "rule" ? "#e2ddff" : node.kind === "provision" ? "#fde3c8" : "#ffffff"}
+      <ScreenHeading eyebrow={view.eyebrow} title={view.title} intro={view.intro} />
+      <div className="ob-rise mt-5 rounded-2xl border border-[#1f2630] bg-[#06090d] p-4" style={{ animationDelay: "120ms" }}>
+        <div className="overflow-x-auto">
+          <div className="relative mx-auto" style={{ width, height }}>
+            {levels.map((level) => (
+              <p key={level} className="absolute top-0 truncate text-[9px] font-semibold uppercase tracking-[0.08em]" style={{ left: 4 + level * VIEW_STEP, width: VIEW_CARD.w, color: level === 0 ? "#f5c400" : level === 1 ? "#34d399" : "#38bdf8" }}>
+                {level === 0 ? view.columns.start : level === 1 ? view.columns.next : format(view.columns.step, { level })}
+              </p>
+            ))}
+            <svg className="pointer-events-none absolute inset-0" width={width} height={height} aria-hidden="true">
+              {view.links.map((link) => {
+                const from = position(link.from);
+                const to = position(link.to);
+                const sx = from.x + VIEW_CARD.w;
+                const sy = from.y + VIEW_CARD.h / 2;
+                const tx = to.x;
+                const ty = to.y + VIEW_CARD.h / 2;
+                const bend = Math.max(14, (tx - sx) / 2);
+                const onPath = up.has(link.from) && (link.to === selected || up.has(link.to));
+                const onward = (link.from === selected || down.has(link.from)) && down.has(link.to);
+                return (
+                  <path
+                    key={`${link.from}-${link.to}`}
+                    d={`M ${sx} ${sy} C ${sx + bend} ${sy}, ${tx - bend} ${ty}, ${tx - 2} ${ty}`}
+                    fill="none"
+                    stroke={VIEW_COLORS[link.kind]}
+                    strokeWidth={onPath ? 2.6 : onward ? 1.8 : 1.3}
+                    strokeOpacity={onPath || onward ? 1 : 0.25}
+                    strokeDasharray={link.kind === "decides" ? "7 5" : undefined}
+                    strokeLinecap="round"
+                    className="transition-[stroke-opacity,stroke-width] duration-300"
+                  />
+                );
+              })}
+            </svg>
+            {view.fields.map((item) => {
+              const { x, y } = position(item.key);
+              const state = item.key === selected ? "self" : up.has(item.key) ? "up" : down.has(item.key) ? "down" : "dim";
+              return (
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={() => setSelected(item.key)}
+                  aria-pressed={item.key === selected}
+                  className={cn(
+                    "absolute flex flex-col rounded-lg border bg-[#0f141b] px-2.5 py-1.5 text-left transition-all duration-300",
+                    state === "self" ? "border-[#f5c400] shadow-[0_0_0_1px_rgba(245,196,0,0.35)]" : state === "up" ? "border-[#f5c400]/45" : "border-[#2a323d] hover:border-[#4a5464]",
+                    state === "dim" && "opacity-45",
+                  )}
+                  style={{ left: x, top: y, width: VIEW_CARD.w, height: VIEW_CARD.h }}
                 >
-                  {label(node.id)}
-                </text>
-                {node.kind === "concept" || node.kind === "figure" ? (
-                  <rect x={node.x + 11} y={node.y + node.h - 7} width={node.w - 22} height={2.5} rx={1.25} fill={MINI_COLORS.concept} opacity={0.8} />
-                ) : node.kind === "source" ? (
-                  <rect x={node.x + 11} y={node.y + node.h - 7} width={node.w - 22} height={2.5} rx={1.25} fill={MINI_COLORS.source} opacity={0.8} />
-                ) : null}
-              </g>
-            );
-          })}
-        </svg>
-        <div className="flex flex-wrap items-center justify-between gap-3 px-2 pb-1 text-[11.5px]">
-          <span className="flex items-center gap-1.5 text-[#8c96a8]"><MousePointerClick className="h-3.5 w-3.5 text-[#f5c400]" />{graph.hint}</span>
-          <span className="flex flex-wrap items-center gap-3">
-            <span className="text-white">{label(selected)}</span>
-            <span className="text-[#f5c400]">{graph.upstream}: {up.size}</span>
-            <span className="text-sky-300">{graph.downstream}: {down.size}</span>
+                  <span className={cn("absolute bottom-2 left-0 top-2 w-[3px] rounded-r", item.level === 0 ? "bg-[#f5c400]" : item.level === 1 ? "bg-emerald-400" : "bg-sky-400")} />
+                  <span className="flex items-start gap-1">
+                    <span className="line-clamp-3 min-w-0 flex-1 text-[10.5px] font-semibold leading-[1.25] text-white">{item.name}</span>
+                    {item.end ? <Flag className="mt-px h-3 w-3 shrink-0 text-[#f5c400]" /> : null}
+                  </span>
+                  <span className="mt-auto flex items-center gap-1.5">
+                    {item.level > 0 ? <span className="h-1 flex-1 rounded-full bg-[#fbbf24]" /> : <span className="flex-1" />}
+                    <span className="text-[9.5px] tabular-nums text-[#8c96a8]">{item.records}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-3 border-t border-[#161c24] px-1 pt-2.5 text-[11px]">
+          <span className="flex items-center gap-1.5 text-[#8c96a8]"><MousePointerClick className="h-3.5 w-3.5 text-[#f5c400]" />{view.hint}</span>
+          <span className="flex flex-wrap items-center gap-3 text-[#9aa4b4]">
+            {(["value", "decides"] as const).map((kind) => (
+              <span key={kind} className="flex items-center gap-1.5">
+                <svg width="22" height="6" aria-hidden="true"><line x1="1" y1="3" x2="21" y2="3" stroke={VIEW_COLORS[kind]} strokeWidth="2" strokeDasharray={kind === "decides" ? "7 5" : undefined} strokeLinecap="round" /></svg>
+                {view.legend[kind]}
+              </span>
+            ))}
+            <span className="flex items-center gap-1.5"><Flag className="h-3 w-3 text-[#f5c400]" />{view.legend.end}</span>
           </span>
         </div>
       </div>
-      <p className="mt-3 text-[10.5px] font-semibold uppercase tracking-[0.2em] text-[#687386]">{graph.nodesTitle}</p>
-      <div className="mt-1.5 grid gap-2 sm:grid-cols-3 xl:grid-cols-5">
-        {graph.nodeKinds.map((kind, kindIndex) => (
-          <div key={kind.key} className="ob-rise flex gap-2 rounded-xl border border-[#1f2630] bg-[#0b1017] px-2.5 py-2" style={{ animationDelay: `${300 + kindIndex * 60}ms` }}>
-            <span className={cn("mt-1 h-3 shrink-0", kind.key === "rule" ? "w-3 rounded-full" : "w-[3px] rounded")} style={{ background: MINI_COLORS[kind.key] }} />
+      <div key={selected} className="ob-rise mt-3 grid gap-4 rounded-2xl border border-[#1f2630] bg-[#0b1017] p-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+        <div>
+          <p className="flex flex-wrap items-baseline gap-2">
+            <span className="text-[14px] font-semibold text-white">{field.name}</span>
+            <span className="font-mono text-[10.5px] text-[#687386]">{field.column}</span>
+          </p>
+          {start ? (
+            <p className="mt-1.5 text-[12.5px] leading-5 text-[#c2cad5]">{view.selectedLabel} <span className="font-mono text-[12px] text-[#e5e9ef]">{field.how}</span></p>
+          ) : (
+            <>
+              <p className="mt-1 text-[11.5px] text-[#8c96a8]">{field.via ? `${view.viaLabel}: ${field.via}` : view.directLabel}</p>
+              <p className="mt-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#f5c400]">{view.howLabel}</p>
+              <p className="mt-1 text-[12.5px] leading-5 text-[#e5e9ef]">{field.how}</p>
+            </>
+          )}
+        </div>
+        {!start && field.values ? (
+          <div className="space-y-2.5">
+            <div className="flex items-baseline justify-between rounded-lg border border-[#1f2630] bg-[#0d131b] px-3 py-1.5">
+              <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#687386]">{view.recordsLabel}</span>
+              <span className="font-mono text-[14px] font-semibold tabular-nums text-emerald-300">{field.records}</span>
+            </div>
             <div>
-              <p className="text-[12px] font-semibold text-white">{kind.title}</p>
-              <p className="text-[11px] leading-[1.45] text-[#aeb8c7]">{kind.text}</p>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#687386]">{view.valuesLabel}</p>
+              <ul className="mt-1 space-y-1">
+                {field.values.map((item) => (
+                  <li key={item.from} className="flex items-center gap-2 font-mono text-[11.5px] text-[#dbe2ec]">
+                    <span>{item.from}</span>
+                    <ArrowRight className="h-3 w-3 text-[#4a5464]" />
+                    <span className="text-[#f5c400]">{item.to}</span>
+                  </li>
+                ))}
+              </ul>
             </div>
           </div>
-        ))}
+        ) : null}
       </div>
-      <p className="mt-3 text-[10.5px] font-semibold uppercase tracking-[0.2em] text-[#687386]">{graph.edgesTitle}</p>
-      <div className="mt-1.5 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-        {graph.edgeKinds.map((edge, edgeIndex) => (
-          <div key={edge.key} className="ob-rise flex items-start gap-2.5 rounded-xl border border-[#1f2630] bg-[#0b1017] px-2.5 py-2" style={{ animationDelay: `${420 + edgeIndex * 70}ms` }}>
-            <svg width="26" height="8" className="mt-1.5 shrink-0">
-              <line x1="0" y1="4" x2="26" y2="4" stroke={edge.key === "value" ? "#9aa4b4" : edge.key === "selector" ? "#d9a441" : "#e08a4c"} strokeWidth="2" strokeDasharray={edge.key === "selector" ? "6 4" : edge.key === "regulation" ? "3 4" : undefined} />
-            </svg>
-            <p className="text-[11px] leading-[1.45] text-[#aeb8c7]"><span className="block text-[12px] font-semibold text-white">{edge.title}</span>{edge.text}</p>
-          </div>
-        ))}
-        <div className="ob-rise rounded-xl border border-[#1f2630] bg-[#0b1017] px-2.5 py-2" style={{ animationDelay: "640ms" }}>
-          <p className="text-[12px] font-semibold text-white">{graph.barTitle}</p>
-          <div className="mt-1 flex h-1.5 w-full overflow-hidden rounded-full">
-            <span className="h-full w-[30%] bg-sky-400" />
-            <span className="h-full w-[60%] bg-emerald-400" />
-            <span className="h-full w-[10%] bg-rose-400" />
-          </div>
-          <p className="mt-1 text-[11px] leading-[1.45] text-[#aeb8c7]">{graph.barText}</p>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-const VERDICT_TONES = {
-  consistent: { color: "#34d399", chip: "border-emerald-400/35 bg-emerald-400/10 text-emerald-300" },
-  simplified: { color: "#fbbf24", chip: "border-amber-400/35 bg-amber-400/10 text-amber-300" },
-  deviation: { color: "#fb7185", chip: "border-rose-400/35 bg-rose-400/10 text-rose-300" },
-  not_covered: { color: "#64748b", chip: "border-slate-400/30 bg-slate-400/[0.08] text-slate-300" },
-} as const;
-
-function RegulationScreen({ copy }: { copy: ContentOnboardingCopy }) {
-  const { regulation } = copy;
-  const { active, setActive, playing, setPlaying } = usePlayer(regulation.verdicts.length, 6400);
-  const verdict = regulation.verdicts[active];
-  const tone = VERDICT_TONES[verdict.key];
-  return (
-    <div>
-      <div className="flex items-end justify-between gap-6">
-        <ScreenHeading eyebrow={regulation.eyebrow} title={regulation.title} intro={regulation.intro} />
-        <PlayToggle playing={playing} onToggle={() => setPlaying((current) => !current)} copy={copy} />
-      </div>
-      <div className="mt-5 grid gap-2 sm:grid-cols-4">
-        {regulation.verdicts.map((item, itemIndex) => (
-          <button
-            key={item.key}
-            type="button"
-            onClick={() => {
-              setActive(itemIndex);
-              setPlaying(false);
-            }}
-            className={cn(
-              "ob-rise rounded-xl border px-3 py-2.5 text-left transition-all duration-300",
-              itemIndex === active ? "border-[#f5c400]/50 bg-[#f5c400]/[0.06]" : "border-[#1f2630] bg-[#0b1017] hover:border-[#303845]",
-            )}
-            style={{ animationDelay: `${120 + itemIndex * 70}ms` }}
-          >
-            <span className="flex items-center gap-2 text-[13px] font-semibold text-white">
-              <span className="h-2.5 w-2.5 rounded-full" style={{ background: VERDICT_TONES[item.key].color }} />
-              {item.title}
-            </span>
-            <span className="mt-1 block text-[11.5px] leading-[1.45] text-[#aeb8c7]">{item.meaning}</span>
-          </button>
-        ))}
-      </div>
-      <div key={verdict.key} className="ob-pop mt-4 overflow-hidden rounded-2xl border border-[#252a33] bg-[#0b0f15]" style={{ animationDelay: "80ms" }}>
-        <span className="block h-[3px]" style={{ background: tone.color }} />
-        <div className="p-5">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[14px] font-semibold text-white">{verdict.rule}</span>
-            <span className={cn("rounded-full border px-2 py-[1px] text-[10.5px] font-semibold", tone.chip)}>{verdict.title}</span>
-            {verdict.illustration && <span className="rounded-full border border-[#3a4553] px-2 py-[1px] text-[10px] uppercase tracking-wide text-[#8c96a8]">{regulation.illustration}</span>}
-          </div>
-          {verdict.quote ? (
-            <div className="mt-3 rounded-lg border border-orange-400/25 bg-orange-400/[0.04] p-3">
-              <p className="flex items-center gap-2 font-mono text-[12px] font-semibold text-orange-100">
-                <FileText className="h-3.5 w-3.5 text-orange-300" />
-                {verdict.reference}
-              </p>
-              <blockquote className="mt-1.5 border-l-2 border-orange-400/60 pl-3 text-[12.5px] italic leading-5 text-[#f1e3d3]">“{verdict.quote}”</blockquote>
-              <p className="mt-1.5 flex items-center gap-1 text-[10.5px] text-emerald-300"><CircleCheck className="h-3 w-3" />{regulation.verifiedLabel}</p>
-            </div>
-          ) : null}
-          <p className="mt-3 text-[13px] leading-6 text-[#dbe2ec]">{verdict.assessment}</p>
-          {verdict.quote && !verdict.illustration ? (
-            <p className="mt-2 flex items-center gap-1.5 text-[11.5px] text-emerald-300"><UserCheck className="h-3.5 w-3.5" />{regulation.reviewedLabel}</p>
-          ) : null}
-        </div>
-      </div>
-      <div className="mt-3 grid gap-2 lg:grid-cols-3">
-        {regulation.principles.map((principle, principleIndex) => (
-          <div key={principle.title} className="ob-rise rounded-xl border border-[#1f2630] bg-[#0b1017] px-3.5 py-3" style={{ animationDelay: `${300 + principleIndex * 90}ms` }}>
-            <p className="text-[13px] font-semibold text-white">{principle.title}</p>
-            <p className="mt-1 text-[11.5px] leading-[1.5] text-[#aeb8c7]">{principle.text}</p>
+      <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+        {view.parts.map((part, partIndex) => (
+          <div key={part.title} className="ob-rise rounded-xl border border-[#1f2630] bg-[#0b1017] px-3 py-2.5" style={{ animationDelay: `${300 + partIndex * 80}ms` }}>
+            <p className="flex items-center gap-2 text-[12.5px] font-semibold text-white"><span className="flex h-5 w-5 items-center justify-center rounded-full border border-[#f5c400]/40 text-[10px] font-bold text-[#f5c400]">{partIndex + 1}</span>{part.title}</p>
+            <p className="mt-1 text-[11px] leading-[1.5] text-[#aeb8c7]">{part.text}</p>
           </div>
         ))}
       </div>
@@ -1146,12 +933,7 @@ function SpotlightTour({
   onDone: () => void;
   onSkip: () => void;
 }) {
-  // Steps about parts the tour's analysis turned out not to have (no regulation, no provision, no segment) are left out.
-  const available = controller.available;
-  const steps = useMemo(
-    () => TOUR_STEPS.filter((item) => !item.requires || available[item.requires] !== false),
-    [available],
-  );
+  const steps = TOUR_STEPS;
   const [index, setIndex] = useState(0);
   const step = steps[Math.min(index, steps.length - 1)];
   const text = copy.tour[step.id];
@@ -1173,30 +955,21 @@ function SpotlightTour({
 
   const unavailable =
     (step.action === "selectExecution" && !controller.executionsAvailable) ||
-    (step.action === "selectFigure" && controller.figuresAvailable === false) ||
-    (step.action === "selectRegulation" && !controller.regulationsAvailable);
+    (step.action === "selectField" && controller.fieldsAvailable === false);
 
   const isDone = useCallback(() => {
     const current = controllerRef.current;
     switch (step.action) {
       case "selectExecution":
         return current.executionSelected;
-      case "selectFigure":
-        return current.figuresSelected;
-      case "selectRegulation":
-        return current.regulationsSelected;
+      case "selectField":
+        return current.fieldSelected;
       case "startRun":
         return current.tourRun === "running" || current.tourRun === "done";
       case "awaitResults":
         return current.tourRun === "done";
-      case "selectFigureNode":
-        return current.figureNodeSelected;
-      case "selectRule":
-        return current.ruleSelected;
-      case "selectProvision":
-        return current.provisionSelected;
-      case "selectRecord":
-        return current.recordSelected;
+      case "selectFlowField":
+        return current.flowFieldSelected;
       default:
         return true;
     }
@@ -1221,9 +994,10 @@ function SpotlightTour({
     const current = controllerRef.current;
     if (step.stage === "setup" && current.stage !== "setup") current.showSetup();
     if (step.stage === "progress") current.showProgress();
-    if (step.stage === "results") current.showResults(step.view ?? "graph");
-    // The derivation exists only for a chosen record.
-    if (step.id === "derivation" && !current.recordSelected) current.selectRecord();
+    if (step.stage === "results") current.showResults();
+    // The preview of what comes next exists only for a chosen field; the details of a reached field only once one is chosen.
+    if (step.id === "forwardPreview" && !current.fieldSelected) current.selectSuggestedField();
+    if (step.id === "details" && !current.flowFieldSelected) current.selectFlowField();
     const timer = window.setTimeout(() => {
       const element = findTarget(step);
       if (!element) return;
@@ -1312,13 +1086,9 @@ function SpotlightTour({
   const doItForMe = () => {
     const current = controllerRef.current;
     if (step.action === "selectExecution") current.selectFirstExecution();
-    if (step.action === "selectFigure") current.selectSuggestedFigures();
-    if (step.action === "selectRegulation") current.selectFirstRegulation();
+    if (step.action === "selectField") current.selectSuggestedField();
     if (step.action === "startRun") current.startRun();
-    if (step.action === "selectFigureNode") current.selectFigureNode();
-    if (step.action === "selectRule") current.selectRule();
-    if (step.action === "selectProvision") current.selectProvision();
-    if (step.action === "selectRecord") current.selectRecord();
+    if (step.action === "selectFlowField") current.selectFlowField();
   };
 
   useEffect(() => {
@@ -1353,8 +1123,8 @@ function SpotlightTour({
   // The analysis stopped without a result: the progress steps offer to start it again.
   const failed = step.stage === "progress" && controller.tourRun === "failed";
   const restart = () => goTo(steps.findIndex((item) => item.action === "startRun"));
-  // Without executions the tour cannot go on; an execution without derived columns sends the user back one step.
-  const blocking = unavailable && step.action !== "selectRegulation";
+  // Without executions the tour cannot go on; an execution without a followable field sends the user back one step.
+  const blocking = unavailable;
 
   return (
     <div>
@@ -1446,10 +1216,10 @@ function SpotlightTour({
               {failed || blocking ? (
                 <button
                   type="button"
-                  onClick={failed ? restart : step.action === "selectFigure" ? () => goTo(index - 1) : onSkip}
+                  onClick={failed ? restart : step.action === "selectField" ? () => goTo(index - 1) : onSkip}
                   className="rounded-lg border border-[#f5c400]/50 bg-[#f5c400]/10 px-3 py-1.5 text-xs font-semibold text-[#f5d766] transition-colors hover:bg-[#f5c400]/20"
                 >
-                  {failed ? copy.ui.startAgain : step.action === "selectFigure" ? copy.ui.back : copy.ui.endTour}
+                  {failed ? copy.ui.startAgain : step.action === "selectField" ? copy.ui.back : copy.ui.endTour}
                 </button>
               ) : (
                 <>
@@ -1548,7 +1318,4 @@ function CompletionCard({ copy, onFinish }: { copy: ContentOnboardingCopy; onFin
 
 const CONTENT_CSS = `
 .cx-deck { width: min(1160px, 100%); height: min(820px, 100%); }
-.cx-segment { min-width: 6px; transition: opacity 300ms ease, transform 300ms ease; border-radius: 3px; }
-.cx-segment:hover { transform: scaleY(1.15); }
-.cx-hatched { background: repeating-linear-gradient(135deg, #fb923c 0 3px, transparent 3px 6px); }
 `;

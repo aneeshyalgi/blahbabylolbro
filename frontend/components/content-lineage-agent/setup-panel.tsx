@@ -1,25 +1,25 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import {
-  AlertTriangle, BookOpenCheck, Boxes, Code2, Database, Languages, Layers, Loader2, Microscope, Rocket, Route, Scale, Search, Sparkles, Star, Target, UserCheck,
+  AlertTriangle, ArrowRight, BookOpenCheck, Boxes, ChevronRight, Code2, Crosshair, Database, Flag, FlaskConical, Languages, Layers, Loader2, Microscope, Rocket, Search, Sparkles, Star, Workflow,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { EYEBROW, PANEL, formatDateTime } from "./atoms";
-import type { Preview, Sources } from "./types";
+import { EYEBROW, PANEL, ROLE_COLORS, formatDateTime } from "./atoms";
+import type { CatalogueField, Origin, Preview, Sources } from "./types";
 
 const METHOD = [
   { id: "trace", icon: Microscope },
-  { id: "compose", icon: Route },
+  { id: "follow", icon: Workflow },
   { id: "describe", icon: BookOpenCheck },
-  { id: "regulate", icon: Scale },
-  { id: "review", icon: UserCheck },
   { id: "translate", icon: Languages },
 ] as const;
 
+const ORIGINS: Origin[] = ["source", "derived", "intermediate"];
+
 export function SetupPanel({
-  sources, loading, selected, onSelect, preview, previewLoading, figures, onFigures, regulations, onRegulations, starting, onStart,
+  sources, loading, selected, onSelect, preview, previewLoading, field, onField, starting, onStart,
 }: {
   sources: Sources | null;
   loading: boolean;
@@ -27,16 +27,15 @@ export function SetupPanel({
   onSelect: (executionId: string) => void;
   preview: Preview | null;
   previewLoading: boolean;
-  figures: string[];
-  onFigures: (figures: string[]) => void;
-  regulations: string[];
-  onRegulations: (ids: string[]) => void;
+  field: string | null;
+  onField: (field: string | null) => void;
   starting: boolean;
   onStart: () => void;
 }) {
   const t = useTranslations("contentLineageAgent.setup");
   const locale = useLocale();
   const [query, setQuery] = useState("");
+  const [fieldQuery, setFieldQuery] = useState("");
   const clusters = useMemo(() => {
     const needle = query.trim().toLowerCase();
     const list = sources?.clusters ?? [];
@@ -44,15 +43,17 @@ export function SetupPanel({
     return list.filter((cluster) => `${cluster.name} ${cluster.dataset_name ?? ""} ${cluster.code_filename ?? ""}`.toLowerCase().includes(needle));
   }, [sources, query]);
   const selectedCluster = sources?.clusters.find((cluster) => cluster.executions.some((execution) => execution.execution_id === selected));
-  const selectedExecution = selectedCluster?.executions.find((execution) => execution.execution_id === selected);
   const executions = (sources?.clusters ?? []).reduce((sum, cluster) => sum + cluster.executions.length, 0);
-  const ready = (sources?.regulations ?? []).filter((item) => item.ready);
-  const toggleFigure = (column: string) => onFigures(figures.includes(column) ? figures.filter((item) => item !== column) : [...figures, column].slice(0, 6));
-  const toggleRegulation = (id: string) => onRegulations(regulations.includes(id) ? regulations.filter((item) => item !== id) : [...regulations, id]);
+  const chosen = preview?.fields.find((item) => item.column === field) ?? null;
+  const followable = (preview?.fields ?? []).filter((item) => item.fields.length > 0);
+  const visibleFields = useMemo(() => {
+    const needle = fieldQuery.trim().toLowerCase();
+    return (preview?.fields ?? []).filter((item) => !needle || item.column.toLowerCase().includes(needle));
+  }, [preview, fieldQuery]);
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
         <section data-tour="content-executions" className={cn(PANEL, "flex flex-col")}>
           <div className="flex flex-wrap items-center gap-3 border-b border-[#1f252e] px-4 py-3">
             <StepNumber value={1} />
@@ -62,7 +63,7 @@ export function SetupPanel({
             </div>
             <div className="relative">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#5d6878]" />
-              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("search")} className="h-8 w-52 rounded-md border border-[#252a33] bg-[#0f141b] pl-8 pr-2 text-[12px] text-white outline-none placeholder:text-[#5d6878] focus:border-[#f5c400]/50" />
+              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("search")} className="h-8 w-48 rounded-md border border-[#252a33] bg-[#0f141b] pl-8 pr-2 text-[12px] text-white outline-none placeholder:text-[#5d6878] focus:border-[#f5c400]/50" />
             </div>
           </div>
           <div className="max-h-[520px] min-h-[260px] flex-1 overflow-y-auto p-2">
@@ -118,107 +119,63 @@ export function SetupPanel({
         </section>
 
         <div className="flex flex-col gap-4">
-          <section data-tour="content-figures" className={cn(PANEL, "flex flex-col")}>
-            <div className="flex items-center gap-3 border-b border-[#1f252e] px-4 py-3">
+          <section data-tour="content-fields" className={cn(PANEL, "flex flex-col")}>
+            <div className="flex flex-wrap items-center gap-3 border-b border-[#1f252e] px-4 py-3">
               <StepNumber value={2} />
-              <div className="min-w-0">
-                <p className="text-[13.5px] font-semibold text-white">{t("figuresTitle")}</p>
-                <p className="text-[11.5px] text-[#8c96a8]">{t("figuresHint")}</p>
+              <div className="min-w-0 flex-1">
+                <p className="text-[13.5px] font-semibold text-white">{t("fieldsTitle")}</p>
+                <p className="text-[11.5px] text-[#8c96a8]">{t("fieldsHint")}</p>
               </div>
+              {preview && (
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#5d6878]" />
+                  <input value={fieldQuery} onChange={(event) => setFieldQuery(event.target.value)} placeholder={t("fieldSearch")} className="h-8 w-40 rounded-md border border-[#252a33] bg-[#0f141b] pl-8 pr-2 text-[12px] text-white outline-none placeholder:text-[#5d6878] focus:border-[#f5c400]/50" />
+                </div>
+              )}
             </div>
             {!selected && (
               <div className="flex flex-col items-center justify-center px-6 py-10 text-center">
-                <Target className="h-8 w-8 text-[#3f4957]" />
-                <p className="mt-3 text-[12.5px] text-[#8c96a8]">{t("figuresEmpty")}</p>
+                <Crosshair className="h-8 w-8 text-[#3f4957]" />
+                <p className="mt-3 text-[12.5px] text-[#8c96a8]">{t("fieldsEmpty")}</p>
               </div>
             )}
             {selected && previewLoading && !preview && (
-              <div className="flex items-center gap-2 px-4 py-6 text-[12.5px] text-[#8c96a8]"><Loader2 className="h-4 w-4 animate-spin" /> {t("loading")}</div>
+              <div className="flex items-center gap-2 px-4 py-6 text-[12.5px] text-[#8c96a8]"><Loader2 className="h-4 w-4 animate-spin" /> {t("loadingFields")}</div>
             )}
             {selected && preview && (
-              <div className="space-y-3 p-4">
-                <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px] text-[#8c96a8]">
+              <div className="p-3">
+                <p className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1 pb-2 text-[11.5px] text-[#8c96a8]">
                   <span className="font-mono text-[#c2cad5]">{preview.code.filename}</span>
                   <span>{t("lines", { count: preview.code.line_count })}</span>
                   <span>{t("records", { count: preview.rows })}</span>
-                  <span>{t("derivedCount", { count: preview.derived.length })}</span>
+                  <span>{t("fieldsCount", { count: preview.fields.length, followable: followable.length })}</span>
                 </p>
-                {preview.derived.length === 0 ? (
-                  <p className="flex items-center gap-2 rounded-md border border-amber-400/30 bg-amber-400/[0.06] px-3 py-2 text-[12px] text-amber-200"><AlertTriangle className="h-4 w-4" />{t("noDerived")}</p>
+                {followable.length === 0 ? (
+                  <p className="flex items-center gap-2 rounded-md border border-amber-400/30 bg-amber-400/[0.06] px-3 py-2 text-[12px] text-amber-200"><AlertTriangle className="h-4 w-4" />{t("noFollowable")}</p>
                 ) : (
-                  <div className="flex flex-wrap gap-1.5">
-                    {preview.derived.map((item) => {
-                      const active = figures.includes(item.column);
+                  <div className="max-h-[440px] space-y-3 overflow-y-auto pr-1">
+                    {ORIGINS.map((origin) => {
+                      const group = visibleFields.filter((item) => item.origin === origin);
+                      if (!group.length) return null;
                       return (
-                        <button
-                          key={item.column}
-                          type="button"
-                          aria-pressed={active}
-                          onClick={() => toggleFigure(item.column)}
-                          className={cn(
-                            "group inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[12px] transition-colors",
-                            active ? "border-[#f5c400]/60 bg-[#f5c400]/12 text-[#f5c400]" : "border-[#2c3440] bg-[#121821] text-[#dbe2ec] hover:border-[#f5c400]/40",
-                          )}
-                          title={item.used_by.length ? t("usedBy", { columns: item.used_by.join(", ") }) : t("endOfChain")}
-                        >
-                          <span className={cn("flex h-3.5 w-3.5 items-center justify-center rounded-sm border", active ? "border-[#f5c400] bg-[#f5c400]" : "border-[#4a5464]")}>
-                            {active && <span className="h-1.5 w-1.5 rounded-[1px] bg-[#0b0f15]" />}
-                          </span>
-                          <span className="font-mono">{item.column}</span>
-                          {item.default && <span className="rounded bg-[#f5c400]/15 px-1 text-[9.5px] font-semibold uppercase tracking-wide text-[#f5c400]">{t("suggested")}</span>}
-                          {!item.numeric && <span className="text-[10px] text-[#687386]">{t("text")}</span>}
-                        </button>
+                        <div key={origin}>
+                          <p className={cn(EYEBROW, "mb-1.5 px-1")}>{t(`origins.${origin}`, { count: group.length })}</p>
+                          <div className="space-y-1">
+                            {group.map((item) => <FieldRow key={item.column} item={item} active={item.column === field} onClick={() => onField(item.column === field ? null : item.column)} />)}
+                          </div>
+                        </div>
                       );
                     })}
                   </div>
                 )}
-                <p className="text-[11px] leading-relaxed text-[#687386]">{t("figuresNote")}</p>
               </div>
             )}
           </section>
 
-          <section data-tour="content-regulations" className={cn(PANEL, "flex flex-col")}>
-            <div className="flex items-center gap-3 border-b border-[#1f252e] px-4 py-3">
-              <StepNumber value={3} />
-              <div className="min-w-0">
-                <p className="text-[13.5px] font-semibold text-white">{t("regulationsTitle")}</p>
-                <p className="text-[11.5px] text-[#8c96a8]">{t("regulationsHint")}</p>
-              </div>
-            </div>
-            <div className="space-y-1.5 p-3">
-              {(sources?.regulations ?? []).length === 0 && <p className="px-1 py-2 text-[12px] text-[#8c96a8]">{t("regulationsEmpty")}</p>}
-              {(sources?.regulations ?? []).map((document) => {
-                const active = regulations.includes(document.id);
-                return (
-                  <button
-                    key={document.id}
-                    type="button"
-                    disabled={!document.ready}
-                    aria-pressed={active}
-                    onClick={() => toggleRegulation(document.id)}
-                    className={cn(
-                      "flex w-full items-center gap-3 rounded-md border px-3 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50",
-                      active ? "border-orange-400/40 bg-orange-400/[0.07]" : "border-[#1f252e] bg-[#0d1218] hover:border-[#2c3440]",
-                    )}
-                  >
-                    <span className={cn("flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm border", active ? "border-orange-300 bg-orange-300" : "border-[#4a5464]")}>
-                      {active && <span className="h-1.5 w-1.5 rounded-[1px] bg-[#0b0f15]" />}
-                    </span>
-                    <Scale className="h-4 w-4 shrink-0 text-orange-300" />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[12.5px] font-medium text-white">{document.short} · <span className="font-normal text-[#aab3c2]">{document.title ?? document.filename}</span></span>
-                      <span className="block text-[11px] text-[#687386]">
-                        {document.ready ? t("regulationMeta", { articles: document.articles ?? 0, pages: document.pages ?? 0 }) : t("regulationNotReady")}
-                      </span>
-                    </span>
-                  </button>
-                );
-              })}
-              {sources && ready.length > 0 && regulations.length === 0 && <p className="px-1 pt-1 text-[11px] text-amber-200/80">{t("regulationsNone")}</p>}
-            </div>
-          </section>
         </div>
       </div>
+
+      {chosen && preview && <ForwardPreview item={chosen} preview={preview} />}
 
       <section data-tour="content-method" className={cn(PANEL, "p-4")}>
         <div className="flex flex-wrap items-center gap-3">
@@ -228,12 +185,11 @@ export function SetupPanel({
             <p className="text-[11.5px] text-[#8c96a8]">{t("methodHint")}</p>
           </div>
         </div>
-        <div className="mt-4 grid gap-2.5 md:grid-cols-3 xl:grid-cols-6">
+        <div className="mt-4 grid gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
           {METHOD.map((step, index) => {
             const Icon = step.icon;
-            const off = (step.id === "regulate" || step.id === "review") && regulations.length === 0;
             return (
-              <div key={step.id} className={cn("relative rounded-md border border-[#1f252e] bg-[#0d1218] p-3", off && "opacity-50")}>
+              <div key={step.id} className="relative rounded-md border border-[#1f252e] bg-[#0d1218] p-3">
                 <div className="flex items-center gap-2">
                   <span className="flex h-7 w-7 items-center justify-center rounded-md border border-[#f5c400]/30 bg-[#f5c400]/10"><Icon className="h-3.5 w-3.5 text-[#f5c400]" /></span>
                   <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#687386]">{index + 1}</span>
@@ -253,11 +209,11 @@ export function SetupPanel({
       <section data-tour="content-run-bar" className="flex flex-wrap items-center gap-4 rounded-lg border border-[#f5c400]/25 bg-[linear-gradient(110deg,rgba(245,196,0,0.08),rgba(11,15,21,1)_45%)] px-5 py-4">
         <Sparkles className="h-5 w-5 shrink-0 text-[#f5c400]" />
         <div className="min-w-0 flex-1">
-          {selectedExecution && selectedCluster ? (
+          {selected && selectedCluster ? (
             <>
               <p className="text-[13.5px] font-semibold text-white">{t("readyTitle", { cluster: selectedCluster.name })}</p>
               <p className="mt-0.5 text-[12px] text-[#aab3c2]">
-                {figures.length ? t("readyFigures", { figures: figures.join(", ") }) : t("readyNoFigures")} · {regulations.length ? t("readyRegulations", { count: regulations.length }) : t("readyNoRegulations")}
+                {chosen ? t("readyField", { field: chosen.column, fields: chosen.fields.length }) : t("readyNoField")}
               </p>
             </>
           ) : (
@@ -272,14 +228,114 @@ export function SetupPanel({
         <button
           type="button"
           onClick={onStart}
-          disabled={!selected || !preview || preview.derived.length === 0 || figures.length === 0 || starting || (sources ? !sources.llm_configured : true)}
+          disabled={!selected || !preview || !chosen || chosen.fields.length === 0 || starting || (sources ? !sources.llm_configured : true)}
           className="flex items-center gap-2 rounded-md bg-[#f5c400] px-5 py-2.5 text-[13px] font-semibold text-[#0b0f15] shadow-[0_0_24px_rgba(245,196,0,0.25)] transition-colors hover:bg-[#ffd633] disabled:cursor-not-allowed disabled:bg-[#3a3a2a] disabled:text-[#8c8a70] disabled:shadow-none"
         >
           {starting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />}
-          {t("start")}
+          {chosen ? t("startField", { field: chosen.column }) : t("start")}
         </button>
       </section>
     </div>
+  );
+}
+
+/** One field of the execution: what its content flows into next. A field nothing derives from cannot be followed. */
+function FieldRow({ item, active, onClick }: { item: CatalogueField; active: boolean; onClick: () => void }) {
+  const t = useTranslations("contentLineageAgent.setup");
+  const followable = item.fields.length > 0;
+  const next = item.fields.filter((entry) => entry.direct || (entry.evidence === "impact" && entry.level === 1));
+  const further = item.fields.length - next.length;
+  const tested = item.fields.some((entry) => entry.evidence === "impact");
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={!followable}
+      aria-pressed={active}
+      title={followable ? undefined : item.selection.length ? t("onlySelects") : t("noNext")}
+      className={cn(
+        "flex w-full items-center gap-2.5 rounded-md border px-2.5 py-2 text-left transition-colors disabled:cursor-not-allowed",
+        active ? "border-[#f5c400]/55 bg-[#f5c400]/[0.09]" : followable ? "border-[#1f252e] bg-[#0d1218] hover:border-[#2c3440]" : "border-transparent opacity-45",
+      )}
+    >
+      <span className={cn("flex h-4 w-4 shrink-0 items-center justify-center rounded-full border", active ? "border-[#f5c400]" : "border-[#3f4957]")}>
+        {active && <span className="h-2 w-2 rounded-full bg-[#f5c400]" />}
+      </span>
+      <span className={cn("min-w-0 shrink-0 truncate font-mono text-[12px]", active ? "text-[#f5c400]" : "text-[#e5e9f0]")} style={{ maxWidth: "42%" }}>{item.column}</span>
+      {followable ? (
+        <span className="flex min-w-0 flex-1 items-center gap-1 text-[11px] text-[#8c96a8]">
+          <ArrowRight className="h-3 w-3 shrink-0 text-[#4a5464]" />
+          <span className="truncate">{next.map((entry) => entry.column).join(", ") || item.fields[0]?.column}</span>
+          {further > 0 && <span className="shrink-0 rounded bg-[#1a212c] px-1 text-[10px] text-[#aab3c2]">{t("further", { count: further })}</span>}
+          {tested && <FlaskConical className="h-3 w-3 shrink-0 text-pink-300" />}
+        </span>
+      ) : (
+        <span className="flex-1 truncate text-[11px] text-[#5d6878]">{item.selection.length ? t("onlySelects") : t("noNext")}</span>
+      )}
+    </button>
+  );
+}
+
+/** What the analysis will follow: the selected field's next fields and every field further downstream, step by step —
+ *  the same computation as the analysis, before it is started. */
+function ForwardPreview({ item, preview }: { item: CatalogueField; preview: Preview }) {
+  const t = useTranslations("contentLineageAgent.setup");
+  const steps = useMemo(() => {
+    const groups = new Map<number, CatalogueField["fields"]>();
+    for (const entry of item.fields) groups.set(entry.level, [...(groups.get(entry.level) ?? []), entry]);
+    return [...groups.entries()].sort(([a], [b]) => a - b);
+  }, [item]);
+  const statements = new Set(item.edges.flatMap((edge) => edge.lines)).size;
+  const tested = item.fields.filter((entry) => entry.evidence === "impact");
+  return (
+    <section data-tour="content-forward-preview" className={cn(PANEL, "p-4")}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className={EYEBROW}>{t("previewEyebrow")}</p>
+          <p className="mt-1 text-[14px] font-semibold text-white">{t("previewTitle", { field: item.column })}</p>
+          <p className="mt-0.5 text-[11.5px] text-[#8c96a8]">{t("previewHint", { fields: item.fields.length, statements })}</p>
+        </div>
+        <p className="flex max-w-md items-start gap-1.5 text-[11.5px] leading-relaxed text-[#8c96a8]">
+          <FlaskConical className="mt-0.5 h-3.5 w-3.5 shrink-0 text-pink-300" />
+          {preview.probe.enabled ? t("probe", { rows: preview.probe.rows, confirmed: item.confirmed.length, fields: item.fields.length - tested.length }) : t("probeOff")}
+        </p>
+      </div>
+      <div className="mt-4 flex items-stretch gap-2 overflow-x-auto pb-1">
+        <PreviewColumn title={t("selectedColumn")} tone="start">
+          <PreviewChip column={item.column} tone="start" />
+        </PreviewColumn>
+        {steps.map(([level, entries]) => (
+          <Fragment key={level}>
+            <ChevronRight className="mt-9 h-4 w-4 shrink-0 text-[#3f4957]" />
+            <PreviewColumn title={level === 1 ? t("nextColumn") : t("stepColumn", { level })} tone={level === 1 ? "next" : "downstream"}>
+              {entries.map((entry) => <PreviewChip key={entry.column} column={entry.column} tone={level === 1 ? "next" : "downstream"} end={entry.end} impact={entry.evidence === "impact"} />)}
+            </PreviewColumn>
+          </Fragment>
+        ))}
+      </div>
+      {tested.length > 0 && <p className="mt-3 text-[11.5px] text-pink-200">{t("previewImpact", { fields: tested.map((entry) => entry.column).join(", ") })}</p>}
+      {item.selection.length > 0 && <p className="mt-2 text-[11.5px] text-[#aab3c2]">{t("previewSelection", { lines: item.selection.map((entry) => entry.line).join(", ") })}</p>}
+    </section>
+  );
+}
+
+function PreviewColumn({ title, tone, children }: { title: string; tone: "start" | "next" | "downstream"; children: React.ReactNode }) {
+  return (
+    <div className="flex min-w-[170px] flex-col gap-1.5 rounded-md border border-[#1f252e] bg-[#0d1218] p-2.5">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.14em]" style={{ color: ROLE_COLORS[tone] }}>{title}</p>
+      {children}
+    </div>
+  );
+}
+
+function PreviewChip({ column, tone, end, impact }: { column: string; tone: "start" | "next" | "downstream"; end?: boolean; impact?: boolean }) {
+  return (
+    <span className={cn("flex items-center gap-1.5 rounded border bg-[#121821] px-2 py-1 font-mono text-[11.5px] text-[#e5e9f0]", tone === "start" ? "border-[#f5c400]/40 text-[#f5c400]" : impact ? "border-dashed border-pink-400/45" : "border-[#2c3440]")}>
+      <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: ROLE_COLORS[tone] }} />
+      <span className="truncate">{column}</span>
+      {end && <Flag className="ml-auto h-3 w-3 shrink-0 text-[#f5c400]" />}
+      {impact && <FlaskConical className="h-3 w-3 shrink-0 text-pink-300" />}
+    </span>
   );
 }
 

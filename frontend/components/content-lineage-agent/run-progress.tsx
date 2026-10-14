@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
-import { Ban, BookOpenCheck, CheckCircle2, Clock, Languages, Loader2, Microscope, Route, Scale, ScanSearch, Square, UserCheck, XCircle } from "lucide-react";
+import { Ban, BookOpenCheck, CheckCircle2, Clock, Languages, Loader2, Microscope, ScanSearch, Square, Workflow, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { EYEBROW, PANEL, formatDuration } from "./atoms";
 import { AgentConsole } from "./log";
@@ -10,15 +10,13 @@ import type { Run, Stage } from "./types";
 
 const STAGES = [
   { id: "trace", icon: Microscope },
-  { id: "compose", icon: Route },
+  { id: "follow", icon: Workflow },
   { id: "describe", icon: BookOpenCheck },
-  { id: "regulate", icon: Scale },
-  { id: "review", icon: UserCheck },
   { id: "translate", icon: Languages },
 ] as const;
 
-const POSITION: Record<Stage, number> = {
-  queued: 0, load: 0, trace: 0, compose: 1, describe: 2, regulate: 3, review: 4, translate: 5, assemble: 6, finished: 6,
+const POSITION: Record<Stage | "compose", number> = {
+  queued: 0, load: 0, trace: 0, follow: 1, compose: 1, describe: 2, translate: 3, assemble: 4, finished: 4,
 };
 
 export function RunProgress({ run, cancelling, onCancel, onNew }: { run: Run; cancelling: boolean; onCancel: () => void; onNew: () => void }) {
@@ -32,34 +30,25 @@ export function RunProgress({ run, cancelling, onCancel, onNew }: { run: Run; ca
     return () => window.clearInterval(timer);
   }, [running]);
   const elapsed = running ? now - new Date(run.created_at).getTime() : run.duration_ms ?? 0;
-  const position = run.status === "completed" ? 6 : POSITION[run.stage] ?? 0;
+  const position = run.status === "completed" ? STAGES.length : POSITION[run.stage] ?? 0;
   const params = (code: string) => [...run.log].reverse().find((entry) => entry.code === code)?.params ?? null;
-  const regulationSkipped = Boolean(params("regulation_skipped")) || (run.settings.regulation_ids.length === 0);
   const detail = (id: (typeof STAGES)[number]["id"]): string | null => {
     if (id === "trace") {
       const p = params("replay_done");
       if (p) return t("detail.trace", { cells: Number(p.cells), changes: Number(p.changes) });
       return params("replay_mismatch") || params("replay_columns") ? t("detail.traceMismatch") : null;
     }
-    if (id === "compose") {
+    if (id === "follow") {
       const p = params("scope");
-      const c = params("composed");
-      if (!p) return null;
-      return t("detail.compose", { terms: Number(p.terms), rules: Number(p.rules), cases: Number(p.cases) }) + (c ? ` · ${t("detail.paths", { count: Number(c.paths) })}` : "");
+      const impact = params("impact_done");
+      if (!p && !impact) return params("scope_empty") ? t("detail.followEmpty") : null;
+      const parts = p ? [t("detail.follow", { next: Number(p.next), fields: Number(p.fields), ends: Number(p.ends) })] : [];
+      if (impact) parts.push(t("detail.impact", { confirmed: Number(impact.confirmed), fields: Number(impact.fields) }));
+      return parts.join(" · ");
     }
     if (id === "describe") {
       if (!run.progress.rules_total) return null;
       return t("detail.describe", { done: run.progress.rules_described, total: run.progress.rules_total });
-    }
-    if (id === "regulate") {
-      if (regulationSkipped) return t("detail.skipped");
-      if (position < 3) return null;
-      return t("detail.regulate", { done: run.progress.rules_regulated, total: run.progress.rules_total, provisions: run.progress.provisions_linked });
-    }
-    if (id === "review") {
-      if (regulationSkipped) return t("detail.skipped");
-      if (position < 4 || !run.progress.rules_to_review) return null;
-      return t("detail.review", { done: run.progress.rules_reviewed, total: run.progress.rules_to_review });
     }
     if (id === "translate") {
       const p = params("translated");
@@ -81,7 +70,7 @@ export function RunProgress({ run, cancelling, onCancel, onNew }: { run: Run; ca
             </h2>
             <p className="mt-1 text-[12.5px] text-[#8c96a8]">
               <span className="font-mono text-[#c2cad5]">{run.source.code_filename}</span> · {run.source.dataset_name ?? "–"}
-              {(run.settings.figures_traced.length || run.settings.figures.length) > 0 && <> · {t("figures", { figures: (run.settings.figures_traced.length ? run.settings.figures_traced : run.settings.figures).join(", ") })}</>}
+              {run.settings.field && <> · {t("field", { field: run.settings.field })}</>}
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -102,17 +91,15 @@ export function RunProgress({ run, cancelling, onCancel, onNew }: { run: Run; ca
           </div>
         </div>
 
-        <ol data-tour="content-stages" className="relative mt-6 grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+        <ol data-tour="content-stages" className="relative mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {STAGES.map((stage, index) => {
-            const skipped = (stage.id === "regulate" || stage.id === "review") && regulationSkipped && index < position;
-            const state = run.status !== "running" && run.status !== "completed" && index === position ? "failed" : index < position ? (skipped ? "skipped" : "done") : index === position && running ? "active" : "pending";
+            const state = run.status !== "running" && run.status !== "completed" && index === position ? "failed" : index < position ? "done" : index === position && running ? "active" : "pending";
             const Icon = stage.icon;
             const text = detail(stage.id);
             return (
               <li key={stage.id} className={cn(
                 "relative rounded-lg border px-3.5 py-3 transition-colors",
                 state === "done" && "border-emerald-400/25 bg-emerald-400/[0.04]",
-                state === "skipped" && "border-[#1f252e] bg-[#0d1218] opacity-70",
                 state === "active" && "border-[#f5c400]/45 bg-[#f5c400]/[0.06] shadow-[0_0_24px_rgba(245,196,0,0.10)]",
                 state === "pending" && "border-[#1f252e] bg-[#0d1218]",
                 state === "failed" && "border-rose-400/35 bg-rose-400/[0.05]",
@@ -126,23 +113,12 @@ export function RunProgress({ run, cancelling, onCancel, onNew }: { run: Run; ca
                   </span>
                   <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#687386]">{t("step", { index: index + 1 })}</span>
                 </div>
-                <p className={cn("mt-2 text-[13px] font-semibold", state === "pending" || state === "skipped" ? "text-[#8c96a8]" : "text-white")}>{t(`stages.${stage.id}.title`)}</p>
+                <p className={cn("mt-2 text-[13px] font-semibold", state === "pending" ? "text-[#8c96a8]" : "text-white")}>{t(`stages.${stage.id}.title`)}</p>
                 <p className="mt-0.5 text-[11.5px] leading-snug text-[#8c96a8]">{t(`stages.${stage.id}.body`)}</p>
                 {text && <p className={cn("mt-2 font-mono text-[11px]", state === "active" ? "text-[#f5c400]" : "text-[#aab3c2]")}>{text}</p>}
-                {(stage.id === "describe" || stage.id === "regulate" || stage.id === "review") && state === "active" && (
+                {stage.id === "describe" && state === "active" && (
                   <div className="mt-2 h-1 overflow-hidden rounded-full bg-[#1a212c]">
-                    <div
-                      className="h-full rounded-full bg-[#f5c400] transition-[width] duration-300"
-                      style={{
-                        width: `${
-                          stage.id === "describe"
-                            ? (100 * run.progress.rules_described) / Math.max(1, run.progress.rules_total)
-                            : stage.id === "regulate"
-                              ? (100 * run.progress.rules_regulated) / Math.max(1, run.progress.rules_total)
-                              : (100 * run.progress.rules_reviewed) / Math.max(1, run.progress.rules_to_review)
-                        }%`,
-                      }}
-                    />
+                    <div className="h-full rounded-full bg-[#f5c400] transition-[width] duration-300" style={{ width: `${(100 * run.progress.rules_described) / Math.max(1, run.progress.rules_total)}%` }} />
                   </div>
                 )}
               </li>

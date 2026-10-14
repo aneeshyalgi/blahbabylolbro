@@ -8,8 +8,6 @@ import type { LogEntry } from "./types";
 /** Localised text of an agent log entry; the backend's English message is the fallback. */
 export function useLogText() {
   const t = useTranslations("contentLineageAgent.log");
-  const tVerdicts = useTranslations("contentLineageAgent.verdicts");
-  const tFrameworks = useTranslations("contentLineageAgent.frameworks");
   const tLanguages = useTranslations("contentLineageAgent.languageNames");
   return (entry: LogEntry) => {
     if (!t.has(entry.code)) return entry.message;
@@ -17,8 +15,6 @@ export function useLogText() {
     for (const [key, value] of Object.entries(entry.params ?? {})) {
       params[key] = Array.isArray(value) ? value.join(", ") || "–" : typeof value === "number" ? value : String(value ?? "");
     }
-    if (typeof params.verdict === "string" && tVerdicts.has(params.verdict)) params.verdict = tVerdicts(params.verdict);
-    if (typeof params.framework === "string" && tFrameworks.has(params.framework)) params.framework = tFrameworks(params.framework);
     if (typeof params.language === "string" && tLanguages.has(params.language)) params.language = tLanguages(params.language);
     try {
       return t(entry.code, params);

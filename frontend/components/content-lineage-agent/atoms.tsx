@@ -2,98 +2,62 @@
 
 import type { ReactNode } from "react";
 import { useLocale, useTranslations } from "next-intl";
-import { CheckCircle2, CircleDashed, CircleHelp, Database, FileText, GitCommitHorizontal, Scale, Sigma, Target, TriangleAlert, XCircle } from "lucide-react";
+import { FlaskConical } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Model } from "./model";
-import type { TermKind, Verdict } from "./types";
+import type { Reach, TermRole, Use } from "./types";
 
-export { PANEL, SUBTLE, EYEBROW, CodeBlock, Formula, LineChip, ValueText, CheckIcon, SeverityIcon, SEVERITY_STYLES, SectionTitle, formatDateTime, formatDuration } from "@/components/lineage-agent/atoms";
+export { PANEL, EYEBROW, CheckIcon, SeverityIcon, SEVERITY_STYLES, formatDateTime, formatDuration } from "@/components/lineage-agent/atoms";
 
-export const KIND_COLORS: Record<TermKind | "rule" | "provision", string> = {
-  figure: "#f5c400",
-  concept: "#34d399",
-  source: "#38bdf8",
-  rule: "#a78bfa",
-  provision: "#fb923c",
+/** start: the selected field; next: its rule reads it; downstream: further down; context: another input of a rule. */
+export const ROLE_COLORS: Record<TermRole, string> = {
+  start: "#f5c400",
+  next: "#34d399",
+  downstream: "#38bdf8",
+  context: "#64748b",
 };
 
-export const KIND_CHIPS: Record<TermKind, string> = {
-  figure: "border-[#f5c400]/40 bg-[#f5c400]/10 text-[#f5c400]",
-  concept: "border-emerald-400/30 bg-emerald-400/[0.08] text-emerald-300",
-  source: "border-sky-400/30 bg-sky-400/[0.08] text-sky-300",
-};
-
-export const VERDICT_COLORS: Record<Verdict, string> = {
-  consistent: "#34d399",
-  simplified: "#fbbf24",
-  deviation: "#fb7185",
-  not_covered: "#64748b",
-  unverified: "#94a3b8",
-};
-
-const VERDICT_CHIPS: Record<Verdict, string> = {
-  consistent: "border-emerald-400/30 bg-emerald-400/[0.08] text-emerald-300",
-  simplified: "border-amber-400/35 bg-amber-400/[0.08] text-amber-300",
-  deviation: "border-rose-400/35 bg-rose-400/[0.09] text-rose-300",
-  not_covered: "border-slate-400/25 bg-slate-400/[0.06] text-slate-300",
-  unverified: "border-slate-400/25 bg-slate-400/[0.06] text-slate-300",
-};
-
-/** Origin colours: delivered by the source system, derived by a case (shades), missing. */
-export const ORIGIN_COLORS = {
-  delivered: "#38bdf8",
-  derived: ["#34d399", "#a78bfa", "#f472b6", "#fbbf24", "#22d3ee", "#fb923c", "#a3e635", "#e879f9"],
+/** How a record's value depends on the selected field (and the records it does not reach). */
+export const REACH_COLORS: Record<Reach | "none" | "missing", string> = {
+  value: "#34d399",
+  decides: "#fbbf24",
+  tested: "#f472b6",
+  none: "#2a3340",
   missing: "#fb7185",
 };
 
-export function KindIcon({ kind, className, style }: { kind: TermKind | "rule" | "provision"; className?: string; style?: React.CSSProperties }) {
-  const Icon = kind === "figure" ? Target : kind === "concept" ? Sigma : kind === "source" ? Database : kind === "rule" ? GitCommitHorizontal : Scale;
-  return <Icon className={cn("h-3.5 w-3.5 shrink-0", className)} style={style ?? { color: KIND_COLORS[kind] }} />;
-}
+/** Case colours: one per case of a rule. */
+export const CASE_COLORS = ["#34d399", "#a78bfa", "#f472b6", "#fbbf24", "#22d3ee", "#fb923c", "#a3e635", "#e879f9"];
 
-export function KindBadge({ kind, classifier, className }: { kind: TermKind; classifier?: boolean; className?: string }) {
-  const t = useTranslations("contentLineageAgent.kinds");
+/** A field only re-running the calculation links to the selected field (the code does not show how). */
+export function ImpactBadge({ className }: { className?: string }) {
+  const t = useTranslations("contentLineageAgent.roles");
   return (
-    <span className={cn("inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2 py-[1px] text-[10.5px] font-semibold uppercase tracking-wide", KIND_CHIPS[kind], className)}>
-      <KindIcon kind={kind} className="h-3 w-3" style={{ color: "currentColor" }} />
-      {t(classifier && kind === "source" ? "classification" : kind)}
+    <span className={cn("inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-pink-400/35 bg-pink-400/[0.07] px-2 py-[1px] text-[10.5px] font-semibold text-pink-200", className)} title={t("impactHint")}>
+      <FlaskConical className="h-3 w-3" />
+      {t("impact")}
     </span>
   );
 }
 
-export function VerdictBadge({ verdict, className, compact = false }: { verdict: Verdict; className?: string; compact?: boolean }) {
-  const t = useTranslations("contentLineageAgent.verdicts");
-  const Icon = verdict === "consistent" ? CheckCircle2 : verdict === "deviation" ? XCircle : verdict === "simplified" ? TriangleAlert : verdict === "unverified" ? CircleHelp : CircleDashed;
-  return (
-    <span className={cn("inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2 py-[1px] text-[10.5px] font-semibold", VERDICT_CHIPS[verdict], className)} title={t(`${verdict}Hint`)}>
-      <Icon className="h-3 w-3" />
-      {compact ? t(`${verdict}Short`) : t(verdict)}
-    </span>
-  );
+/** How a case uses a field: value, table key, condition, grouping, join key. */
+export function UseChip({ use, className }: { use: Use; className?: string }) {
+  const t = useTranslations("contentLineageAgent.uses");
+  const tone = use === "value" ? "border-emerald-400/30 text-emerald-200" : use === "key" ? "border-[#f5c400]/35 text-[#f5c400]" : use === "impact" ? "border-pink-400/35 text-pink-200" : "border-amber-400/30 text-amber-200";
+  return <span className={cn("inline-flex items-center whitespace-nowrap rounded border px-1.5 py-[1px] text-[10px] font-semibold uppercase tracking-wide", tone, className)} title={t(`${use}Hint`)}>{t(use)}</span>;
 }
 
-/** A business term: its business name, the technical column on hover (or below). */
-export function TermChip({ model, column, onClick, active, showColumn = false, className }: {
-  model: Model;
-  column: string;
-  onClick?: (column: string) => void;
-  active?: boolean;
-  showColumn?: boolean;
-  className?: string;
-}) {
-  const term = model.termBy.get(column);
-  const kind = term?.kind ?? "source";
+/** A business term: its business name, the technical column on hover. */
+export function TermChip({ model, column, onClick, className }: { model: Model; column: string; onClick?: (column: string) => void; className?: string }) {
   const classes = cn(
-    "inline-flex max-w-full items-center gap-1.5 rounded-md border px-1.5 py-[1px] text-[11.5px]",
-    active ? "border-[#f5c400]/50 bg-[#f5c400]/10 text-[#f5c400]" : "border-[#2c3440] bg-[#141a23] text-[#e5e9f0]",
+    "inline-flex max-w-full items-center gap-1.5 rounded-md border border-[#2c3440] bg-[#141a23] px-1.5 py-[1px] text-[11.5px] text-[#e5e9f0]",
     onClick && "transition-colors hover:border-[#f5c400]/50 hover:text-[#f5c400]",
     className,
   );
   const body = (
     <>
-      <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: KIND_COLORS[kind] }} />
+      <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: ROLE_COLORS[model.role(column)] }} />
       <span className="truncate">{model.termName(column)}</span>
-      {showColumn && <span className="truncate font-mono text-[10px] text-[#687386]">{column}</span>}
     </>
   );
   if (!onClick) return <span className={classes} title={column}>{body}</span>;
@@ -104,48 +68,26 @@ export function TermChip({ model, column, onClick, active, showColumn = false, c
   );
 }
 
-export function ProvisionChip({ reference, regulation, onClick, className }: { reference: string; regulation?: string; onClick?: () => void; className?: string }) {
-  const classes = cn(
-    "inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-orange-400/30 bg-orange-400/[0.07] px-1.5 py-[1px] font-mono text-[10.5px] text-orange-200",
-    onClick && "transition-colors hover:border-orange-300/70 hover:bg-orange-400/15",
-    className,
-  );
-  const body = (
-    <>
-      <FileText className="h-3 w-3" />
-      {regulation ? `${regulation} ` : ""}
-      {reference}
-    </>
-  );
-  if (!onClick) return <span className={classes}>{body}</span>;
-  return (
-    <button type="button" className={classes} onClick={onClick}>
-      {body}
-    </button>
-  );
-}
-
-/** Amounts and shares in the tab's locale. */
+/** Amounts, shares and values in the tab's locale. */
 export function useNumbers() {
   const locale = useLocale();
   const amount = new Intl.NumberFormat(locale, { maximumFractionDigits: 2 });
-  const compact = new Intl.NumberFormat(locale, { notation: "compact", maximumFractionDigits: 1 });
   const percent = new Intl.NumberFormat(locale, { maximumFractionDigits: 1 });
   return {
     amount: (value: number | null | undefined) => (value === null || value === undefined ? "–" : amount.format(value)),
-    compact: (value: number | null | undefined) => (value === null || value === undefined ? "–" : Math.abs(value) >= 10000 ? compact.format(value) : amount.format(value)),
     share: (part: number, total: number) => (total ? `${percent.format((100 * part) / total)} %` : "–"),
-    /** A parameter of a table; factors (tables whose values all lie between 0 and 12.5) read as percentages. */
-    parameter: (value: unknown, asPercent = false) => {
+    /** A value of a field: numbers in the locale (factors in percent), text as it is, a missing value as ∅. */
+    value: (value: unknown, asPercent = false) => {
+      if (value === null || value === undefined || value === "") return "∅";
       if (typeof value === "number") return asPercent ? `${percent.format(value * 100)} %` : amount.format(value);
-      if (value === null || value === undefined) return "∅";
+      if (typeof value === "boolean") return value ? "true" : "false";
       return String(value);
     },
   };
 }
 
 /** A horizontal bar of shares (each part with its own colour). */
-export function ShareBar({ parts, className, height = 6 }: { parts: { value: number; color: string; label?: string }[]; className?: string; height?: number }) {
+function ShareBar({ parts, className, height = 6 }: { parts: { value: number; color: string; label?: string }[]; className?: string; height?: number }) {
   const total = parts.reduce((sum, part) => sum + Math.max(0, part.value), 0);
   return (
     <div className={cn("flex w-full overflow-hidden rounded-full bg-[#1a212c]", className)} style={{ height }}>
@@ -170,19 +112,19 @@ export function Stat({ label, value, detail, tone = "default", icon }: { label: 
   );
 }
 
-/** A case of a rule: its business label, the parameter of a lookup key. */
-export function CaseText({ model, caseId, keyValue, className }: { model: Model; caseId: string; keyValue?: string | null; className?: string }) {
-  const numbers = useNumbers();
-  const parameter = model.parameter(caseId, keyValue ?? null);
+/** Records reached by the selected field (by value, by deciding the case, shown by re-running) and the rest. */
+export function ReachBar({ records, height = 6, className }: { records: { value: number; decides: number; tested: number; total: number; reached: number }; height?: number; className?: string }) {
+  const t = useTranslations("contentLineageAgent.reach");
   return (
-    <span className={cn("text-[#dbe2ec]", className)}>
-      {model.caseLabel(caseId)}
-      {keyValue && (
-        <span className="ml-1 rounded bg-[#1a212c] px-1 font-mono text-[10.5px] text-[#c9d1dd]">
-          {keyValue}
-          {parameter !== undefined && <span className="text-[#f5c400]"> → {numbers.parameter(parameter, model.percentTable(caseId))}</span>}
-        </span>
-      )}
-    </span>
+    <ShareBar
+      className={className}
+      height={height}
+      parts={[
+        { value: records.value, color: REACH_COLORS.value, label: t("valueCount", { count: records.value }) },
+        { value: records.decides, color: REACH_COLORS.decides, label: t("decidesCount", { count: records.decides }) },
+        { value: records.tested, color: REACH_COLORS.tested, label: t("testedCount", { count: records.tested }) },
+        { value: records.total - records.reached, color: REACH_COLORS.none, label: t("noneCount", { count: records.total - records.reached }) },
+      ]}
+    />
   );
 }

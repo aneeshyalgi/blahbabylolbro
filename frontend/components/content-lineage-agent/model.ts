@@ -1,84 +1,62 @@
-import type { Assessment, Case, Link, Relation, Result, Rule, Term, Texts, Verdict } from "./types";
+import type { Case, Flow, Result, Rule, Term, TermRole, Texts, Use } from "./types";
 
-export interface Provision {
-  /** regulation id + unit + cited reference. */
-  key: string;
-  link: Link;
-  rules: { rule: string; relation: Relation; index: number }[];
-  verdict: Verdict;
+/** Results of the earlier version of the agent (backward from reported figures) cannot be shown by this one. */
+export const isForwardResult = (result: Result | null | undefined): result is Result => Boolean(result && result.mode === "forward" && result.flows && result.scope?.field);
+
+/** How the content travels along one link of the lineage: its value is carried, it decides a case or parameter (a
+ *  condition or table key), or only re-running the calculation shows the link (the code does not show how). */
+export type LinkKind = "value" | "decides" | "impact";
+
+export interface Link {
+  from: string;
+  to: string;
+  kind: LinkKind;
 }
-
-export interface TokenInfo {
-  column: string;
-  rule: string | null;
-  case: string | null;
-  key: string | null;
-  delivered: boolean;
-}
-
-const VERDICT_ORDER: Verdict[] = ["not_covered", "unverified", "consistent", "simplified", "deviation"];
-
-export function worstVerdict(verdicts: Verdict[]): Verdict {
-  return verdicts.reduce<Verdict>((worst, verdict) => (VERDICT_ORDER.indexOf(verdict) > VERDICT_ORDER.indexOf(worst) ? verdict : worst), "not_covered");
-}
-
-/** One node per cited provision (Article 111(1) and Article 111(2) are two), however many rules cite it. */
-export const provisionKey = (link: Pick<Link, "regulation_id" | "unit" | "reference">) => `${link.regulation_id}:${link.unit}:${link.reference}`;
 
 /**
- * Everything the views need about one analysis, with the AI texts in the tab's language. The agent writes in the
+ * Everything the view needs about one analysis, with the AI texts in the tab's language. The agent writes in the
  * language of the run and translates every text; a text missing in the shown language falls back to the original.
  */
 export class Model {
   readonly result: Result;
   readonly texts: Texts;
   readonly original: Texts;
-  /** Set when the texts are a translation: the language the AI originally wrote in. */
-  readonly translatedFrom: string | null;
+  /** The field whose content the analysis follows. */
+  readonly field: string;
+  /** Every downstream field, in the order of the calculation. */
+  readonly downstream: string[];
   readonly termBy: Map<string, Term>;
-  readonly ruleBy: Map<string, Rule>;
   readonly ruleOfColumn: Map<string, Rule>;
   readonly caseBy: Map<string, Case>;
-  readonly provisions: Provision[];
-  readonly provisionBy: Map<string, Provision>;
-  readonly figures: string[];
+  readonly flowBy: Map<string, Flow>;
+  /** The selected field and every downstream field: the fields that carry its content. */
+  readonly carriers: Set<string>;
+  /** The links between the fields that carry the content (from the selected field or a downstream field to a downstream field). */
+  readonly links: Link[];
 
   constructor(result: Result, locale: string) {
     this.result = result;
-    const originalLanguage = result.ai.language;
-    this.original = result.ai.texts[originalLanguage] ?? Object.values(result.ai.texts)[0];
-    const shown = result.ai.texts[locale];
-    this.texts = shown ?? this.original;
-    this.translatedFrom = shown && locale !== originalLanguage ? originalLanguage : null;
+    this.original = result.ai.texts[result.ai.language] ?? Object.values(result.ai.texts)[0];
+    this.texts = result.ai.texts[locale] ?? this.original;
+    this.field = result.scope.field;
+    this.downstream = result.scope.fields;
+    this.carriers = new Set([this.field, ...this.downstream]);
     this.termBy = new Map(result.terms.map((term) => [term.column, term]));
-    this.ruleBy = new Map(result.rules.map((rule) => [rule.id, rule]));
     this.ruleOfColumn = new Map(result.rules.map((rule) => [rule.column, rule]));
     this.caseBy = new Map(result.rules.flatMap((rule) => rule.cases.map((item) => [item.id, item] as const)));
-    this.figures = result.scope.figures;
-    const provisions = new Map<string, Provision>();
-    for (const rule of result.rules) {
-      const assessment = result.regulation.rules[rule.id];
-      if (!assessment) continue;
-      assessment.links.forEach((link, index) => {
-        const key = provisionKey(link);
-        const entry = provisions.get(key) ?? { key, link, rules: [], verdict: "not_covered" as Verdict };
-        entry.rules.push({ rule: rule.id, relation: link.relation, index });
-        provisions.set(key, entry);
-      });
+    this.flowBy = new Map(Object.entries(result.flows));
+    const downstream = new Set(this.downstream);
+    const links = new Map<string, Link>();
+    for (const edge of result.scope.edges) {
+      if (!this.carriers.has(edge.from) || !downstream.has(edge.to) || edge.from === edge.to) continue;
+      const kind: LinkKind = edge.roles.includes("value") ? "value" : edge.roles.length === 0 || edge.roles.every((role) => role === "impact") ? "impact" : "decides";
+      links.set(`${edge.from}>${edge.to}`, { from: edge.from, to: edge.to, kind });
     }
-    for (const entry of provisions.values()) {
-      entry.verdict = worstVerdict(entry.rules.map((item) => this.provisionVerdict(item.rule, item.index)));
-    }
-    this.provisions = [...provisions.values()];
-    this.provisionBy = provisions;
+    this.links = [...links.values()];
   }
 
-  /** The verdict a provision carries for one rule: its own findings, else the rule's verdict. */
-  provisionVerdict(rule: string, index: number): Verdict {
-    const assessment = this.result.regulation.rules[rule];
-    if (!assessment) return "not_covered";
-    const own = assessment.findings.filter((finding) => finding.link === index).map((finding) => finding.verdict as Verdict);
-    return own.length ? worstVerdict(own) : assessment.verdict;
+  role(column: string): TermRole {
+    return this.termBy.get(column)?.role ?? "context";
   }
 
   termName(column: string): string {
@@ -87,6 +65,11 @@ export class Model {
 
   definition(column: string): string {
     return this.texts.terms[column]?.definition || this.original.terms[column]?.definition || "";
+  }
+
+  /** How the selected field reaches a downstream field (AI text). */
+  usage(column: string): string {
+    return this.texts.usage?.[column] || this.original.usage?.[column] || "";
   }
 
   ruleName(rule: string): string {
@@ -107,48 +90,64 @@ export class Model {
     return this.texts.rules[rule]?.cases[caseId]?.description || this.original.rules[rule]?.cases[caseId]?.description || "";
   }
 
-  assessment(rule: string): Assessment | undefined {
-    return this.result.regulation.rules[rule];
+  /** Values of a field are factors or rates (shown in percent). */
+  isFactor(column: string): boolean {
+    return Boolean(this.termBy.get(column)?.factor);
   }
 
-  regulationText(rule: string) {
-    return this.texts.regulation[rule] ?? this.original.regulation[rule] ?? { explanation: "", links: [], findings: [], issues: [] };
+  /** The step of a field in the lineage: 0 for the selected field, 1 for its next fields, and so on. */
+  level(column: string): number {
+    return column === this.field ? 0 : this.flowBy.get(column)?.level ?? 1;
   }
 
-  /** A content-path token: 'R4.1', 'R5.1|OffBalance' or 'EAD|delivered'. */
-  token(token: string): TokenInfo {
-    if (token.endsWith("|delivered")) {
-      return { column: token.slice(0, -"|delivered".length), rule: null, case: null, key: null, delivered: true };
+  /** The fields grouped by their step: the selected field first, then its next fields, up to the end of the calculation. */
+  steps(): { level: number; columns: string[] }[] {
+    const groups = new Map<number, string[]>([[0, [this.field]]]);
+    for (const column of this.downstream) {
+      const level = this.level(column);
+      groups.set(level, [...(groups.get(level) ?? []), column]);
     }
-    const [caseId, ...rest] = token.split("|");
+    return [...groups.entries()].sort(([a], [b]) => a - b).map(([level, columns]) => ({ level, columns }));
+  }
+
+  /** The fields the content passes through on its way to a field (the selected field included). */
+  ancestors(column: string): Set<string> {
+    const found = new Set<string>();
+    const stack = [column];
+    while (stack.length) {
+      const current = stack.pop()!;
+      for (const link of this.links) {
+        if (link.to === current && !found.has(link.from)) {
+          found.add(link.from);
+          stack.push(link.from);
+        }
+      }
+    }
+    return found;
+  }
+
+  /** The fields the content of a field reaches further on. */
+  descendants(column: string): Set<string> {
+    const found = new Set<string>();
+    const stack = [column];
+    while (stack.length) {
+      const current = stack.pop()!;
+      for (const link of this.links) {
+        if (link.from === current && !found.has(link.to)) {
+          found.add(link.to);
+          stack.push(link.to);
+        }
+      }
+    }
+    return found;
+  }
+
+  /** What a case reads of the selected field's content (the field itself or a downstream field), with how it uses it. */
+  carriedReads(caseId: string): { column: string; roles: Use[] }[] {
     const item = this.caseBy.get(caseId);
-    return { column: item?.column ?? caseId, rule: item?.rule ?? null, case: caseId, key: rest.length ? rest.join("|") : null, delivered: false };
-  }
-
-  /** The parameter a lookup case applies to a key, e.g. 0.2 for 'OffBalance'. */
-  parameter(caseId: string, key: string | null): unknown {
-    if (!key) return undefined;
-    return this.caseBy.get(caseId)?.keys.find((item) => item.key === key)?.value;
-  }
-
-  /** A table of factors (every value a number between 0 and 12.5, one below 1.5) is shown in percent. */
-  percentTable(caseId: string): boolean {
-    const values = (this.caseBy.get(caseId)?.lookup?.entries ?? []).map(([, value]) => value);
-    return values.length > 0 && values.every((value) => typeof value === "number" && value >= 0 && value <= 12.5) && values.some((value) => (value as number) < 1.5);
-  }
-
-  /** Every rule upstream of a term, nearest first. */
-  upstreamRules(column: string): Rule[] {
-    const seen = new Set<string>();
-    const order: Rule[] = [];
-    const visit = (name: string) => {
-      const rule = this.ruleOfColumn.get(name);
-      if (!rule || seen.has(rule.id)) return;
-      seen.add(rule.id);
-      order.push(rule);
-      for (const input of [...rule.inputs, ...rule.selectors]) visit(input);
-    };
-    visit(column);
-    return order;
+    if (!item) return [];
+    return Object.entries(item.roles)
+      .filter(([column]) => column !== item.column && this.carriers.has(column))
+      .map(([column, roles]) => ({ column, roles }));
   }
 }

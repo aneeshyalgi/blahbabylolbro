@@ -1614,12 +1614,13 @@
   "contentLineageAgent": {
     "eyebrow": "Linaje de negocio · Agentes IA",
     "title": "Linaje de contenido – Agentes IA",
-    "subtitle": "Explica qué significa una cifra reportada y de qué se compone: los términos y reglas de negocio que la sustentan, la parte de cada valor entregada por la fuente o derivada por cada caso, registro a registro, y las disposiciones que la definen, citadas literalmente y evaluadas.",
+    "subtitle": "Seleccione un campo y vea adónde va su contenido: los campos siguientes y cada paso posterior hasta el final del cálculo, cómo lo usa cada uno y a qué registros afecta, confirmado volviendo a ejecutar el cálculo.",
     "tour": "Visita guiada",
     "history": "Análisis",
-    "historyTitle": "Análisis anteriores del linaje de contenido",
-    "historyEmpty": "Todavía no hay análisis.",
-    "historyLine": "{terms} términos · {rules} reglas · {provisions} disposiciones",
+    "historyTitle": "Análisis de linaje de contenido anteriores",
+    "historyEmpty": "Aún no hay análisis.",
+    "historyLine": "{fields} campos posteriores · {rules} reglas",
+    "historyEarlier": "versión anterior (cifras reportadas)",
     "status": {
       "running": "En curso",
       "completed": "Completado",
@@ -1640,179 +1641,182 @@
       "start": "No se pudo iniciar el análisis",
       "cancel": "No se pudo cancelar el análisis",
       "delete": "No se pudo eliminar el análisis",
-      "export": "La exportación ha fallado",
-      "noResult": "El análisis ha terminado, pero su resultado no se puede mostrar."
+      "export": "La exportación falló",
+      "noResult": "El análisis terminó, pero su resultado no se puede mostrar."
     },
     "toast": {
       "completed": "Linaje de contenido completado",
-      "completedBody": "{terms} términos de negocio, {rules} reglas, {provisions} disposiciones vinculadas",
-      "failed": "El análisis ha fallado",
+      "completedBody": "{field} alcanza {fields} campos posteriores",
+      "failed": "El análisis falló",
       "deleted": "Análisis eliminado"
+    },
+    "legacy": {
+      "title": "Creado con la versión anterior de este agente",
+      "body": "Este análisis se creó con una versión anterior del agente y no se puede mostrar. Inicie un nuevo análisis o elimine este."
     },
     "meta": {
       "execution": "Ejecución del {date}",
-      "figures": "Cifras: {figures}",
+      "fields": "{count, plural, one {# campo posterior} other {# campos posteriores}}",
       "duration": "Duración {value}"
     },
     "export": {
-      "title": "Exportar",
-      "excel": "Libro de Excel",
-      "excelHint": "Glosario, reglas y casos, rutas de contenido, segmentos, base regulatoria, registros y comprobaciones",
-      "drawio": "Diagrama draw.io",
-      "drawioHint": "Use el botón de descarga de la barra del grafo; el diagrama conserva su disposición"
+      "excel": "Exportar a Excel",
+      "excelHint": "Campos posteriores, rutas, flujo de valores, reglas y casos, trazas de registros, glosario y controles"
     },
-    "tabs": {
-      "graph": "Grafo de contenido",
-      "figures": "Qué hay en las cifras",
-      "glossary": "Glosario y reglas",
-      "regulation": "Base regulatoria",
-      "verification": "Comprobaciones y registro"
+    "roles": {
+      "start": "Campo seleccionado",
+      "next": "Campo siguiente",
+      "downstream": "Más adelante",
+      "context": "Otra entrada",
+      "end": "Campo final",
+      "impact": "Encontrado al volver a ejecutar",
+      "impactHint": "Solo volver a ejecutar el cálculo vincula este campo: sus valores cambian cuando cambia el campo seleccionado, pero el código no muestra cómo (p. ej., valores calculados en un bucle sobre los registros)."
     },
-    "kinds": {
-      "figure": "Cifra reportada",
-      "concept": "Concepto de negocio",
-      "source": "Datos de origen",
-      "classification": "Clasificación"
+    "uses": {
+      "value": "valor",
+      "key": "clave de tabla",
+      "condition": "condición",
+      "group": "agrupación",
+      "join": "clave de unión",
+      "impact": "prueba de impacto",
+      "valueHint": "Se usa para calcular el resultado: su contenido pasa al valor.",
+      "keyHint": "Clave de una tabla de parámetros: decide qué parámetro se aplica.",
+      "conditionHint": "Parte de una condición: decide si el caso se aplica a un registro.",
+      "groupHint": "Clave de agrupación: los valores se agregan por grupo de registros.",
+      "joinHint": "Clave de unión: decide qué otros datos se unen al registro.",
+      "impactHint": "Solo la prueba de impacto muestra la dependencia; el código no muestra cómo."
     },
-    "verdicts": {
-      "consistent": "Conforme",
-      "simplified": "Simplificado",
-      "deviation": "Desviación",
-      "not_covered": "Sin base regulatoria",
-      "unverified": "No verificado",
-      "consistentShort": "Conforme",
-      "simplifiedShort": "Simplificado",
-      "deviationShort": "Desviación",
-      "not_coveredShort": "Sin base",
-      "unverifiedShort": "No verificado",
-      "consistentHint": "La regla implementada coincide con las disposiciones citadas.",
-      "simplifiedHint": "La regla es más gruesa que la regulación (p. ej. un parámetro donde la regulación distingue más casos) sin contradecirla.",
-      "deviationHint": "Un caso o parámetro contradice una disposición citada.",
-      "not_coveredHint": "Ninguna disposición de las regulaciones seleccionadas rige esta regla (p. ej. una convención interna de datos).",
-      "unverifiedHint": "La IA propuso disposiciones, pero ninguna de sus citas pudo verificarse en el texto de la regulación."
-    },
-    "frameworks": {
-      "credit_risk_standardised": "Riesgo de crédito – método estándar",
-      "credit_risk_irb": "Riesgo de crédito – método IRB",
-      "securitisation": "Titulización",
-      "counterparty_credit_risk": "Riesgo de contraparte",
-      "market_risk": "Riesgo de mercado",
-      "operational_risk": "Riesgo operacional",
-      "own_funds": "Fondos propios",
-      "large_exposures": "Grandes exposiciones",
-      "liquidity": "Liquidez",
-      "leverage": "Apalancamiento",
-      "other": "Sin marco prudencial"
+    "reach": {
+      "value": "Usa su valor",
+      "decides": "Decide el caso",
+      "tested": "Cambia con él",
+      "none": "No afectado",
+      "delivered": "No afectado: valor entregado por la fuente",
+      "other": "No afectado: de un caso que no lo usa",
+      "missing": "Valores faltantes",
+      "valueCount": "Usa su valor: {count}",
+      "decidesCount": "Decide el caso: {count}",
+      "testedCount": "Cambia con él: {count}",
+      "noneCount": "No afectado: {count}",
+      "valueHint": "El valor del campo seleccionado forma parte de este valor (a través de los casos que lo produjeron).",
+      "decidesHint": "El campo seleccionado decide qué caso o parámetro produjo este valor (una condición o clave de tabla en el camino).",
+      "testedHint": "El caso que produjo el valor no lee el campo seleccionado, pero volver a ejecutar el cálculo con otro valor del campo cambia el valor: el campo decide que se aplique este caso.",
+      "noneHint": "El valor procede de la fuente o de un caso que no depende del campo seleccionado."
     },
     "languageNames": {
       "EN": "inglés",
       "DE": "alemán"
     },
+    "whatIf": {
+      "invented": "con un valor de {field} que no aparece en los datos (en lugar de {from}): {target} {would} en lugar de {was}",
+      "other": "con {field} {to} en lugar de {from}: {target} {would} en lugar de {was}"
+    },
     "log": {
-      "run_started": "Análisis iniciado para la ejecución {execution} de {cluster}",
+      "run_started": "Análisis de [{field}] iniciado para la ejecución {execution} de {cluster}",
       "code_loaded": "{file} cargado ({lines} líneas)",
       "data_loaded": "Tabla de entrada cargada: {rows} registros × {columns} columnas",
       "static_done": "Análisis estático del flujo de datos: {statements} instrucciones, {writes} escrituras de columnas, {lookups} tabla(s) de parámetros",
-      "replay_done": "La repetición reproduce la ejecución guardada: {cells} valores idénticos; {changes} cambios de valores atribuidos a instrucciones ({ms} ms)",
-      "replay_columns": "El código produce ahora otras columnas que la ejecución guardada; el contenido se sigue sobre el resultado repetido",
-      "replay_mismatch": "La repetición difiere de la ejecución guardada en {mismatches} de {cells} valores (los datos de entrada pueden haber cambiado)",
-      "replay_error": "La repetición se detuvo en la línea {line}: {message}",
-      "figures_ignored": "No derivadas por este código y por tanto no seguidas: {columns}",
-      "scope": "Cifra(s) reportada(s) {figures}: {terms} términos de negocio, {rules} reglas de negocio con {cases} casos",
-      "composed": "Contenido compuesto: {records} registros, {paths} ruta(s) de contenido, {dimensions} segmento(s) de negocio",
+      "replay_done": "La reproducción coincide con la ejecución guardada: {cells} valores idénticos; {changes} cambios de valor atribuidos a instrucciones ({ms} ms)",
+      "replay_columns": "El código produce ahora otras columnas que la ejecución guardada; el contenido se sigue sobre el resultado reproducido",
+      "replay_mismatch": "La reproducción difiere de la ejecución guardada en {mismatches} de {cells} valores (los datos de entrada pueden haber cambiado)",
+      "replay_error": "La reproducción se detuvo en la línea {line}: {message}",
+      "scope": "[{field}] fluye en {next} campo(s) siguiente(s) ({names}) y en {fields} campo(s) posterior(es) en total, {ends} de ellos final(es); {rules} reglas de negocio con {cases} casos",
+      "scope_empty": "El análisis del código no vincula [{field}] con ningún otro campo; la prueba de impacto revisa todos los campos",
+      "selection": "[{field}] también decide qué registros se conservan (línea(s) {lines})",
+      "impact_start": "Prueba de impacto: el código se ejecuta {runs} vez/veces con otros valores de [{field}] ({classes} clase(s) de valores en {rows} registros)",
+      "impact_done": "Prueba de impacto: {confirmed} de {fields} campo(s) posterior(es) cambian cuando cambia [{field}]",
+      "impact_budget": "Se alcanzó el límite de tiempo de la prueba de impacto tras {done} de {total} ejecuciones",
+      "impact_error": "Con otros valores de [{field}] el código falla en la línea {line}: {message}",
+      "impact_skipped": "{reason, select, index {Prueba de impacto omitida: los registros no tienen un índice único} nondeterministic {Prueba de impacto omitida: el código da un resultado distinto en cada ejecución} other {Prueba de impacto omitida: el código falla al reproducirse ({message})}}",
+      "impact_added": "Encontrado solo por la prueba de impacto (el análisis del código no puede seguir cómo): {columns}",
+      "followed": "Contenido seguido en {records} registros: {routes} ruta(s) hasta los campos finales; los valores finales de {reached} registro(s) dependen de [{field}]",
       "unmapped": "[{column}] línea {line}: categorías sin parámetro: {values}",
       "model": "Modelo: {model} · temperatura 0 · salida con esquema JSON",
-      "describing": "Describiendo {terms} términos y {rules} reglas de negocio en {batches} lote(s)",
+      "describing": "Describiendo {terms} términos de negocio y {rules} reglas de negocio en {batches} lote(s)",
       "described": "Lote {batch}: {terms} términos y {rules} reglas descritos{corrected, select, true { tras una ronda de corrección} other {}}",
-      "framework": "Marco regulatorio del cálculo: {framework}",
-      "regulation_skipped": "{reason, select, none_selected {Paso regulatorio omitido: no se seleccionó ninguna regulación indexada} other {Paso regulatorio omitido: {message}}}",
-      "regulating": "Buscando la base regulatoria de {rules} reglas de negocio en {regulations}",
-      "no_candidates": "{rule} {name}: no se encontraron disposiciones candidatas",
-      "linked": "{rule} {name}: {count} disposición(es) vinculada(s) ({references}); evaluación: {verdict}",
-      "quote_failed": "{rule}: {count} cita(s) no literales en la regulación; se solicita una corrección",
-      "reviewing": "El segundo revisor comprueba {count} evaluación(es) regulatoria(s)",
-      "reviewed": "{rule} {name}: evaluación confirmada por el segundo revisor ({verdict})",
-      "review_corrected": "{rule} {name}: el segundo revisor corrigió la evaluación ({verdict})",
-      "translating": "Traduciendo {count} textos de IA – idioma de destino: {language}",
-      "translated": "Textos de IA disponibles en {language} ({count} textos; {kept} con la redacción original)",
-      "completed": "Linaje de contenido completado: {figures} cifra(s) reportada(s), {terms} términos de negocio, {rules} reglas, {provisions} disposición(es) vinculada(s)",
+      "explaining": "Explicando cómo [{field}] alcanza {count} campo(s) posterior(es)",
+      "explained": "Explicado cómo [{field}] alcanza cada campo posterior ({done} de {total}){corrected, select, true { tras una ronda de corrección} other {}}",
+      "grounding_issue": "{code, select, number_ungrounded {Un texto de IA indica números que no son parámetros del código} usage_missing {Un campo posterior no tiene explicación} term_missing {Un término no tiene nombre de negocio} case_missing {Un caso no está descrito} rule_missing {Una regla no tiene enunciado} other {Nota sobre los textos de IA}}",
+      "translating": "Traduciendo {count} textos de IA al {language}",
+      "translated": "Textos de IA disponibles en {language} ({count} textos; {kept} conservados en la redacción original)",
+      "completed": "Linaje de contenido completado: [{field}] alcanza {fields} campo(s) posterior(es), {ends} de ellos final(es); {rules} reglas",
       "cancelled": "Análisis cancelado.",
       "cancel_requested": "Cancelación solicitada.",
-      "failed": "El análisis ha fallado: {message}",
+      "failed": "El análisis falló: {message}",
       "llm_error": "El modelo de lenguaje falló en el paso {step}: {message}",
       "model_fallback": "El modelo {model} no está disponible; se continúa con {fallback}"
     },
     "setup": {
-      "executionsTitle": "Elija una ejecución",
-      "executionsHint": "Un cálculo (código de un clúster aplicado a su conjunto de datos) cuyas cifras reportadas quiere explicar",
-      "search": "Buscar clústeres …",
-      "loading": "Cargando …",
-      "emptyTitle": "Todavía no hay ejecuciones",
-      "emptyBody": "Ejecute primero un clúster en la pestaña Clusters; después cada ejecución puede analizarse aquí.",
+      "executionsTitle": "Ejecución",
+      "executionsHint": "El código de un clúster aplicado a su conjunto de datos; el agente lo reproduce para seguir el contenido.",
+      "search": "Buscar clústeres",
+      "loading": "Cargando…",
+      "emptyTitle": "Aún no hay ejecuciones",
+      "emptyBody": "Ejecute primero un clúster en la pestaña Clústeres; después cada ejecución puede analizarse aquí.",
       "reference": "Referencia",
       "reportingDate": "Fecha de referencia {date}",
-      "noExecutions": "Ninguna ejecución guardada",
+      "noExecutions": "Sin ejecuciones",
       "executedAt": "Ejecutado el {date}",
       "records": "{count, plural, one {# registro} other {# registros}}",
-      "columns": "{count, plural, one {# columna} other {# columnas}}",
-      "figuresTitle": "Elija las cifras reportadas",
-      "figuresHint": "Las cifras cuyo contenido explica el agente; se sigue todo aquello de lo que se componen",
-      "figuresEmpty": "Elija una ejecución para ver las cifras que deriva su código.",
+      "columns": "{count} columnas",
+      "fieldsTitle": "Campo a seguir",
+      "fieldsHint": "Seleccione un campo: el agente sigue su contenido hasta los campos siguientes y hasta el final del cálculo.",
+      "fieldSearch": "Buscar campos",
+      "fieldsEmpty": "Seleccione una ejecución para ver sus campos y hacia dónde fluye cada uno.",
+      "loadingFields": "Leyendo el código y probando cada campo…",
       "lines": "{count} líneas",
-      "derivedCount": "{count, plural, one {# columna derivada} other {# columnas derivadas}}",
-      "noDerived": "Este código no deriva ninguna columna; no hay contenido que seguir.",
-      "usedBy": "Alimenta {columns}",
-      "endOfChain": "Final de una cadena de cálculo: una cifra reportada típica",
-      "suggested": "sugerida",
-      "text": "texto",
-      "figuresNote": "Sugeridas: las cifras al final de una cadena de cálculo. Elija hasta seis.",
-      "regulationsTitle": "Regulaciones para la base regulatoria",
-      "regulationsHint": "Opcional: regulaciones indexadas en las que el agente busca las disposiciones detrás de cada regla",
-      "regulationsEmpty": "Todavía no se ha subido ninguna regulación. Súbala e indéxela en la pestaña Normativas para obtener una base regulatoria.",
-      "regulationMeta": "{articles} artículos · {pages} páginas · indexada",
-      "regulationNotReady": "Aún no indexada",
-      "regulationsNone": "Sin regulación se omiten la base regulatoria y su revisión.",
-      "methodTitle": "Cómo construye el agente el linaje de contenido",
-      "methodHint": "Primero hechos deterministas; la IA solo los nombra, explica y evalúa, y cada afirmación se comprueba",
+      "fieldsCount": "{count} campos, {followable} con campos siguientes",
+      "noFollowable": "Ningún campo de esta ejecución fluye en otro campo.",
+      "origins": {
+        "source": "Entregados por la fuente ({count})",
+        "derived": "Creados por el código ({count})",
+        "intermediate": "Columnas auxiliares del código ({count})"
+      },
+      "further": "+{count} más",
+      "onlySelects": "solo decide qué registros se conservan",
+      "noNext": "sin campo siguiente",
+      "previewEyebrow": "Qué viene después",
+      "previewTitle": "Hacia dónde va el contenido de {field}",
+      "previewHint": "{fields, plural, one {# campo posterior} other {# campos posteriores}}, vinculados por {statements, plural, one {# instrucción} other {# instrucciones}} del código. El análisis sigue exactamente estos campos.",
+      "probe": "Comprobación rápida sobre los primeros {rows} registros: volver a ejecutar el cálculo con otros valores de este campo cambia {confirmed} de {fields} campos. El análisis lo repite con cada valor.",
+      "probeOff": "La comprobación rápida no pudo ejecutarse en esta ejecución; el análisis realiza la comprobación completa.",
+      "selectedColumn": "Campo seleccionado",
+      "nextColumn": "Campos siguientes",
+      "stepColumn": "Paso {level}",
+      "previewImpact": "Encontrados solo al volver a ejecutar el cálculo (el código no muestra cómo): {fields}",
+      "previewSelection": "El campo también decide qué registros se conservan (línea {lines}).",
+      "methodTitle": "Cómo trabaja el agente",
+      "methodHint": "Cuatro pasos, cada uno verificado: determinista donde deciden el código y los datos, IA solo para el lenguaje de negocio.",
       "method": {
         "trace": {
-          "title": "Seguir",
-          "body": "Repite el cálculo instrucción a instrucción y atribuye cada valor de cada columna a la instrucción que lo escribió."
+          "title": "Rastrear",
+          "body": "Análisis estático del código y reproducción de la ejecución: cada valor se atribuye a la instrucción que lo escribió."
         },
-        "compose": {
-          "title": "Componer",
-          "body": "Convierte las instrucciones en reglas y casos de negocio y mide cada uno: registros, importes, rutas de contenido y segmentos de cada cifra."
+        "follow": {
+          "title": "Seguir",
+          "body": "Los campos en los que fluye el campo seleccionado, paso a paso; los casos que lo usan; por registro, cómo llega, confirmado por una prueba de impacto con otros valores."
         },
         "describe": {
           "title": "Describir",
-          "body": "La IA nombra y define cada término de negocio y formula cada regla y caso en lenguaje de negocio; los números se comprueban contra el código."
-        },
-        "regulate": {
-          "title": "Encuadrar",
-          "body": "Busca en la regulación dentro del marco del cálculo, vincula las disposiciones con citas literales y evalúa cada regla."
-        },
-        "review": {
-          "title": "Revisar",
-          "body": "Un segundo revisor de IA comprueba cada evaluación frente a las disposiciones citadas (principio de los cuatro ojos) y elimina los vínculos que no aplican."
+          "body": "Nombres y definiciones de negocio, cada regla y caso en lenguaje de negocio y cómo el campo alcanza cada campo posterior."
         },
         "translate": {
           "title": "Traducir",
-          "body": "Cada texto de IA está disponible en inglés y alemán."
+          "body": "Cada texto de IA en inglés y alemán."
         }
       },
       "versusTechnicalLabel": "Linaje técnico",
-      "versusTechnical": "Cómo mueve el código los datos: columnas, instrucciones, líneas de código.",
+      "versusTechnical": "muestra qué columnas lee y escribe el código, instrucción por instrucción.",
       "versusContentLabel": "Linaje de contenido",
-      "versusContent": "Qué significa una cifra y de qué se compone: términos, reglas y casos de negocio, la parte de cada valor y la regulación detrás.",
-      "readyTitle": "Listo para explicar {cluster}",
-      "readyFigures": "Cifras: {figures}",
-      "readyNoFigures": "Elija al menos una cifra reportada",
-      "readyRegulations": "{count, plural, one {# regulación} other {# regulaciones}}",
-      "readyNoRegulations": "sin regulación (se omite la base regulatoria)",
-      "notReadyTitle": "Elija una ejecución y sus cifras reportadas",
-      "notReadyBody": "El agente sigue entonces de qué se compone cada cifra y de dónde proceden sus reglas.",
-      "noLlm": "No hay ningún modelo de lenguaje configurado (OPENAI_API_KEY o Azure OpenAI).",
-      "start": "Construir el linaje de contenido"
+      "versusContent": "sigue en qué se convierte el contenido de un campo: las reglas de negocio que lo usan, los campos que decide o alimenta, registro a registro, hasta el final del cálculo.",
+      "readyTitle": "Listo para seguir un campo de {cluster}",
+      "readyField": "{field} → {fields, plural, one {# campo posterior} other {# campos posteriores}}",
+      "readyNoField": "Seleccione el campo a seguir",
+      "notReadyTitle": "Seleccione una ejecución y un campo",
+      "notReadyBody": "El agente sigue el contenido de un campo de una ejecución.",
+      "noLlm": "No hay ningún modelo de lenguaje configurado; defina OPENAI_API_KEY o las variables de Azure OpenAI.",
+      "start": "Seguir el campo",
+      "startField": "Seguir {field}"
     },
     "progress": {
       "running": "Análisis en curso",
@@ -1821,30 +1825,22 @@
       "interrupted": "Análisis interrumpido",
       "done": "Análisis completado",
       "title": "Linaje de contenido de {cluster}",
-      "figures": "cifras: {figures}",
+      "field": "Campo: {field}",
       "cancel": "Cancelar",
       "new": "Nuevo análisis",
       "step": "Paso {index}",
       "stages": {
         "trace": {
-          "title": "Seguir",
-          "body": "Repetir el cálculo y atribuir cada valor"
+          "title": "Rastrear",
+          "body": "Análisis del código y reproducción de la ejecución"
         },
-        "compose": {
-          "title": "Componer",
-          "body": "Reglas, casos, rutas de contenido y segmentos"
+        "follow": {
+          "title": "Seguir",
+          "body": "Campos siguientes, reglas y casos, confirmados al volver a ejecutar"
         },
         "describe": {
           "title": "Describir",
-          "body": "Términos y reglas en lenguaje de negocio"
-        },
-        "regulate": {
-          "title": "Encuadrar",
-          "body": "Disposiciones, citas literales, evaluación"
-        },
-        "review": {
-          "title": "Revisar",
-          "body": "El segundo revisor comprueba cada evaluación"
+          "body": "Términos de negocio, reglas y cómo se usa el campo"
         },
         "translate": {
           "title": "Traducir",
@@ -1852,257 +1848,117 @@
         }
       },
       "detail": {
-        "trace": "{cells} valores reproducidos · {changes} cambios atribuidos",
-        "traceMismatch": "la repetición difiere de la ejecución guardada",
-        "compose": "{terms} términos · {rules} reglas · {cases} casos",
-        "paths": "{count, plural, one {# ruta} other {# rutas}}",
-        "describe": "{done}/{total} reglas",
-        "skipped": "omitido",
-        "regulate": "{done}/{total} reglas · {provisions} disposiciones",
-        "review": "{done}/{total} evaluaciones",
+        "trace": "{cells} valores idénticos · {changes} cambios atribuidos",
+        "traceMismatch": "la reproducción difiere de la ejecución guardada",
+        "follow": "{next} siguientes · {fields} posteriores · {ends} final(es)",
+        "followEmpty": "sin vínculo en el código; la prueba de impacto revisa cada campo",
+        "impact": "prueba de impacto: {confirmed}/{fields} confirmados",
+        "describe": "{done} de {total} reglas",
         "translate": "{count} textos"
       },
-      "errorTitle": "El análisis se ha detenido",
-      "interruptedBody": "El servidor se reinició mientras se ejecutaba este análisis. Inícielo de nuevo.",
-      "console": "Registro del agente",
-      "consoleHint": "Cada paso del agente"
+      "errorTitle": "Qué salió mal",
+      "interruptedBody": "El servidor se reinició mientras se ejecutaba el análisis. Vuelva a iniciarlo.",
+      "console": "Consola del agente",
+      "consoleHint": "Cada paso, en directo"
     },
-    "graph": {
-      "search": "Buscar un término …",
-      "rules": "Reglas de negocio",
-      "regulation": "Regulación ({count})",
-      "selectors": "Selectores de caso",
-      "hidden": "{count, plural, one {# clasificación oculta} other {# clasificaciones ocultas}}",
-      "resetLayout": "Restablecer diseño",
-      "drawio": "Descargar como draw.io",
-      "fullscreen": "Pantalla completa",
-      "exitFullscreen": "Salir de pantalla completa",
-      "movableNode": "nodo desplazable",
-      "zoomIn": "Acercar",
-      "zoomOut": "Alejar",
-      "fit": "Ajustar a la pantalla",
+    "lineage": {
+      "eyebrow": "Adónde va el contenido",
+      "stats": {
+        "next": "Campos siguientes",
+        "downstream": "Campos posteriores",
+        "downstreamHint": "en {steps, plural, one {# paso} other {# pasos}} del cálculo",
+        "ends": "Campos finales",
+        "reached": "Registros que llegan al final",
+        "reachedHint": "registros cuyos valores finales dependen de {field}"
+      },
+      "confirmed": "Confirmado volviendo a ejecutar el cálculo {runs, plural, one {una vez} other {# veces}} con otros valores de {field}: {confirmed} de {fields} campos posteriores cambian.",
+      "confirmedOff": "No se pudo volver a ejecutar el cálculo con otros valores del campo; los campos proceden solo del análisis del código.",
+      "foundByRerun": "Encontrados solo al volver a ejecutar: {fields}.",
+      "diagramTitle": "Linaje de {field}",
+      "diagramHint": "Haga clic en un campo para ver cómo lo alcanza {field}.",
+      "column": {
+        "start": "Campo seleccionado",
+        "next": "Campos siguientes",
+        "step": "Paso {level}"
+      },
       "legend": {
-        "figure": "Cifra reportada",
-        "concept": "Concepto de negocio",
-        "source": "Datos de origen",
-        "rule": "Regla de negocio",
-        "provision": "Disposición",
-        "value": "valor",
-        "selector": "elige el caso",
-        "regulationEdge": "base regulatoria",
-        "delivered": "entregado",
-        "derived": "derivado"
+        "value": "transmite el valor",
+        "decides": "decide el caso o parámetro",
+        "impact": "encontrado al volver a ejecutar",
+        "end": "final del cálculo"
       },
-      "about": "Linaje de contenido",
-      "aboutBody": "Se lee de izquierda a derecha: los datos de origen alimentan reglas de negocio, que derivan conceptos de negocio y finalmente las cifras reportadas. Las disposiciones de arriba muestran dónde la regulación define una regla. La barra bajo cada término muestra qué parte de su contenido entregó la fuente y qué parte se derivó.",
-      "stats": {
-        "terms": "Términos",
-        "rules": "Reglas",
-        "cases": "Casos",
-        "provisions": "Disposiciones"
+      "card": {
+        "records": "{reached}/{total}",
+        "values": "{count, plural, one {# valor} other {# valores}}"
       },
-      "tipSelect": "Haga clic en un término, una regla o una disposición para ver su definición, sus casos con registros e importes y su base regulatoria.",
-      "tipNavigate": "Arrastre el fondo para desplazar, use la rueda para el zoom; pase sobre una arista para ver qué transporta.",
-      "tipMove": "Arrastre un nodo para reorganizar el grafo: sus conexiones lo siguen. Las flechas mueven el nodo enfocado (Mayús para pasos mayores); «Restablecer diseño» recupera la disposición automática.",
-      "drawioTitle": "Linaje de contenido",
-      "cases": "{count, plural, one {# caso} other {# casos}}",
-      "classifier": "clasificación",
-      "tip": {
-        "delivered": "{count} entregados por la fuente",
-        "derived": "{count} derivados por la regla",
-        "missing": "{count} faltantes",
-        "filled": "{filled} de {total} registros rellenados"
-      },
-      "edge": {
-        "value": "Su valor entra en el resultado",
-        "selector": "Decide qué caso de la regla se aplica",
-        "derives": "La regla deriva este término",
-        "regulation": "Base regulatoria de la regla",
-        "inCases": "Usado en: {cases}"
-      },
-      "relation": {
-        "defines": "Define el término",
-        "prescribes": "Prescribe la regla",
-        "related": "Disposición relacionada"
-      },
-      "close": "Cerrar",
-      "businessTerm": "Término de negocio",
-      "reported": "Valor reportado",
-      "records": "{count} registros",
-      "figureLine": "{present} de {records} registros tienen valor · {paths} rutas de contenido",
-      "openFigure": "Qué hay en esta cifra",
-      "content": "De dónde procede el contenido",
-      "deliveredBySource": "Entregado por la fuente",
-      "missing": "Faltante",
-      "sourceData": "Datos de origen",
-      "filled": "{filled} de {total} registros rellenados",
-      "nulled": "{count} valores de origen no eran números ({examples}) y se trataron como faltantes.",
-      "derivedBy": "Derivado por",
-      "builtFrom": "Se compone de",
-      "usedBy": "Usado por",
-      "regulatoryBasis": "Base regulatoria",
-      "openGlossary": "Ver en el glosario",
-      "businessRule": "Regla de negocio {id}",
-      "derives": "Deriva",
-      "casesTitle": "{count, plural, one {# caso} other {# casos}}",
-      "caseRecords": "{count, plural, one {# registro} other {# registros}} ({share})",
-      "noParameter": "sin parámetro",
-      "openAssessment": "Evaluación regulatoria",
-      "provision": "Disposición",
-      "quoteVerified": "Cita verificada literalmente en la regulación",
-      "quoteRepaired": "Cita ajustada a la redacción exacta de la regulación",
-      "readProvision": "Leer la disposición completa"
+      "details": {
+        "start": "Campo seleccionado",
+        "next": "Campo siguiente",
+        "step": "Paso {level}",
+        "end": "Campo final",
+        "values": "Sus valores",
+        "flowsInto": "Fluye a continuación hacia",
+        "endsIn": "Termina en",
+        "nulled": "{count} valor(es) de la fuente no son números ({examples}) y se tratan como faltantes.",
+        "hint": "Haga clic en cualquier campo del linaje para ver cómo lo alcanza {field}.",
+        "howTitle": "Cómo lo alcanza {field}",
+        "direct": "Su regla de negocio lee {field} directamente.",
+        "via": "El contenido llega a través de",
+        "impactOnly": "El código no muestra cómo; volver a ejecutar el cálculo con otros valores de {field} cambia este campo (por ejemplo, valores calculados en un bucle sobre los registros).",
+        "records": "Registros: {reached} de {total} dependen de {field}",
+        "passing": "Sus valores finales no dependen de {field}, pero un estado anterior de este campo transmite el contenido.",
+        "amount": "{reached} de {total} ({share}) en estos registros",
+        "byValue": "Valor a valor",
+        "amountColumn": "Importe",
+        "recordsColumn": "Registros",
+        "moreOutcomes": " +{count} más",
+        "moreValues": "y {count} valores más (todos en la exportación a Excel)",
+        "example": "Ejemplo",
+        "rule": "Regla de negocio: {name}",
+        "cases": "{count, plural, one {# caso} other {# casos}}",
+        "reachedOfProduced": "{reached} de {produced}",
+        "readsNothing": "no lee {field} (decide los demás registros)"
+      }
     },
-    "figures": {
-      "eyebrow": "Qué hay en la cifra",
-      "showInGraph": "Ver en el grafo",
-      "total": "Total reportado",
-      "totalHint": "Suma de {records} registros",
-      "records": "Registros",
-      "missingHint": "{count} registros sin valor",
-      "completeHint": "Todos los registros tienen valor",
-      "derivedShare": "Derivado",
-      "derivedHint": "{delivered} valores tomados tal como los entrega la fuente",
-      "paths": "Rutas de contenido",
-      "pathsHint": "Cadenas distintas de casos detrás de los valores",
-      "originsTitle": "De dónde procede el valor",
-      "originsHint": "Cada valor de la cifra lo entrega el sistema de origen o lo deriva un caso de su regla.",
-      "origin": "Origen",
-      "amount": "Importe",
-      "share": "Proporción",
-      "deliveredBySource": "Entregado por la fuente",
-      "deliveredHint": "La fuente entregó el valor; la regla solo rellena los valores que faltan.",
-      "missing": "Faltante",
-      "pathsTitle": "Rutas de contenido",
-      "pathsDescription": "Cada ruta es una cadena de casos de negocio que produjo valores de la cifra, desde la cifra hasta sus entradas. Las rutas mayores aparecen primero; haga clic en un registro para seguirlo.",
-      "pathRecords": "{count, plural, one {# registro} other {# registros}}",
-      "otherPaths": "{count} rutas menores con {records} registros en total.",
-      "segmentsTitle": "Por segmento de negocio",
-      "segmentsHint": "La cifra desglosada por las clasificaciones de los registros.",
-      "segment": "Segmento",
-      "segmentMissing": "{count} sin valor",
-      "delivered": "entregado por la fuente",
-      "recordsTitle": "Seguimiento de registros",
-      "recordsHint": "Siga un registro: cómo surgió cada valor de la cifra, con los valores que utilizó.",
-      "recordsHintLimited": "Aquí pueden seguirse los primeros {shown} de {total} registros.",
-      "recordSearch": "Buscar {identifier} …",
-      "record": "registro",
-      "recordTitle": "Registro {record}",
-      "close": "Cerrar",
-      "recordEmpty": "Elija un registro a la izquierda (o un ejemplo de una ruta de contenido) para ver la derivación de su valor.",
-      "byCase": "por «{case}»",
-      "deliveredKept": "entregado por la fuente y conservado",
-      "sourceValue": "valor de origen"
-    },
-    "glossary": {
-      "summaryTitle": "Qué produce el cálculo",
-      "translatedFrom": "Traducción – original: {language}",
-      "termsTitle": "Glosario de negocio",
-      "termsHint": "Cada término de negocio del que se componen las cifras reportadas, con su definición, su contenido y su base regulatoria.",
-      "groups": {
-        "figure": "Cifras reportadas ({count})",
-        "concept": "Conceptos de negocio ({count})",
-        "source": "Elementos de datos de origen ({count})"
-      },
-      "term": "Término de negocio",
-      "definition": "Definición",
-      "content": "Contenido",
-      "basis": "Base regulatoria",
-      "derivedBy": "Derivado por {rule}",
-      "contentLine": "{delivered} entregados · {derived} derivados · {missing} faltantes",
-      "filled": "{filled} de {total} registros rellenados",
-      "noRule": "tomado de la fuente",
-      "rulesTitle": "Reglas de negocio y sus casos",
-      "rulesHint": "Cada regla deriva un concepto de negocio; sus casos son las situaciones que distingue el cálculo, con los registros e importes que produjo cada uno.",
-      "derives": "Deriva",
-      "from": "a partir de",
-      "graph": "Grafo",
-      "assessment": "Evaluación",
-      "case": "Caso",
-      "whenWhat": "Cuándo se aplica – qué produce",
-      "code": "Implementación",
-      "records": "Registros",
-      "amount": "Importe",
-      "fillsMissing": "rellena valores faltantes",
-      "noParameter": "sin parámetro"
-    },
-    "regulation": {
-      "skippedTitle": "Sin base regulatoria en este análisis",
-      "skippedNone": "No se seleccionó ninguna regulación indexada para este análisis. Suba una regulación en la pestaña Normativas y selecciónela al iniciar un nuevo análisis.",
-      "skippedUnavailable": "Se omitió el paso regulatorio: {reason}",
-      "eyebrow": "Base regulatoria",
-      "intro": "Para cada regla de negocio el agente buscó en las regulaciones seleccionadas dentro del marco del cálculo, vinculó las disposiciones que definen el concepto o prescriben la regla, las citó literalmente (comprobado contra el texto) y evaluó la regla implementada. Un segundo revisor comprobó cada evaluación.",
-      "framework": "Marco: {framework}",
-      "stats": {
-        "rules": "Reglas",
-        "consistent": "Conformes",
-        "simplified": "Simplificadas",
-        "deviation": "Desviaciones",
-        "notCovered": "Sin base",
-        "quotes": "Citas verificadas",
-        "quotesHint": "literales en la regulación"
-      },
-      "derives": "Deriva",
-      "graph": "Grafo",
-      "assessment": "Evaluación",
-      "relation": {
-        "defines": "define el término",
-        "prescribes": "prescribe la regla",
-        "related": "relacionada"
-      },
-      "page": "página {page}",
-      "read": "Leer",
-      "quoteVerified": "Verificada literalmente en el texto de la regulación",
-      "quoteRepaired": "Ajustada a la redacción exacta de la regulación ({similarity} % de similitud)",
-      "unverified": "La IA propuso disposiciones, pero ninguna de sus citas pudo verificarse en el texto de la regulación, por lo que no se muestra ningún vínculo.",
-      "noBasis": "Ninguna disposición de las regulaciones seleccionadas rige esta regla.",
-      "case": "Caso",
-      "verdict": "Evaluación",
-      "provision": "Disposición",
-      "finding": "Hallazgo",
-      "wholeRule": "Toda la regla",
-      "reviewConfirmed": "Confirmado por el segundo revisor",
-      "reviewCorrected": "Corregido por el segundo revisor",
-      "reviewMissing": "Sin revisar",
-      "reviewNotNeeded": "Nada que revisar",
-      "retrieval": "{candidates} disposiciones candidatas examinadas",
-      "details": "Detalles",
-      "removed": "Eliminadas por no aplicar: {references}",
-      "originalVerdict": "Primera evaluación:",
-      "queries": "Consultas de búsqueda:",
-      "dropped": "{count} cita(s) propuesta(s) no eran literales y se descartaron."
-    },
-    "verification": {
-      "checks": "Comprobaciones superadas",
-      "checksHint": "Comprobaciones deterministas del contenido y de los textos de IA",
-      "findings": "Hallazgos",
-      "findingsHint": "{critical} críticos · {warning} advertencias",
-      "llm": "Llamadas al LLM",
-      "tokens": "{prompt} tokens de entrada · {completion} de salida",
-      "duration": "Duración",
-      "checksTitle": "Comprobaciones",
-      "checksIntro": "Todo lo que afirma el agente se comprueba: el contenido contra la ejecución guardada, los textos de IA contra el código, cada cita contra la regulación.",
+    "quality": {
+      "title": "Controles y notas",
+      "summary": "{passed} de {total} controles superados",
+      "notes": "{count, plural, =0 {nada que señalar} one {# nota} other {# notas}}",
+      "show": "Mostrar",
+      "hide": "Ocultar",
+      "notesTitle": "Notas",
+      "noNotes": "Nada que señalar: el contenido llega completo a los campos finales.",
+      "checksTitle": "Controles",
+      "checksIntro": "Todo lo que afirma el agente se comprueba: los campos posteriores volviendo a ejecutar el cálculo, los valores contra la ejecución guardada y los textos de IA contra el código.",
       "status": {
-        "pass": "Superada",
+        "pass": "Superado",
         "warn": "Advertencia",
-        "fail": "No superada",
-        "skipped": "Omitida"
+        "fail": "No superado",
+        "skipped": "Omitido"
       },
       "check": {
         "replay": {
-          "title": "La repetición reproduce la ejecución guardada",
-          "pass": "El cálculo repetido coincide con la ejecución guardada en los {cells} valores.",
-          "warn": "La repetición difiere de la ejecución guardada en {mismatches} de {cells} valores; el contenido se sigue sobre el resultado repetido."
+          "title": "La reproducción coincide con la ejecución guardada",
+          "pass": "El cálculo reproducido coincide con la ejecución guardada en los {cells} valores.",
+          "warn": "La reproducción difiere de la ejecución guardada en {mismatches} de {cells} valores; el contenido se sigue sobre el resultado reproducido."
         },
-        "attribution": {
-          "title": "Cada valor reportado atribuido",
-          "pass": "Los {values} valores de las cifras reportadas están atribuidos a la fuente o a un caso.",
-          "warn": "{attributed} de {values} valores están atribuidos."
+        "impact": {
+          "title": "Volver a ejecutar no encuentra campos omitidos por el análisis del código",
+          "pass": "El cálculo se volvió a ejecutar {runs} veces con otros valores del campo sobre {rows} registros ({classes} clases de valores{all_values, select, true {, todas probadas} other {, no todas probadas}}); cada campo que cambió está entre los {fields} campos posteriores encontrados en el código.",
+          "warnUnexpected": "Campos que cambian con el campo seleccionado aunque el código no muestra cómo: {unexpected}. Se añaden como encontrados al volver a ejecutar.",
+          "warnBudget": "La reejecución se detuvo al alcanzar su límite de tiempo tras {runs} ejecuciones; se muestran los campos encontrados hasta entonces.",
+          "warnErrors": "{errors} ejecución(es) con otros valores hicieron fallar el cálculo; las demás confirman los campos posteriores.",
+          "skipped_index": "Omitida: los registros no tienen un índice único.",
+          "skipped_nondeterministic": "Omitida: el código da un resultado distinto en cada ejecución.",
+          "skipped_error": "Omitida: el código falla al reproducirse.",
+          "skipped_disabled": "Omitida.",
+          "skipped": "Omitida."
         },
-        "reconciliation": {
-          "title": "Los desgloses cuadran con los totales",
-          "pass": "Orígenes, rutas de contenido y segmentos suman los totales reportados de {figures} cifra(s).",
-          "fail": "{differences} desglose(s) no suman el total."
+        "observed": {
+          "title": "Cada campo posterior cambia al volver a ejecutar",
+          "pass": "Los {fields} campos posteriores encontrados en el código cambian cuando cambia el campo (o transmiten su contenido en un estado anterior).",
+          "warn": "{observed} de {fields} campos cambiaron; leídos por el código pero sin cambios en la prueba: {unobserved} (p. ej., todos los valores entregados por la fuente).",
+          "skipped": "Omitido (no se pudo volver a ejecutar el cálculo)."
         },
         "terms": {
           "title": "Cada término nombrado y definido",
@@ -2114,22 +1970,15 @@
           "pass": "Los {total} casos están descritos en lenguaje de negocio.",
           "warn": "{described} de {total} casos están descritos; faltan: {missing}."
         },
+        "usage": {
+          "title": "Explicado cómo el campo alcanza cada campo posterior",
+          "pass": "Los {total} campos posteriores tienen una explicación.",
+          "warn": "{explained} de {total} explicados; faltan: {missing}."
+        },
         "numbers": {
-          "title": "Los números de las reglas son parámetros del código",
-          "pass": "Cada número de los textos de reglas y casos aparece en el código{corrected, select, true { (tras una ronda de corrección)} other {}}.",
-          "warn": "{issues} texto(s) mencionan números que no son parámetros del código."
-        },
-        "quotes": {
-          "title": "Citas regulatorias literales",
-          "pass": "Las {links} citas son literales en la regulación ({corrected} ajustadas a la redacción exacta).",
-          "warn": "{links} citas verificadas; {dropped} cita(s) propuesta(s) no eran literales y se descartaron.",
-          "skipped": "No se seleccionó ninguna regulación."
-        },
-        "review": {
-          "title": "Evaluaciones revisadas (cuatro ojos)",
-          "pass": "Las {assessed} evaluaciones se revisaron; {corrected} corregidas.",
-          "warn": "Se revisaron {reviewed} de {assessed} evaluaciones.",
-          "skipped": "No se seleccionó ninguna regulación."
+          "title": "Los números de los textos de IA son parámetros del código",
+          "pass": "Cada número de los textos de IA aparece en el código{corrected, select, true { (tras una ronda de corrección)} other {}}.",
+          "warn": "{issues} texto(s) indican números que no son parámetros del código."
         },
         "unmapped": {
           "title": "Cada categoría tiene un parámetro",
@@ -2137,8 +1986,8 @@
           "warn": "{records} registros pertenecen a categorías sin parámetro."
         },
         "complete": {
-          "title": "Cifras reportadas completas",
-          "pass": "Cada registro tiene un valor para cada cifra reportada.",
+          "title": "Campos finales completos",
+          "pass": "Cada registro tiene un valor en cada campo final.",
           "warn": "Registros sin valor: {missing}."
         },
         "translation": {
@@ -2147,47 +1996,38 @@
           "warn": "{kept} texto(s) conservaron su redacción original."
         }
       },
-      "groundingTitle": "Observaciones sobre los textos de IA",
-      "findingsTitle": "Hallazgos de contenido",
-      "findingsIntro": "Lo que revela el linaje de contenido sobre las cifras: lagunas, problemas de datos y dónde las reglas implementadas se apartan de la regulación.",
-      "noFindings": "Sin hallazgos: el contenido de las cifras está completo y es conforme con la regulación.",
       "finding": {
-        "regulatory_deviation": {
-          "title": "{term}: desviación de la regulación",
-          "body": "La regla {rule} ({ruleName}) trata un caso de forma distinta a lo que prescribe {references}."
-        },
-        "regulatory_simplified": {
-          "title": "{term}: simplificada frente a la regulación",
-          "body": "La regla {rule} ({ruleName}) es más gruesa que {references}; la base regulatoria muestra los casos afectados."
-        },
-        "figure_missing": {
-          "title": "{term}: faltan valores",
-          "body": "{count} de {total} registros no tienen valor para esta cifra reportada."
+        "end_missing": {
+          "title": "{term}: faltan valores al final",
+          "body": "{count} de {total} registros no tienen valor en este campo final; {field} alcanza {reached} de ellos."
         },
         "unmapped_category": {
           "title": "{term}: categorías sin parámetro",
-          "body": "La tabla de parámetros de la regla {rule} no cubre {values}; esos registros no obtienen valor."
+          "body": "La tabla de parámetros de la regla {rule} no cubre {values}; estos registros no obtienen valor."
         },
         "source_not_numeric": {
-          "title": "{term}: valores de origen no numéricos",
+          "title": "{term}: los valores de la fuente no son números",
           "body": "{count} valores entregados por la fuente ({examples}) no son números y se trataron como faltantes."
         },
-        "mixed_provenance": {
-          "title": "{term}: valores entregados y derivados mezclados",
-          "body": "{delivered} valores se toman tal como los entrega la fuente y {derived} los deriva la regla {rule}. Los valores entregados no se recalculan."
+        "impact_only": {
+          "title": "{term}: encontrado solo al volver a ejecutar",
+          "body": "Sus valores cambian con {field} ({records} registros), pero el código no muestra cómo (p. ej., valores calculados en un bucle sobre los registros)."
         },
-        "filter": {
-          "title": "Registros excluidos de las cifras",
-          "body": "La línea {line} elimina {rows} registros antes de calcular las cifras."
+        "impact_error": {
+          "title": "El cálculo falla con otros valores de {field}",
+          "body": "Línea {line}: {message}"
         },
-        "no_regulatory_basis": {
-          "title": "{term}: sin base regulatoria",
-          "body": "{verdict, select, unverified {No pudieron verificarse las disposiciones propuestas por la IA para la regla {rule}.} other {Ninguna disposición de las regulaciones seleccionadas rige la regla {rule} ({ruleName}); es una convención interna.}}"
+        "delivered_unaffected": {
+          "title": "{term}: los valores entregados no se ven afectados",
+          "body": "{delivered} registros conservan el valor entregado por la fuente; {field} alcanza los otros {reached}."
+        },
+        "selection": {
+          "title": "{field} decide qué registros se conservan",
+          "body": "La línea {line} selecciona registros según el campo ({rows} eliminados en esta ejecución)."
         }
       },
-      "openAssessment": "Abrir la evaluación",
-      "logTitle": "Registro del agente",
-      "logHint": "Cada paso del agente, en orden."
+      "groundingTitle": "Notas sobre los textos de IA",
+      "logTitle": "Registro del agente"
     }
   }
 }
