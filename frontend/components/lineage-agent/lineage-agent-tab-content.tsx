@@ -2,10 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
-import {
-  BadgeCheck, Code2, Download, FileJson, FileSpreadsheet, GitBranch, GraduationCap, History, Layers, Network, Plus, Rows3,
-  ShieldCheck, Table2, Trash2, TriangleAlert,
-} from "lucide-react";
+import { BadgeCheck, Download, FileJson, FileSpreadsheet, GitBranch, GraduationCap, History, Plus, Trash2, TriangleAlert } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { API_ENDPOINTS } from "@/lib/api-config";
 import { useToast } from "@/hooks/use-toast";
@@ -18,19 +15,14 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { formatDateTime, formatDuration } from "./atoms";
-import { CellsView } from "./cells-view";
-import { CodeView } from "./code-view";
-import { ColumnsView } from "./columns-view";
 import { downloadFrom } from "./download";
-import { GraphView } from "./graph-view";
-import { MappingView } from "./mapping-view";
+import { LineageView } from "./lineage-view";
 import { localizeResult } from "./localize";
 import { buildModel } from "./model";
 import { LINEAGE_ONBOARDING_STORAGE_KEY, LineageOnboarding, type LineageTourController } from "./onboarding/lineage-onboarding";
 import { RunProgress } from "./run-progress";
 import { SetupPanel } from "./setup-panel";
-import type { Navigator, Preview, Run, RunListItem, Sources, View } from "./types";
-import { VerificationView } from "./verification-view";
+import type { Focus, Preview, Run, RunListItem, Sources } from "./types";
 
 const POLL_MS = 1000;
 
@@ -38,20 +30,11 @@ async function readJson(response: Response) {
   return response.json().catch(() => ({}));
 }
 
-/** The most instructive column, node and cell of an analysis, for the guided tour. */
-function tourTargets(run: Run) {
+/** The most instructive column of an analysis, for the guided tour: the deepest derived output (e.g. RWA), whose
+ *  lineage reaches furthest back. */
+function tourColumn(run: Run): string | null {
   const columns = run.result?.analysis.columns.filter((column) => column.in_output && column.role !== "passthrough") ?? [];
-  const docs = run.result?.ai.columns ?? {};
-  const richest = [...columns].filter((column) => docs[column.name]?.status === "documented").sort((a, b) => b.chain.length - a.chain.length || b.upstream.length - a.upstream.length)[0]
-    ?? [...columns].sort((a, b) => b.chain.length - a.chain.length)[0];
-  const deepest = [...columns].sort((a, b) => b.depth - a.depth || b.upstream.length - a.upstream.length)[0];
-  const computed = (run.result?.cells.computed ?? []).filter((key) => deepest && key.endsWith(`|${deepest.name}`));
-  const cellKey = computed.find((key) => key.startsWith("1|")) ?? computed[0] ?? run.result?.cells.computed[0];
-  return {
-    column: richest?.name ?? null,
-    node: deepest?.name ?? null,
-    cell: cellKey ? { row: cellKey.split("|")[0], column: cellKey.slice(cellKey.indexOf("|") + 1) } : null,
-  };
+  return [...columns].sort((a, b) => b.depth - a.depth || b.upstream.length - a.upstream.length)[0]?.name ?? null;
 }
 
 /** The tab has its own English / German switch (independent of the app language). */
@@ -72,7 +55,6 @@ function LineageAgentTab() {
   const [runs, setRuns] = useState<RunListItem[]>([]);
   const [run, setRun] = useState<Run | null>(null);
   const [view, setView] = useState<"setup" | "run">("setup");
-  const [tab, setTab] = useState<View>("graph");
   const [selectedExecution, setSelectedExecution] = useState<string | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -80,11 +62,8 @@ function LineageAgentTab() {
   const [starting, setStarting] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const [selectedColumn, setSelectedColumn] = useState<string | null>(null);
-  const [graphColumn, setGraphColumn] = useState<string | null>(null);
-  const [codeLine, setCodeLine] = useState<number | null>(null);
-  const [codeFocus, setCodeFocus] = useState<string | null>(null);
-  const [selectedCell, setSelectedCell] = useState<{ row: string; column: string } | null>(null);
+  // The column or lookup table whose details are shown under the graph (none: every column at a glance).
+  const [focus, setFocus] = useState<Focus | null>(null);
   const [tourOpen, setTourOpen] = useState(false);
   // While the hands-on tour is open, the analysis it starts is followed by the tour; its progress view stays on
   // screen while the tour explains it, also after the analysis has finished.
@@ -122,24 +101,13 @@ function LineageAgentTab() {
     }
   }, []);
 
-  const resetSelections = () => {
-    setSelectedColumn(null);
-    setGraphColumn(null);
-    setCodeLine(null);
-    setCodeFocus(null);
-    setSelectedCell(null);
-  };
-
   const openRun = useCallback(async (id: string, lite = false) => {
     const response = await fetch(lite ? API_ENDPOINTS.lineageAgentRunProgress(id) : API_ENDPOINTS.lineageAgentRun(id));
     const payload = await readJson(response);
     if (!response.ok) throw new Error(payload.detail || t("errors.load"));
     setRun(payload);
     setView("run");
-    if (!lite) {
-      setTab("graph");
-      resetSelections();
-    }
+    if (!lite) setFocus(null);
     return payload as Run;
   }, [t]);
 
@@ -238,7 +206,7 @@ function LineageAgentTab() {
   }, [loadingSources, view]);
 
   const executionsAvailable = (sources?.clusters ?? []).some((cluster) => cluster.executions.length > 0);
-  const targets = useMemo(() => (run?.result ? tourTargets(run) : null), [run]);
+  const target = useMemo(() => (run?.result ? tourColumn(run) : null), [run]);
   const tourRun: LineageTourController["tourRun"] = !tourRunId
     ? "idle"
     : run?.id !== tourRunId || run.status === "running"
@@ -252,8 +220,7 @@ function LineageAgentTab() {
     tourRunError: tourRun === "failed" && run ? run.error || t(`status.${run.status}`) : null,
     executionsAvailable,
     executionSelected: Boolean(selectedExecution),
-    nodeSelected: Boolean(graphColumn) || (tourRun === "done" && !targets?.node),
-    cellSelected: Boolean(selectedCell) || (tourRun === "done" && !targets?.cell),
+    nodeSelected: focus?.kind === "column" || (tourRun === "done" && !target),
     showSetup: () => {
       setHoldProgress(false);
       setView("setup");
@@ -262,12 +229,9 @@ function LineageAgentTab() {
       setHoldProgress(true);
       if (tourRunId && run?.id === tourRunId) setView("run");
     },
-    showResults: (nextView) => {
+    showResults: () => {
       setHoldProgress(false);
-      if (tourRun !== "done") return;
-      setView("run");
-      setTab(nextView);
-      if (nextView === "columns" && targets?.column) setSelectedColumn((current) => current ?? targets.column);
+      if (tourRun === "done") setView("run");
     },
     selectFirstExecution: () => {
       const first = sources?.clusters.flatMap((cluster) => cluster.executions)[0];
@@ -275,11 +239,9 @@ function LineageAgentTab() {
     },
     startRun: () => void start(),
     selectNode: () => {
-      if (targets?.node) setGraphColumn(targets.node);
+      if (target) setFocus({ kind: "column", name: target });
     },
-    selectCell: () => {
-      if (targets?.cell) setSelectedCell(targets.cell);
-    },
+    clearNode: () => setFocus(null),
   };
 
   const newRun = () => {
@@ -302,7 +264,7 @@ function LineageAgentTab() {
       if (!response.ok) throw new Error(payload.detail || t("errors.start"));
       setRun(payload);
       setView("run");
-      resetSelections();
+      setFocus(null);
       if (tourMode) setTourRunId(payload.id);
       void loadRuns();
     } catch (error) {
@@ -358,36 +320,8 @@ function LineageAgentTab() {
     return buildModel(localized.result, localized.translatedFrom);
   }, [run?.result, locale, runLanguage]);
 
-  const nav: Navigator = useMemo(() => ({
-    openColumn: (column, target) => {
-      const next = target ?? "columns";
-      if (next === "graph") setGraphColumn(column);
-      else setSelectedColumn(column);
-      if (next === "columns") setSelectedColumn(column);
-      setTab(next);
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    },
-    openLine: (line) => {
-      setCodeLine(line);
-      setTab("code");
-    },
-    openCell: (row, column) => {
-      setSelectedCell({ row, column });
-      setTab("cells");
-    },
-  }), []);
-
   const showProgress = view === "run" && run && (run.status === "running" || !run.summary || holdProgress);
   const showResults = view === "run" && run && run.status !== "running" && run.summary && model && !holdProgress;
-
-  const tabs: [View, typeof Layers, string][] = [
-    ["graph", Network, t("tabs.graph")],
-    ["columns", Layers, t("tabs.columns")],
-    ["code", Code2, t("tabs.code")],
-    ["cells", Rows3, t("tabs.cells")],
-    ["mapping", Table2, t("tabs.mapping")],
-    ["verification", ShieldCheck, t("tabs.verification")],
-  ];
 
   return (
     <div className="space-y-5 pb-10" lang={locale}>
@@ -515,10 +449,6 @@ function LineageAgentTab() {
                     <FileJson className="mt-0.5 h-4 w-4 text-sky-300" />
                     <span><span className="block text-xs font-medium text-[#e5e9f0]">{t("export.openlineage")}</span><span className="block text-[11px] text-[#687386]">{t("export.openlineageHint")}</span></span>
                   </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => setTab("graph")} className="flex items-start gap-2.5 py-2">
-                    <Network className="mt-0.5 h-4 w-4 text-violet-300" />
-                    <span><span className="block text-xs font-medium text-[#e5e9f0]">{t("export.drawio")}</span><span className="block text-[11px] text-[#687386]">{t("export.drawioHint")}</span></span>
-                  </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
               <Button variant="ghost" size="icon" onClick={() => setDeleteOpen(true)} className="h-8 w-8 text-[#687386] hover:bg-rose-400/10 hover:text-rose-300" aria-label={t("deleteRun")}>
@@ -527,29 +457,7 @@ function LineageAgentTab() {
             </div>
           </section>
 
-          <nav data-tour="lineage-tabs" className="flex items-center gap-1 overflow-x-auto rounded-lg border border-[#252a33] bg-[#0b0f15] p-1">
-            {tabs.map(([key, Icon, label]) => (
-              <button
-                key={key}
-                type="button"
-                onClick={() => setTab(key)}
-                className={cn(
-                  "flex flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-md px-3 py-2 text-[13px] font-medium transition-colors",
-                  tab === key ? "bg-[#f5c400]/12 text-[#f5c400] shadow-[inset_0_0_0_1px_rgba(245,196,0,0.25)]" : "text-[#8c96a8] hover:bg-[#11161e] hover:text-[#f2f4f7]",
-                )}
-              >
-                <Icon className="h-4 w-4" />
-                {label}
-              </button>
-            ))}
-          </nav>
-
-          {tab === "graph" && <GraphView key={run.id} layoutKey={run.id} model={model} selected={graphColumn} onSelect={setGraphColumn} nav={nav} />}
-          {tab === "columns" && <ColumnsView model={model} selected={selectedColumn} onSelect={setSelectedColumn} nav={nav} />}
-          {tab === "code" && <CodeView model={model} line={codeLine} onLine={setCodeLine} focusColumn={codeFocus} onFocusColumn={setCodeFocus} nav={nav} />}
-          {tab === "cells" && <CellsView model={model} selected={selectedCell} onSelect={setSelectedCell} nav={nav} />}
-          {tab === "mapping" && <MappingView model={model} nav={nav} onExport={() => void exportRun("xlsx")} />}
-          {tab === "verification" && <VerificationView model={model} run={run} nav={nav} />}
+          <LineageView model={model} run={run} focus={focus} onFocus={setFocus} />
         </>
       )}
 

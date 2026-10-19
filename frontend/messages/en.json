@@ -896,17 +896,7 @@
       "excel": "Excel lineage workbook",
       "excelHint": "Lineage, columns, transformations, cell provenance, findings, checks, probes and code.",
       "openlineage": "OpenLineage run event (JSON)",
-      "openlineageHint": "Column-lineage facet for data catalogues such as Marquez, DataHub or Collibra.",
-      "drawio": "draw.io diagram",
-      "drawioHint": "Opens the lineage graph; export it there with the download button."
-    },
-    "tabs": {
-      "graph": "Lineage graph",
-      "columns": "Columns",
-      "code": "Code",
-      "cells": "Cell trace",
-      "mapping": "Mapping table",
-      "verification": "Verification"
+      "openlineageHint": "Column-lineage facet for data catalogues such as Marquez, DataHub or Collibra."
     },
     "toast": {
       "completed": "Lineage analysis completed",
@@ -1128,62 +1118,22 @@
         "indirect": "Condition",
         "lookup": "Lookup"
       },
-      "about": "Column lineage",
-      "aboutBody": "Sources on the left, derived columns to the right in dependency order. Solid edges carry values; dashed edges are conditions that decide which rows a rule applies to; dotted edges come from hard-coded lookup tables.",
-      "stats": {
-        "columns": "Columns",
-        "edges": "Dependencies",
-        "lookups": "Lookup tables",
-        "layers": "Layers"
-      },
-      "tipSelect": "Click a column to highlight its full upstream (gold) and downstream (blue) lineage.",
-      "tipNavigate": "Drag the background to pan, scroll to zoom, hover an edge for its transformation and code lines.",
-      "datasetOps": "Row-level operations affecting every column",
       "drawioTitle": "Technical lineage",
       "lookupNode": "Lookup · {count} entries",
-      "selectedColumn": "Selected column",
-      "close": "Close",
-      "directInputs": "Direct inputs",
-      "lookupTables": "Lookup tables",
       "usedBy": "Used by",
-      "sources": "Source input columns ({count})",
-      "lines": "Code lines",
-      "openDetails": "Open column dossier",
       "lookupTable": "Lookup table",
       "key": "Key",
       "value": "Value",
       "referenceTable": "Reference table with {columns} columns, joined into the data.",
       "keyColumn": "Mapped column",
       "unmapped": "{count} row(s) of {column} have values this table does not map:",
-      "tipMove": "Drag a node to rearrange the graph – its connections follow. Arrow keys move the focused node (Shift for bigger steps); Reset layout restores the automatic arrangement.",
       "resetLayout": "Reset layout",
       "movableNode": "movable node"
     },
     "columns": {
-      "search": "Find a column…",
-      "filter": {
-        "all": "All",
-        "derived": "Derived",
-        "created": "New",
-        "passthrough": "Unchanged"
-      },
-      "roleShort": {
-        "passthrough": "Taken unchanged from the input",
-        "cast": "Type conversion only",
-        "enriched": "Keeps input values, fills or adjusts",
-        "overwritten": "Input values replaced",
-        "created": "New column",
-        "renamed": "Renamed input column",
-        "dropped": "Removed by the script",
-        "intermediate": "Helper column"
-      },
-      "inputsCount": "{count, plural, one {# input} other {# inputs}}",
-      "noMatch": "No column matches.",
-      "column": "Column",
       "inInputAndOutput": "In input and output",
       "newColumn": "Created by the script",
       "possible": "Selected at runtime",
-      "showInGraph": "Show in graph",
       "showInCode": "Show in code",
       "facts": {
         "directInputs": "Direct inputs",
@@ -1192,15 +1142,6 @@
         "usedBy": "Used by",
         "cellsChanged": "Rows changed",
         "computed": "{count} filled from empty"
-      },
-      "profile": {
-        "title": "Data profile",
-        "hint": "Filled values before and after the script (replay of this execution).",
-        "input": "Input",
-        "output": "Output",
-        "notInInput": "Not in the input",
-        "notInOutput": "Not in the output",
-        "filled": "{filled} of {total} filled"
       },
       "runtime": {
         "title": "Runtime verification",
@@ -1284,110 +1225,30 @@
         "direct": "used directly",
         "upstream": "via an input column",
         "unmapped": "Values without a mapping in this execution: {values}"
-      }
-    },
-    "code": {
-      "lines": "{count, plural, one {# line} other {# lines}}",
-      "stages": "AI stages",
-      "focusNone": "Highlight a column…",
-      "stage": "Stage {index}",
-      "cells": "{count, plural, one {# cell} other {# cells}}",
-      "noChange": "no change",
-      "inspector": "Statement inspector",
-      "inspectorHint": "Click any line to see what its statement writes and reads, its runtime effect, the conditions and the lookup tables it uses.",
-      "kind": {
-        "write": "Column write",
-        "frame": "Table operation",
-        "lookup": "Lookup table",
-        "variable": "Variable / mask",
-        "function": "Function definition",
-        "import": "Import",
-        "other": "Other statement"
       },
-      "unresolved": "{count} statement(s) could not be fully resolved statically; the runtime probes cover them.",
-      "statement": "Statement",
-      "close": "Close",
-      "runtime": "Runtime effect (replay)",
-      "runtimeNoChange": "No cell changed.",
-      "runtimeMs": "{ms} ms",
-      "rowsRemoved": "{count} rows removed",
-      "reordered": "Columns reordered",
-      "writes": "Writes",
-      "dead": "overwritten later",
-      "when": "when",
-      "reads": "Reads",
-      "defines": "Defines",
-      "lookup": "Lookup table {name}",
-      "usedBy": "Used by: {columns}",
-      "frameOp": {
-        "REORDER": "Reorders the columns",
-        "DROP": "Removes {count, plural, one {# column} other {# columns}}",
-        "RENAME": "Renames {count, plural, one {# column} other {# columns}}",
-        "FILTER": "Filters rows",
-        "SORT": "Sorts rows",
-        "JOIN": "Joins another table"
+      "back": "All columns",
+      "switch": "Column",
+      "all": {
+        "title": "All columns ({count})",
+        "hint": "Click a column – here or in the graph – to see how it is derived, its values and how it was verified.",
+        "column": "Column",
+        "meaning": "What it is",
+        "from": "Derived from",
+        "operations": "Operations",
+        "runtime": "Runtime check",
+        "inputItself": "its input value"
       },
-      "unresolvedTitle": "Not fully resolved statically"
-    },
-    "cells": {
-      "title": "Result data",
-      "rows": "{count, plural, one {# row} other {# rows}}",
-      "rowsLimited": "first {shown} of {total} rows",
-      "legend": {
-        "filled": "Filled",
-        "changed": "Changed",
-        "emptied": "Emptied"
-      },
-      "onlyChanged": "Only changed columns",
-      "compare": "Show input values",
-      "pickTitle": "Pick a cell",
-      "pickBody": "Click any value of the result to see its provenance: the input value, every statement that changed it and the inputs it used.",
-      "provenance": {
-        "title": "Cell provenance",
-        "row": "Row {row}",
-        "close": "Close",
-        "finalValue": "Value in the result",
-        "inputValue": "Input value",
-        "notInInput": "Column not in the input",
-        "formula": "Evaluated with this row's values",
-        "conditionTrue": "Condition true for this row:",
-        "inputs": "Values read at this point",
-        "unchanged": "The script did not change this value; it is the input value.",
-        "neverWritten": "No statement wrote a value into this cell."
-      }
-    },
-    "mapping": {
-      "title": "Mapping table",
-      "hint": "One row per input → output dependency, with OpenLineage transformation types and runtime verification.",
-      "search": "Search columns or explanations…",
-      "type": {
-        "all": "All",
-        "DIRECT": "Direct",
-        "INDIRECT": "Indirect"
-      },
-      "hidePassthrough": "Hide pass-through columns",
-      "export": "Excel",
-      "cols": {
-        "output": "Output column",
+      "values": {
+        "title": "Values, row by row",
+        "hint": "{filled} of {rows} rows filled · {changed} changed by the script. Open a row to see every line that changed it.",
+        "row": "Row",
         "input": "Input",
-        "transformation": "Transformation",
-        "function": "Function",
-        "lines": "Lines",
-        "runtime": "Runtime"
-      },
-      "selfInput": "its input value",
-      "noInput": "no input (constant)",
-      "historical": "earlier state used",
-      "keepsInput": "keeps reported value ·",
-      "passthrough": "Pass-through",
-      "empty": "No dependency matches the filters.",
-      "count": "{rows} rows · {outputs} output columns",
-      "openLineageNote": "Types follow the OpenLineage column-lineage standard (DIRECT / INDIRECT).",
-      "runtime": {
-        "confirmed": "Confirmed",
-        "passthrough": "Confirmed",
-        "not_observable": "Not observable",
-        "confirmed_via": "Confirmed via its sources"
+        "result": "Result",
+        "changedBy": "Changed by",
+        "when": "when",
+        "more": "Show all {count} rows",
+        "fewer": "Show fewer rows",
+        "limited": "first {shown} of {total} rows traced"
       }
     },
     "verification": {
@@ -1396,8 +1257,6 @@
       "discrepancy": "Discrepancy",
       "unprobed": "Not probed",
       "passthrough": "Pass-through",
-      "checksTitle": "Controls",
-      "checksHint": "Deterministic checks of the analysis and of the AI output.",
       "checks": {
         "syntax": {
           "title": "Code parsed",
@@ -1446,34 +1305,8 @@
         }
       },
       "findingsTitle": "Findings ({count})",
-      "findingsHint": "Detected deterministically from the analysis and the replay.",
       "noFindings": "No findings: the code behaves exactly as analysed on this data.",
       "logTitle": "Agent log ({count} entries)",
-      "logHint": "every step of the run",
-      "matrix": {
-        "title": "Dependency verification matrix",
-        "hint": "Rows: derived output columns · columns: input columns. Static analysis versus runtime probes.",
-        "disabled": "Runtime probes were switched off for this analysis.",
-        "confirmed": "Value dependency confirmed",
-        "indirectConfirmed": "Condition dependency confirmed",
-        "staticOnly": "In the code, not observable on this data",
-        "runtimeOnly": "Runtime only",
-        "outputInput": "Output ↓ · Input →"
-      },
-      "review": {
-        "title": "AI review",
-        "hint": "Grounding checks and the four-eyes verdict per column.",
-        "column": "Column",
-        "grounding": "Grounding",
-        "review": "Four-eyes",
-        "failed": "Failed",
-        "verified": "Verified",
-        "partial": "Partial",
-        "afterCorrection": "after correction",
-        "confirmed": "Confirmed",
-        "correctedApplied": "Corrected (applied)",
-        "correctedRejected": "Correction rejected"
-      },
       "investigation": {
         "title": "Investigation",
         "hint": "The investigator agent examined {issues} issue(s) with {steps} tool call(s).",
@@ -1484,22 +1317,6 @@
           "code_issue": "Code issue",
           "input_changed": "Input changed",
           "other": "Other"
-        }
-      },
-      "probes": {
-        "title": "Dependency probes ({count})",
-        "hint": "run on {rows} rows",
-        "disabled": "switched off",
-        "search": "Filter input columns…",
-        "column": "Input column",
-        "mode": "Probe",
-        "changed": "Output columns changed (cells)",
-        "skipped": "not applicable",
-        "none": "no output changed",
-        "modes": {
-          "perturb": "values changed",
-          "null": "emptied",
-          "fill": "gaps filled"
         }
       },
       "run": {
@@ -1519,7 +1336,10 @@
         "on": "on",
         "off": "off",
         "language": "Language"
-      }
+      },
+      "sectionTitle": "Checks and findings",
+      "passed": "{passed} of {total} controls passed",
+      "findingsCount": "{count, plural, =0 {no findings} one {# finding} other {# findings}}"
     },
     "findings": {
       "replay_mismatch": {
@@ -1609,6 +1429,29 @@
       "dynamic_loop": "Loop over computed columns",
       "analysis_error": "Analysis error",
       "import": "Import"
+    },
+    "overview": {
+      "eyebrow": "What the script does",
+      "noPurpose": "No AI summary of the script is available for this analysis.",
+      "columns": "Columns",
+      "columnsHint": "{derived} derived · {created} created by the script",
+      "dependencies": "Dependencies",
+      "dependenciesHint": "{direct, plural, one {# carries values} other {# carry values}} · {indirect, plural, one {# condition} other {# conditions}} · {lookups, plural, one {# lookup table} other {# lookup tables}}",
+      "verified": "Runtime-verified",
+      "verifiedHint": "{confirmed} of {total} dependencies confirmed by changing the inputs",
+      "verifiedOff": "Runtime probes were switched off for this analysis",
+      "documented": "Columns explained",
+      "documentedHint": "{grounded} grounded in the code · {reviewed} reviewed by a second AI",
+      "stages": "The script in {count, plural, one {# stage} other {# stages}}",
+      "datasetOps": "Row-level operations affecting every column:"
+    },
+    "script": {
+      "title": "Script",
+      "summary": "{lines, plural, one {# line} other {# lines}} · {stages, plural, =0 {no AI stages} one {# AI stage} other {# AI stages}}",
+      "highlighted": "Lines of {column} highlighted",
+      "stage": "Stage {index}",
+      "cells": "{count, plural, one {# cell} other {# cells}}",
+      "noChange": "no change"
     }
   },
   "contentLineageAgent": {

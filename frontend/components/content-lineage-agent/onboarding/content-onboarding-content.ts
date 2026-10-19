@@ -455,7 +455,7 @@ const EN: ContentOnboardingCopy = {
       chapter: "Result",
       title: "The lineage, step by step",
       body: [
-        "The selected field on the left; each column to the right is one step of the calculation, up to the end fields (flag).",
+        "The selected field on the left; each column to the right is one step of the calculation, up to the end fields, marked with a flag.",
         "Solid green arrows carry the value, dashed amber arrows decide a case or parameter – a condition or a table key. The bar on each field shows how many records the selected field reaches there.",
       ],
     },
@@ -765,7 +765,7 @@ const DE: ContentOnboardingCopy = {
       chapter: "Ergebnis",
       title: "Die Herkunft, Schritt für Schritt",
       body: [
-        "Links das ausgewählte Feld; jede Spalte rechts davon ist ein Schritt der Berechnung, bis zu den Endfeldern (Fahne).",
+        "Links das ausgewählte Feld; jede Spalte rechts davon ist ein Schritt der Berechnung, bis zu den Endfeldern, die eine Fahne markiert.",
         "Durchgezogene grüne Pfeile übernehmen den Wert, gestrichelte bernsteinfarbene entscheiden einen Fall oder Parameter – eine Bedingung oder einen Tabellenschlüssel. Der Balken auf jedem Feld zeigt, wie viele Datensätze das ausgewählte Feld dort erreicht.",
       ],
     },

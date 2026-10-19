@@ -896,17 +896,7 @@
       "excel": "Libro Excel de linaje",
       "excelHint": "Linaje, columnas, transformaciones, procedencia de celdas, hallazgos, controles, pruebas y código.",
       "openlineage": "Evento OpenLineage (JSON)",
-      "openlineageHint": "Faceta de linaje por columna para catálogos de datos como Marquez, DataHub o Collibra.",
-      "drawio": "Diagrama draw.io",
-      "drawioHint": "Abre el grafo de linaje; expórtelo allí con el botón de descarga."
-    },
-    "tabs": {
-      "graph": "Grafo de linaje",
-      "columns": "Columnas",
-      "code": "Código",
-      "cells": "Traza de celdas",
-      "mapping": "Tabla de mapeo",
-      "verification": "Verificación"
+      "openlineageHint": "Faceta de linaje por columna para catálogos de datos como Marquez, DataHub o Collibra."
     },
     "toast": {
       "completed": "Análisis de linaje completado",
@@ -1128,62 +1118,22 @@
         "indirect": "Condición",
         "lookup": "Mapeo"
       },
-      "about": "Linaje por columna",
-      "aboutBody": "Orígenes a la izquierda, columnas derivadas a la derecha en orden de dependencia. Las aristas continuas transportan valores; las discontinuas son condiciones que deciden a qué filas se aplica una regla; las punteadas proceden de tablas de mapeo fijas en el código.",
-      "stats": {
-        "columns": "Columnas",
-        "edges": "Dependencias",
-        "lookups": "Tablas de mapeo",
-        "layers": "Niveles"
-      },
-      "tipSelect": "Haga clic en una columna para resaltar todo su linaje anterior (dorado) y posterior (azul).",
-      "tipNavigate": "Arrastre el fondo para desplazar, use la rueda para el zoom y pase sobre una arista para ver su transformación y sus líneas.",
-      "datasetOps": "Operaciones de filas que afectan a todas las columnas",
       "drawioTitle": "Linaje técnico",
       "lookupNode": "Mapeo · {count} entradas",
-      "selectedColumn": "Columna seleccionada",
-      "close": "Cerrar",
-      "directInputs": "Entradas directas",
-      "lookupTables": "Tablas de mapeo",
       "usedBy": "Usada por",
-      "sources": "Columnas de entrada de origen ({count})",
-      "lines": "Líneas de código",
-      "openDetails": "Abrir la ficha de la columna",
       "lookupTable": "Tabla de mapeo",
       "key": "Clave",
       "value": "Valor",
       "referenceTable": "Tabla de referencia con {columns} columnas, unida a los datos.",
       "keyColumn": "Columna mapeada",
       "unmapped": "{count} fila(s) de {column} tienen valores que esta tabla no mapea:",
-      "tipMove": "Arrastre un nodo para reorganizar el grafo: sus conexiones lo siguen. Las flechas mueven el nodo enfocado (Mayús para pasos mayores); «Restablecer diseño» recupera la disposición automática.",
       "resetLayout": "Restablecer diseño",
       "movableNode": "nodo desplazable"
     },
     "columns": {
-      "search": "Buscar una columna…",
-      "filter": {
-        "all": "Todas",
-        "derived": "Derivadas",
-        "created": "Nuevas",
-        "passthrough": "Sin cambios"
-      },
-      "roleShort": {
-        "passthrough": "Tomada sin cambios de la entrada",
-        "cast": "Solo conversión de tipo",
-        "enriched": "Conserva valores de entrada, completa o ajusta",
-        "overwritten": "Valores de entrada reemplazados",
-        "created": "Columna nueva",
-        "renamed": "Columna de entrada renombrada",
-        "dropped": "Eliminada por el script",
-        "intermediate": "Columna auxiliar"
-      },
-      "inputsCount": "{count, plural, one {# entrada} other {# entradas}}",
-      "noMatch": "Ninguna columna coincide.",
-      "column": "Columna",
       "inInputAndOutput": "En entrada y salida",
       "newColumn": "Creada por el script",
       "possible": "Seleccionada en ejecución",
-      "showInGraph": "Ver en el grafo",
       "showInCode": "Ver en el código",
       "facts": {
         "directInputs": "Entradas directas",
@@ -1192,15 +1142,6 @@
         "usedBy": "Usada por",
         "cellsChanged": "Filas modificadas",
         "computed": "{count} rellenadas desde vacío"
-      },
-      "profile": {
-        "title": "Perfil de datos",
-        "hint": "Valores completos antes y después del script (re-ejecución de esta ejecución).",
-        "input": "Entrada",
-        "output": "Salida",
-        "notInInput": "No está en la entrada",
-        "notInOutput": "No está en la salida",
-        "filled": "{filled} de {total} completas"
       },
       "runtime": {
         "title": "Verificación en ejecución",
@@ -1284,110 +1225,30 @@
         "direct": "uso directo",
         "upstream": "a través de una columna de entrada",
         "unmapped": "Valores sin mapeo en esta ejecución: {values}"
-      }
-    },
-    "code": {
-      "lines": "{count, plural, one {# línea} other {# líneas}}",
-      "stages": "Etapas de IA",
-      "focusNone": "Resaltar una columna…",
-      "stage": "Etapa {index}",
-      "cells": "{count, plural, one {# celda} other {# celdas}}",
-      "noChange": "sin cambios",
-      "inspector": "Inspector de sentencias",
-      "inspectorHint": "Haga clic en cualquier línea para ver qué escribe y lee su sentencia, su efecto en ejecución, sus condiciones y las tablas de mapeo que usa.",
-      "kind": {
-        "write": "Escritura de columna",
-        "frame": "Operación de tabla",
-        "lookup": "Tabla de mapeo",
-        "variable": "Variable / máscara",
-        "function": "Definición de función",
-        "import": "Importación",
-        "other": "Otra sentencia"
       },
-      "unresolved": "{count} sentencia(s) no se pudieron resolver del todo estáticamente; las pruebas en ejecución las cubren.",
-      "statement": "Sentencia",
-      "close": "Cerrar",
-      "runtime": "Efecto en ejecución (re-ejecución)",
-      "runtimeNoChange": "No cambió ninguna celda.",
-      "runtimeMs": "{ms} ms",
-      "rowsRemoved": "{count} filas eliminadas",
-      "reordered": "Columnas reordenadas",
-      "writes": "Escribe",
-      "dead": "sobrescrita después",
-      "when": "cuando",
-      "reads": "Lee",
-      "defines": "Define",
-      "lookup": "Tabla de mapeo {name}",
-      "usedBy": "Usada por: {columns}",
-      "frameOp": {
-        "REORDER": "Reordena las columnas",
-        "DROP": "Elimina {count, plural, one {# columna} other {# columnas}}",
-        "RENAME": "Renombra {count, plural, one {# columna} other {# columnas}}",
-        "FILTER": "Filtra filas",
-        "SORT": "Ordena filas",
-        "JOIN": "Une otra tabla"
+      "back": "Todas las columnas",
+      "switch": "Columna",
+      "all": {
+        "title": "Todas las columnas ({count})",
+        "hint": "Haga clic en una columna – aquí o en el grafo – para ver cómo se deriva, sus valores y cómo se verificó.",
+        "column": "Columna",
+        "meaning": "Qué es",
+        "from": "Derivada de",
+        "operations": "Operaciones",
+        "runtime": "Comprobación en ejecución",
+        "inputItself": "su valor de entrada"
       },
-      "unresolvedTitle": "No resuelta del todo estáticamente"
-    },
-    "cells": {
-      "title": "Datos del resultado",
-      "rows": "{count, plural, one {# fila} other {# filas}}",
-      "rowsLimited": "primeras {shown} de {total} filas",
-      "legend": {
-        "filled": "Rellenada",
-        "changed": "Modificada",
-        "emptied": "Vaciada"
-      },
-      "onlyChanged": "Solo columnas modificadas",
-      "compare": "Mostrar valores de entrada",
-      "pickTitle": "Elija una celda",
-      "pickBody": "Haga clic en cualquier valor del resultado para ver su procedencia: el valor de entrada, cada sentencia que lo modificó y las entradas que usó.",
-      "provenance": {
-        "title": "Procedencia de la celda",
-        "row": "Fila {row}",
-        "close": "Cerrar",
-        "finalValue": "Valor en el resultado",
-        "inputValue": "Valor de entrada",
-        "notInInput": "La columna no está en la entrada",
-        "formula": "Evaluado con los valores de esta fila",
-        "conditionTrue": "Condición verdadera para esta fila:",
-        "inputs": "Valores leídos en este punto",
-        "unchanged": "El script no modificó este valor; es el valor de entrada.",
-        "neverWritten": "Ninguna sentencia escribió un valor en esta celda."
-      }
-    },
-    "mapping": {
-      "title": "Tabla de mapeo",
-      "hint": "Una fila por dependencia entrada → salida, con tipos de transformación OpenLineage y verificación en ejecución.",
-      "search": "Buscar columnas o explicaciones…",
-      "type": {
-        "all": "Todas",
-        "DIRECT": "Directas",
-        "INDIRECT": "Indirectas"
-      },
-      "hidePassthrough": "Ocultar columnas sin cambios",
-      "export": "Excel",
-      "cols": {
-        "output": "Columna de salida",
+      "values": {
+        "title": "Valores, fila a fila",
+        "hint": "{filled} de {rows} filas con valor · {changed} modificadas por el script. Abra una fila para ver cada línea que la modificó.",
+        "row": "Fila",
         "input": "Entrada",
-        "transformation": "Transformación",
-        "function": "Función",
-        "lines": "Líneas",
-        "runtime": "Ejecución"
-      },
-      "selfInput": "su valor de entrada",
-      "noInput": "sin entrada (constante)",
-      "historical": "estado anterior usado",
-      "keepsInput": "conserva el valor informado ·",
-      "passthrough": "Sin cambios",
-      "empty": "Ninguna dependencia coincide con los filtros.",
-      "count": "{rows} filas · {outputs} columnas de salida",
-      "openLineageNote": "Los tipos siguen el estándar OpenLineage de linaje por columna (DIRECT / INDIRECT).",
-      "runtime": {
-        "confirmed": "Confirmada",
-        "passthrough": "Confirmada",
-        "not_observable": "No observable",
-        "confirmed_via": "Confirmada vía sus orígenes"
+        "result": "Resultado",
+        "changedBy": "Modificado por",
+        "when": "cuando",
+        "more": "Mostrar las {count} filas",
+        "fewer": "Mostrar menos filas",
+        "limited": "primeras {shown} de {total} filas trazadas"
       }
     },
     "verification": {
@@ -1396,8 +1257,6 @@
       "discrepancy": "Discrepancia",
       "unprobed": "Sin probar",
       "passthrough": "Sin cambios",
-      "checksTitle": "Controles",
-      "checksHint": "Comprobaciones deterministas del análisis y de la salida de la IA.",
       "checks": {
         "syntax": {
           "title": "Código analizado",
@@ -1446,34 +1305,8 @@
         }
       },
       "findingsTitle": "Hallazgos ({count})",
-      "findingsHint": "Detectados de forma determinista a partir del análisis y de la re-ejecución.",
       "noFindings": "Sin hallazgos: el código se comporta exactamente como se analizó sobre estos datos.",
       "logTitle": "Registro del agente ({count} entradas)",
-      "logHint": "cada paso de la ejecución",
-      "matrix": {
-        "title": "Matriz de verificación de dependencias",
-        "hint": "Filas: columnas de salida derivadas · columnas: columnas de entrada. Análisis estático frente a pruebas en ejecución.",
-        "disabled": "Las pruebas en ejecución estaban desactivadas para este análisis.",
-        "confirmed": "Dependencia de valor confirmada",
-        "indirectConfirmed": "Dependencia de condición confirmada",
-        "staticOnly": "En el código, no observable con estos datos",
-        "runtimeOnly": "Solo en ejecución",
-        "outputInput": "Salida ↓ · Entrada →"
-      },
-      "review": {
-        "title": "Revisión de IA",
-        "hint": "Verificaciones de fundamentación y veredicto a cuatro ojos por columna.",
-        "column": "Columna",
-        "grounding": "Fundamentación",
-        "review": "Cuatro ojos",
-        "failed": "Fallida",
-        "verified": "Verificada",
-        "partial": "Parcial",
-        "afterCorrection": "tras corrección",
-        "confirmed": "Confirmada",
-        "correctedApplied": "Corregida (aplicada)",
-        "correctedRejected": "Corrección rechazada"
-      },
       "investigation": {
         "title": "Investigación",
         "hint": "El agente investigador examinó {issues} problema(s) con {steps} llamada(s) a herramientas.",
@@ -1484,22 +1317,6 @@
           "code_issue": "Problema en el código",
           "input_changed": "Entrada modificada",
           "other": "Otro"
-        }
-      },
-      "probes": {
-        "title": "Pruebas de dependencia ({count})",
-        "hint": "ejecutadas sobre {rows} filas",
-        "disabled": "desactivadas",
-        "search": "Filtrar columnas de entrada…",
-        "column": "Columna de entrada",
-        "mode": "Prueba",
-        "changed": "Columnas de salida modificadas (celdas)",
-        "skipped": "no aplicable",
-        "none": "ninguna salida cambió",
-        "modes": {
-          "perturb": "valores modificados",
-          "null": "vaciada",
-          "fill": "huecos rellenados"
         }
       },
       "run": {
@@ -1519,7 +1336,10 @@
         "on": "activadas",
         "off": "desactivadas",
         "language": "Idioma"
-      }
+      },
+      "sectionTitle": "Controles y hallazgos",
+      "passed": "{passed} de {total} controles superados",
+      "findingsCount": "{count, plural, =0 {sin hallazgos} one {# hallazgo} other {# hallazgos}}"
     },
     "findings": {
       "replay_mismatch": {
@@ -1609,6 +1429,29 @@
       "dynamic_loop": "Bucle sobre columnas calculadas",
       "analysis_error": "Error de análisis",
       "import": "Importación"
+    },
+    "overview": {
+      "eyebrow": "Qué hace el script",
+      "noPurpose": "No hay un resumen de IA del script para este análisis.",
+      "columns": "Columnas",
+      "columnsHint": "{derived} derivadas · {created} creadas por el script",
+      "dependencies": "Dependencias",
+      "dependenciesHint": "{direct, plural, one {# transmite valores} other {# transmiten valores}} · {indirect, plural, one {# condición} other {# condiciones}} · {lookups, plural, one {# tabla de búsqueda} other {# tablas de búsqueda}}",
+      "verified": "Verificado en ejecución",
+      "verifiedHint": "{confirmed} de {total} dependencias confirmadas cambiando las entradas",
+      "verifiedOff": "Las pruebas en ejecución estaban desactivadas en este análisis",
+      "documented": "Columnas explicadas",
+      "documentedHint": "{grounded} respaldadas en el código · {reviewed} revisadas por una segunda IA",
+      "stages": "El script en {count, plural, one {# etapa} other {# etapas}}",
+      "datasetOps": "Operaciones de filas que afectan a todas las columnas:"
+    },
+    "script": {
+      "title": "Script",
+      "summary": "{lines, plural, one {# línea} other {# líneas}} · {stages, plural, =0 {sin etapas de IA} one {# etapa de IA} other {# etapas de IA}}",
+      "highlighted": "Líneas de {column} resaltadas",
+      "stage": "Etapa {index}",
+      "cells": "{count, plural, one {# celda} other {# celdas}}",
+      "noChange": "sin cambios"
     }
   },
   "contentLineageAgent": {

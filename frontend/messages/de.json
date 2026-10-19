@@ -896,17 +896,7 @@
       "excel": "Excel-Herkunftsarbeitsmappe",
       "excelHint": "Herkunft, Spalten, Transformationen, Zellherkunft, Befunde, Kontrollen, Tests und Code.",
       "openlineage": "OpenLineage-Ereignis (JSON)",
-      "openlineageHint": "Column-Lineage-Facet für Datenkataloge wie Marquez, DataHub oder Collibra.",
-      "drawio": "draw.io-Diagramm",
-      "drawioHint": "Öffnet den Herkunftsgraphen; dort über die Download-Schaltfläche exportieren."
-    },
-    "tabs": {
-      "graph": "Herkunftsgraph",
-      "columns": "Spalten",
-      "code": "Code",
-      "cells": "Zellverfolgung",
-      "mapping": "Zuordnungstabelle",
-      "verification": "Verifikation"
+      "openlineageHint": "Column-Lineage-Facet für Datenkataloge wie Marquez, DataHub oder Collibra."
     },
     "toast": {
       "completed": "Herkunftsanalyse abgeschlossen",
@@ -1128,62 +1118,22 @@
         "indirect": "Bedingung",
         "lookup": "Mapping"
       },
-      "about": "Spaltenherkunft",
-      "aboutBody": "Quellen links, abgeleitete Spalten rechts in Abhängigkeitsreihenfolge. Durchgezogene Kanten transportieren Werte; gestrichelte Kanten sind Bedingungen, die bestimmen, für welche Zeilen eine Regel gilt; gepunktete Kanten kommen aus fest codierten Mapping-Tabellen.",
-      "stats": {
-        "columns": "Spalten",
-        "edges": "Abhängigkeiten",
-        "lookups": "Mapping-Tabellen",
-        "layers": "Ebenen"
-      },
-      "tipSelect": "Spalte anklicken, um ihre gesamte Herkunft (gold) und Verwendung (blau) hervorzuheben.",
-      "tipNavigate": "Hintergrund ziehen zum Verschieben, Scrollen zum Zoomen, Kante überfahren für Transformation und Codezeilen.",
-      "datasetOps": "Zeilenoperationen, die jede Spalte betreffen",
       "drawioTitle": "Technische Herkunft",
       "lookupNode": "Mapping · {count} Einträge",
-      "selectedColumn": "Ausgewählte Spalte",
-      "close": "Schließen",
-      "directInputs": "Direkte Eingaben",
-      "lookupTables": "Mapping-Tabellen",
       "usedBy": "Verwendet von",
-      "sources": "Quell-Eingabespalten ({count})",
-      "lines": "Codezeilen",
-      "openDetails": "Spaltendossier öffnen",
       "lookupTable": "Mapping-Tabelle",
       "key": "Schlüssel",
       "value": "Wert",
       "referenceTable": "Referenztabelle mit {columns} Spalten, an die Daten angefügt.",
       "keyColumn": "Abgebildete Spalte",
       "unmapped": "{count} Zeile(n) von {column} haben Werte, die diese Tabelle nicht abbildet:",
-      "tipMove": "Ziehen Sie einen Knoten, um den Graph neu anzuordnen – seine Verbindungen folgen. Pfeiltasten verschieben den fokussierten Knoten (mit Umschalt in größeren Schritten); „Layout zurücksetzen“ stellt die automatische Anordnung wieder her.",
       "resetLayout": "Layout zurücksetzen",
       "movableNode": "verschiebbarer Knoten"
     },
     "columns": {
-      "search": "Spalte finden…",
-      "filter": {
-        "all": "Alle",
-        "derived": "Abgeleitet",
-        "created": "Neu",
-        "passthrough": "Unverändert"
-      },
-      "roleShort": {
-        "passthrough": "Unverändert aus der Eingabe",
-        "cast": "Nur Typkonvertierung",
-        "enriched": "Behält Eingabewerte, ergänzt oder passt an",
-        "overwritten": "Eingabewerte ersetzt",
-        "created": "Neue Spalte",
-        "renamed": "Umbenannte Eingabespalte",
-        "dropped": "Vom Skript entfernt",
-        "intermediate": "Hilfsspalte"
-      },
-      "inputsCount": "{count, plural, one {# Eingabe} other {# Eingaben}}",
-      "noMatch": "Keine Spalte gefunden.",
-      "column": "Spalte",
       "inInputAndOutput": "In Ein- und Ausgabe",
       "newColumn": "Vom Skript erzeugt",
       "possible": "Zur Laufzeit ausgewählt",
-      "showInGraph": "Im Graphen zeigen",
       "showInCode": "Im Code zeigen",
       "facts": {
         "directInputs": "Direkte Eingaben",
@@ -1192,15 +1142,6 @@
         "usedBy": "Verwendet von",
         "cellsChanged": "Geänderte Zeilen",
         "computed": "{count} aus leer gefüllt"
-      },
-      "profile": {
-        "title": "Datenprofil",
-        "hint": "Gefüllte Werte vor und nach dem Skript (Wiederholung dieser Ausführung).",
-        "input": "Eingabe",
-        "output": "Ausgabe",
-        "notInInput": "Nicht in der Eingabe",
-        "notInOutput": "Nicht in der Ausgabe",
-        "filled": "{filled} von {total} gefüllt"
       },
       "runtime": {
         "title": "Laufzeitbestätigung",
@@ -1284,110 +1225,30 @@
         "direct": "direkt genutzt",
         "upstream": "über eine Eingabespalte",
         "unmapped": "Werte ohne Zuordnung in dieser Ausführung: {values}"
-      }
-    },
-    "code": {
-      "lines": "{count, plural, one {# Zeile} other {# Zeilen}}",
-      "stages": "KI-Stufen",
-      "focusNone": "Spalte hervorheben…",
-      "stage": "Stufe {index}",
-      "cells": "{count, plural, one {# Zelle} other {# Zellen}}",
-      "noChange": "keine Änderung",
-      "inspector": "Anweisungsinspektor",
-      "inspectorHint": "Klicken Sie auf eine Zeile, um zu sehen, was die Anweisung schreibt und liest, ihre Laufzeitwirkung, ihre Bedingungen und die genutzten Mapping-Tabellen.",
-      "kind": {
-        "write": "Spaltenschreibzugriff",
-        "frame": "Tabellenoperation",
-        "lookup": "Mapping-Tabelle",
-        "variable": "Variable / Maske",
-        "function": "Funktionsdefinition",
-        "import": "Import",
-        "other": "Sonstige Anweisung"
       },
-      "unresolved": "{count} Anweisung(en) konnten statisch nicht vollständig aufgelöst werden; die Laufzeittests decken sie ab.",
-      "statement": "Anweisung",
-      "close": "Schließen",
-      "runtime": "Laufzeitwirkung (Wiederholung)",
-      "runtimeNoChange": "Keine Zelle geändert.",
-      "runtimeMs": "{ms} ms",
-      "rowsRemoved": "{count} Zeilen entfernt",
-      "reordered": "Spalten umgeordnet",
-      "writes": "Schreibt",
-      "dead": "später überschrieben",
-      "when": "wenn",
-      "reads": "Liest",
-      "defines": "Definiert",
-      "lookup": "Mapping-Tabelle {name}",
-      "usedBy": "Verwendet von: {columns}",
-      "frameOp": {
-        "REORDER": "Ordnet die Spalten neu",
-        "DROP": "Entfernt {count, plural, one {# Spalte} other {# Spalten}}",
-        "RENAME": "Benennt {count, plural, one {# Spalte} other {# Spalten}} um",
-        "FILTER": "Filtert Zeilen",
-        "SORT": "Sortiert Zeilen",
-        "JOIN": "Verknüpft eine weitere Tabelle"
+      "back": "Alle Spalten",
+      "switch": "Spalte",
+      "all": {
+        "title": "Alle Spalten ({count})",
+        "hint": "Klicken Sie auf eine Spalte – hier oder im Graphen –, um zu sehen, wie sie abgeleitet wird, welche Werte sie hat und wie sie geprüft wurde.",
+        "column": "Spalte",
+        "meaning": "Bedeutung",
+        "from": "Abgeleitet aus",
+        "operations": "Operationen",
+        "runtime": "Laufzeitprüfung",
+        "inputItself": "ihrem Eingabewert"
       },
-      "unresolvedTitle": "Statisch nicht vollständig aufgelöst"
-    },
-    "cells": {
-      "title": "Ergebnisdaten",
-      "rows": "{count, plural, one {# Zeile} other {# Zeilen}}",
-      "rowsLimited": "erste {shown} von {total} Zeilen",
-      "legend": {
-        "filled": "Gefüllt",
-        "changed": "Geändert",
-        "emptied": "Geleert"
-      },
-      "onlyChanged": "Nur geänderte Spalten",
-      "compare": "Eingabewerte zeigen",
-      "pickTitle": "Zelle wählen",
-      "pickBody": "Klicken Sie auf einen Ergebniswert, um seine Herkunft zu sehen: den Eingabewert, jede Anweisung, die ihn geändert hat, und die dabei genutzten Eingaben.",
-      "provenance": {
-        "title": "Zellherkunft",
-        "row": "Zeile {row}",
-        "close": "Schließen",
-        "finalValue": "Wert im Ergebnis",
-        "inputValue": "Eingabewert",
-        "notInInput": "Spalte nicht in der Eingabe",
-        "formula": "Ausgewertet mit den Werten dieser Zeile",
-        "conditionTrue": "Bedingung für diese Zeile erfüllt:",
-        "inputs": "An dieser Stelle gelesene Werte",
-        "unchanged": "Das Skript hat diesen Wert nicht geändert; es ist der Eingabewert.",
-        "neverWritten": "Keine Anweisung hat einen Wert in diese Zelle geschrieben."
-      }
-    },
-    "mapping": {
-      "title": "Zuordnungstabelle",
-      "hint": "Eine Zeile je Abhängigkeit Eingabe → Ausgabe, mit OpenLineage-Transformationstypen und Laufzeitbestätigung.",
-      "search": "Spalten oder Erläuterungen suchen…",
-      "type": {
-        "all": "Alle",
-        "DIRECT": "Direkt",
-        "INDIRECT": "Indirekt"
-      },
-      "hidePassthrough": "Durchgereichte Spalten ausblenden",
-      "export": "Excel",
-      "cols": {
-        "output": "Ausgabespalte",
+      "values": {
+        "title": "Werte, Zeile für Zeile",
+        "hint": "{filled} von {rows} Zeilen gefüllt · {changed} vom Skript geändert. Eine Zeile aufklappen zeigt jede Codezeile, die sie geändert hat.",
+        "row": "Zeile",
         "input": "Eingabe",
-        "transformation": "Transformation",
-        "function": "Funktion",
-        "lines": "Zeilen",
-        "runtime": "Laufzeit"
-      },
-      "selfInput": "eigener Eingabewert",
-      "noInput": "keine Eingabe (Konstante)",
-      "historical": "früherer Stand genutzt",
-      "keepsInput": "behält gemeldeten Wert ·",
-      "passthrough": "Durchgereicht",
-      "empty": "Keine Abhängigkeit entspricht den Filtern.",
-      "count": "{rows} Zeilen · {outputs} Ausgabespalten",
-      "openLineageNote": "Die Typen folgen dem OpenLineage-Standard für Spaltenherkunft (DIRECT / INDIRECT).",
-      "runtime": {
-        "confirmed": "Bestätigt",
-        "passthrough": "Bestätigt",
-        "not_observable": "Nicht beobachtbar",
-        "confirmed_via": "Über ihre Quellen bestätigt"
+        "result": "Ergebnis",
+        "changedBy": "Geändert durch",
+        "when": "wenn",
+        "more": "Alle {count} Zeilen zeigen",
+        "fewer": "Weniger Zeilen zeigen",
+        "limited": "die ersten {shown} von {total} Zeilen verfolgt"
       }
     },
     "verification": {
@@ -1396,8 +1257,6 @@
       "discrepancy": "Abweichung",
       "unprobed": "Nicht getestet",
       "passthrough": "Durchgereicht",
-      "checksTitle": "Kontrollen",
-      "checksHint": "Deterministische Prüfungen der Analyse und der KI-Ausgabe.",
       "checks": {
         "syntax": {
           "title": "Code eingelesen",
@@ -1446,34 +1305,8 @@
         }
       },
       "findingsTitle": "Befunde ({count})",
-      "findingsHint": "Deterministisch aus Analyse und Wiederholung ermittelt.",
       "noFindings": "Keine Befunde: Der Code verhält sich auf diesen Daten genau wie analysiert.",
       "logTitle": "Agentenprotokoll ({count} Einträge)",
-      "logHint": "jeder Schritt des Laufs",
-      "matrix": {
-        "title": "Matrix der Abhängigkeitsbestätigung",
-        "hint": "Zeilen: abgeleitete Ausgabespalten · Spalten: Eingabespalten. Statische Analyse gegenüber Laufzeittests.",
-        "disabled": "Die Laufzeittests waren für diese Analyse abgeschaltet.",
-        "confirmed": "Wertabhängigkeit bestätigt",
-        "indirectConfirmed": "Bedingungsabhängigkeit bestätigt",
-        "staticOnly": "Im Code, mit diesen Daten nicht beobachtbar",
-        "runtimeOnly": "Nur zur Laufzeit",
-        "outputInput": "Ausgabe ↓ · Eingabe →"
-      },
-      "review": {
-        "title": "KI-Prüfung",
-        "hint": "Belegprüfung und Vier-Augen-Urteil je Spalte.",
-        "column": "Spalte",
-        "grounding": "Belege",
-        "review": "Vier Augen",
-        "failed": "Fehlgeschlagen",
-        "verified": "Bestätigt",
-        "partial": "Teilweise",
-        "afterCorrection": "nach Korrektur",
-        "confirmed": "Bestätigt",
-        "correctedApplied": "Korrigiert (übernommen)",
-        "correctedRejected": "Korrektur verworfen"
-      },
       "investigation": {
         "title": "Untersuchung",
         "hint": "Der Untersuchungsagent hat {issues} Problem(e) mit {steps} Werkzeugaufruf(en) geprüft.",
@@ -1484,22 +1317,6 @@
           "code_issue": "Problem im Code",
           "input_changed": "Eingabe geändert",
           "other": "Sonstiges"
-        }
-      },
-      "probes": {
-        "title": "Abhängigkeitstests ({count})",
-        "hint": "auf {rows} Zeilen ausgeführt",
-        "disabled": "abgeschaltet",
-        "search": "Eingabespalten filtern…",
-        "column": "Eingabespalte",
-        "mode": "Test",
-        "changed": "Geänderte Ausgabespalten (Zellen)",
-        "skipped": "nicht anwendbar",
-        "none": "keine Ausgabe geändert",
-        "modes": {
-          "perturb": "Werte verändert",
-          "null": "geleert",
-          "fill": "Lücken gefüllt"
         }
       },
       "run": {
@@ -1519,7 +1336,10 @@
         "on": "an",
         "off": "aus",
         "language": "Sprache"
-      }
+      },
+      "sectionTitle": "Prüfungen und Befunde",
+      "passed": "{passed} von {total} Kontrollen bestanden",
+      "findingsCount": "{count, plural, =0 {keine Befunde} one {# Befund} other {# Befunde}}"
     },
     "findings": {
       "replay_mismatch": {
@@ -1609,6 +1429,29 @@
       "dynamic_loop": "Schleife über berechnete Spalten",
       "analysis_error": "Analysefehler",
       "import": "Import"
+    },
+    "overview": {
+      "eyebrow": "Was das Skript tut",
+      "noPurpose": "Für diese Analyse liegt keine KI-Zusammenfassung des Skripts vor.",
+      "columns": "Spalten",
+      "columnsHint": "{derived} abgeleitet · {created} vom Skript erzeugt",
+      "dependencies": "Abhängigkeiten",
+      "dependenciesHint": "{direct, plural, one {# trägt Werte} other {# tragen Werte}} · {indirect, plural, one {# Bedingung} other {# Bedingungen}} · {lookups, plural, one {# Mapping-Tabelle} other {# Mapping-Tabellen}}",
+      "verified": "Zur Laufzeit bestätigt",
+      "verifiedHint": "{confirmed} von {total} Abhängigkeiten durch Ändern der Eingaben bestätigt",
+      "verifiedOff": "Die Laufzeittests waren für diese Analyse ausgeschaltet",
+      "documented": "Erläuterte Spalten",
+      "documentedHint": "{grounded} im Code belegt · {reviewed} von einer zweiten KI geprüft",
+      "stages": "Das Skript in {count, plural, one {# Stufe} other {# Stufen}}",
+      "datasetOps": "Zeilenoperationen, die jede Spalte betreffen:"
+    },
+    "script": {
+      "title": "Skript",
+      "summary": "{lines, plural, one {# Zeile} other {# Zeilen}} · {stages, plural, =0 {keine KI-Stufen} one {# KI-Stufe} other {# KI-Stufen}}",
+      "highlighted": "Zeilen von {column} hervorgehoben",
+      "stage": "Stufe {index}",
+      "cells": "{count, plural, one {# Zelle} other {# Zellen}}",
+      "noChange": "keine Änderung"
     }
   },
   "contentLineageAgent": {

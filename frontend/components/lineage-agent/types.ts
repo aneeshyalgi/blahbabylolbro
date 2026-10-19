@@ -418,11 +418,12 @@ export interface RunListItem {
   summary: Summary | null;
 }
 
-export type View = "graph" | "columns" | "code" | "cells" | "mapping" | "verification";
+/** What the details under the graph show: a column or a lookup table (none: every column at a glance). */
+export type Focus = { kind: "column" | "lookup"; name: string };
 
-/** Cross-view navigation: every view can open a column, a line of code or a cell. */
+/** Navigation inside the single result view: a column's or lookup table's details, or a line of the script. */
 export interface Navigator {
-  openColumn: (column: string, view?: View) => void;
+  openColumn: (column: string) => void;
+  openLookup: (name: string) => void;
   openLine: (line: number) => void;
-  openCell: (row: string, column: string) => void;
 }

@@ -5,12 +5,14 @@
 
 export type LineageLocale = "en" | "de";
 
-export type DeckScreen = "language" | "welcome" | "challenge" | "pipeline" | "proof" | "graph" | "evidence" | "controls" | "ready";
-export const DECK_SCREENS: DeckScreen[] = ["language", "welcome", "challenge", "pipeline", "proof", "graph", "evidence", "controls", "ready"];
+export type DeckScreen = "language" | "welcome" | "challenge" | "pipeline" | "proof" | "graph" | "result" | "evidence" | "controls" | "ready";
+export const DECK_SCREENS: DeckScreen[] = ["language", "welcome", "challenge", "pipeline", "proof", "graph", "result", "evidence", "controls", "ready"];
+
+/** The parts of the result screen, top to bottom. */
+export type ResultPart = "overview" | "graph" | "details" | "script" | "checks";
 
 export type TourStage = "setup" | "progress" | "results";
-export type TourView = "graph" | "columns" | "code" | "cells" | "mapping" | "verification";
-export type TourAction = "selectExecution" | "startRun" | "awaitResults" | "selectNode" | "selectCell";
+export type TourAction = "selectExecution" | "startRun" | "awaitResults" | "selectNode";
 
 export type TourStepId =
   | "header"
@@ -23,20 +25,17 @@ export type TourStepId =
   | "stages"
   | "console"
   | "meta"
-  | "tabs"
+  | "overview"
   | "graph"
+  | "allColumns"
   | "graphNode"
-  | "columnList"
   | "columnHeader"
   | "aiExplanation"
   | "derivation"
   | "columnLineage"
-  | "code"
-  | "cells"
-  | "provenance"
-  | "mapping"
+  | "values"
+  | "script"
   | "checks"
-  | "matrix"
   | "newRun";
 
 export type TourStepDef = {
@@ -44,8 +43,6 @@ export type TourStepDef = {
   /** data-tour attribute of the element to spotlight. */
   target: string;
   stage: TourStage;
-  /** Result view the step lives on. */
-  view?: TourView;
   /** Steps with an action wait for the user (or "Do it for me"). */
   action?: TourAction;
 };
@@ -60,22 +57,19 @@ export const TOUR_STEPS: TourStepDef[] = [
   { id: "progress", target: "lineage-progress", stage: "progress" },
   { id: "stages", target: "lineage-stages", stage: "progress" },
   { id: "console", target: "lineage-console", stage: "progress", action: "awaitResults" },
-  { id: "meta", target: "lineage-meta", stage: "results", view: "graph" },
-  { id: "tabs", target: "lineage-tabs", stage: "results", view: "graph" },
-  { id: "graph", target: "lineage-graph", stage: "results", view: "graph" },
-  { id: "graphNode", target: "lineage-graph", stage: "results", view: "graph", action: "selectNode" },
-  { id: "columnList", target: "lineage-column-list", stage: "results", view: "columns" },
-  { id: "columnHeader", target: "lineage-column-header", stage: "results", view: "columns" },
-  { id: "aiExplanation", target: "lineage-ai-explanation", stage: "results", view: "columns" },
-  { id: "derivation", target: "lineage-derivation", stage: "results", view: "columns" },
-  { id: "columnLineage", target: "lineage-column-lineage", stage: "results", view: "columns" },
-  { id: "code", target: "lineage-code", stage: "results", view: "code" },
-  { id: "cells", target: "lineage-cells", stage: "results", view: "cells", action: "selectCell" },
-  { id: "provenance", target: "lineage-provenance", stage: "results", view: "cells" },
-  { id: "mapping", target: "lineage-mapping", stage: "results", view: "mapping" },
-  { id: "checks", target: "lineage-checks", stage: "results", view: "verification" },
-  { id: "matrix", target: "lineage-matrix", stage: "results", view: "verification" },
-  { id: "newRun", target: "lineage-new", stage: "results", view: "graph" },
+  { id: "meta", target: "lineage-meta", stage: "results" },
+  { id: "overview", target: "lineage-overview", stage: "results" },
+  { id: "graph", target: "lineage-graph", stage: "results" },
+  { id: "allColumns", target: "lineage-columns", stage: "results" },
+  { id: "graphNode", target: "lineage-graph", stage: "results", action: "selectNode" },
+  { id: "columnHeader", target: "lineage-column-header", stage: "results" },
+  { id: "aiExplanation", target: "lineage-ai-explanation", stage: "results" },
+  { id: "derivation", target: "lineage-derivation", stage: "results" },
+  { id: "columnLineage", target: "lineage-column-lineage", stage: "results" },
+  { id: "values", target: "lineage-values", stage: "results" },
+  { id: "script", target: "lineage-script", stage: "results" },
+  { id: "checks", target: "lineage-checks", stage: "results" },
+  { id: "newRun", target: "lineage-new", stage: "results" },
 ];
 
 type TourText = { chapter: string; title: string; body: string[]; action?: string; empty?: string };
@@ -180,6 +174,14 @@ export type LineageOnboardingCopy = {
     edgesTitle: string;
     edges: { key: "direct" | "indirect" | "lookup"; title: string; text: string }[];
   };
+  result: {
+    eyebrow: string;
+    title: string;
+    intro: string;
+    hint: string;
+    exampleLabel: string;
+    parts: { key: ResultPart; title: string; text: string; example: string[] }[];
+  };
   evidence: {
     eyebrow: string;
     title: string;
@@ -212,8 +214,8 @@ export type LineageOnboardingCopy = {
 
 const EN: LineageOnboardingCopy = {
   ui: {
-    product: "Lineage AI Agent",
-    minutes: "About 10 minutes",
+    product: "Technical Lineage",
+    minutes: "AI agent · about 10 minutes",
     skipIntro: "Skip introduction",
     skipTour: "Skip tour",
     back: "Back",
@@ -231,7 +233,7 @@ const EN: LineageOnboardingCopy = {
     wellDone: "Well done – moving on",
     stepOf: "Step {n} of {total}",
     keyboard: "← → to navigate · Esc to close",
-    chapters: ["Language", "Welcome", "Why it is hard", "How the agent works", "Proof by experiment", "Reading the graph", "Every value has a trail", "Controls", "Ready"],
+    chapters: ["Language", "Welcome", "Why it is hard", "How the agent works", "Proof by experiment", "Reading the graph", "Reading the result", "Every value has a trail", "Controls", "Ready"],
   },
   language: {
     title: "Choose your language",
@@ -252,6 +254,7 @@ const EN: LineageOnboardingCopy = {
       "why reading code by eye misses dependencies",
       "the five stages of the agent and what each one proves",
       "how to read the lineage graph and trace any path",
+      "how the result is laid out – on one screen",
       "how to trace a single value back to its code line",
       "which controls make the result audit-ready",
     ],
@@ -361,7 +364,7 @@ const EN: LineageOnboardingCopy = {
   graph: {
     eyebrow: "Reading the graph",
     title: "Sources on the left, results on the right",
-    intro: "The lineage graph orders columns by dependency. Click any column to light up everything it depends on (gold) and everything that depends on it (blue).",
+    intro: "The lineage graph orders columns by dependency. Click any column to light up everything it depends on (gold) and everything that depends on it (blue) – in the result, its details then open right below the graph.",
     hint: "Click a column in the graph.",
     upstream: "depends on",
     downstream: "used by",
@@ -379,15 +382,29 @@ const EN: LineageOnboardingCopy = {
       { key: "lookup", title: "Lookup", text: "Values pass through a mapping table." },
     ],
   },
+  result: {
+    eyebrow: "The result",
+    title: "One screen, read from top to bottom",
+    intro: "Every analysis opens on the same screen – there are no tabs to switch between. Click a part of the page to see what it shows.",
+    hint: "Click a part of the page.",
+    exampleLabel: "In the RWA_2 analysis",
+    parts: [
+      { key: "overview", title: "What the script does", text: "The AI's summary of the script, the key figures and the script's processing stages – each stage opens the script at its lines.", example: ["13 columns · 12 dependencies · 3 lookup tables", "100 % runtime-verified: 41 of 41 dependencies confirmed", "10 columns explained – all grounded and reviewed"] },
+      { key: "graph", title: "Lineage graph", text: "Every column and lookup table, sources on the left. Click a column: its lineage lights up, and its details open right below the graph.", example: ["Click EAD: everything it depends on turns gold, RWA blue", "Search, filters, colours by role or runtime verification", "Download for draw.io · full screen"] },
+      { key: "details", title: "Details below the graph", text: "With nothing selected, a table of every column. Select one and you get its dossier: the AI explanation, the derivation from the code, inputs and users, lookup tables, its values row by row and the runtime verification.", example: ["All 13 columns with role, meaning, inputs and runtime check", "EAD = EAD if reported, else Assessment Base × CCF", "Row Limit_5 · EAD ∅ → 18,000 (line 37)"] },
+      { key: "script", title: "Script", text: "The code with the AI's stages, collapsed until you need it. The selected column's lines are highlighted, and every line number in the result opens the script right there.", example: ["45 lines – every write marked with its column", "Line 37 → EAD · 5 cells changed"] },
+      { key: "checks", title: "Checks and findings", text: "Nine controls, the findings, the run details and the agent log – collapsed, with the outcome in one line.", example: ["9 of 9 controls passed · 1 finding", "Values emptied by a type conversion – line 9"] },
+    ],
+  },
   evidence: {
     eyebrow: "Every value has a trail",
-    title: "From a column to the line of code – and down to a single cell",
-    intro: "Each column gets a dossier. Click its parts to see what they tell you and how they are verified.",
+    title: "From a column to the line of code – and down to each row's value",
+    intro: "Select a column – in the graph or in the table of all columns – and its dossier opens below the graph. Click its parts to see what they tell you and how they are verified.",
     parts: [
       { key: "explanation", title: "AI explanation", text: "Plain-language summary, written from the verified lineage. Badges show that every cited line and input passed the grounding check and that the second reviewer confirmed it." },
       { key: "formula", title: "Formula", text: "One line that a reviewer can check at a glance. Column names appear as chips – click one to jump to its own dossier." },
       { key: "derivation", title: "Derivation from the code", text: "Every write to the column in execution order, taken directly from the code, with conditions, loop bindings and the number of rows each step changed in the replay." },
-      { key: "cell", title: "Cell trace", text: "Pick any value in the result: you see the line that produced it and the formula evaluated with that row's actual values." },
+      { key: "cell", title: "Values, row by row", text: "Every value of the column in the result, next to its input value. Open a row: you see the line that produced it and the formula evaluated with that row's actual values." },
       { key: "runtime", title: "Runtime verification", text: "Which input columns were proven by probes to influence this column – and any that could not be observed with this data." },
       { key: "finding", title: "Findings", text: "Deterministic observations such as values emptied by a type conversion, categories a lookup does not cover or values that stay empty." },
     ],
@@ -413,7 +430,7 @@ const EN: LineageOnboardingCopy = {
   controls: {
     eyebrow: "Controls",
     title: "Nine controls make the result audit-ready",
-    intro: "Every analysis runs the same deterministic checks. You find them, with their values, in the Verification view and in the Excel export.",
+    intro: "Every analysis runs the same deterministic checks. You find them, with their values, under Checks and findings at the bottom of the result and in the Excel export.",
     rules: [
       { title: "Code parsed", text: "The script is valid Python and every statement was analysed." },
       { title: "Output columns match", text: "The columns derived from the code equal the stored execution's columns." },
@@ -439,9 +456,9 @@ const EN: LineageOnboardingCopy = {
       "choose an execution and start an analysis",
       "watch the five stages and the agent console",
       "trace a column in the lineage graph",
-      "read a column dossier and its derivation",
-      "trace a single cell back to its code line",
-      "check the controls and the dependency matrix",
+      "read a column's explanation and its derivation",
+      "follow its values row by row back to the code line",
+      "find the script, the controls and the findings",
     ],
   },
   tour: {
@@ -483,31 +500,23 @@ const EN: LineageOnboardingCopy = {
       body: ["Every step in plain language: which input moved which outputs, which column was documented, what the reviewer decided."],
       action: "Wait for the analysis to finish – the tour continues by itself as soon as the result is ready.",
     },
-    meta: { chapter: "Results", title: "The analysis at a glance", body: ["Cluster, execution, code file, dataset, runtime and model. Export gives you an Excel workbook and an OpenLineage file for data catalogues – both in the language you are using."] },
-    tabs: { chapter: "Results", title: "Six views on one lineage", body: ["Graph, column dossiers, annotated code, cell trace, mapping table and verification. Results open on the graph; clicking a column, line or cell anywhere takes you to the right view."] },
-    graph: { chapter: "Graph", title: "The lineage graph", body: ["Sources on the left, derived columns on the right. Solid edges carry values, dashed edges are conditions, dotted edges come from lookup tables. Drag the background to pan, drag a node to move it – its connections follow – and scroll to zoom."] },
+    meta: { chapter: "Results", title: "The analysis at a glance", body: ["Cluster, execution, code file, dataset, runtime and model. Export gives you an Excel workbook – with the complete input-to-output mapping, the provenance of every cell and every probe – and an OpenLineage file for data catalogues, both in the language you are using."] },
+    overview: { chapter: "Results", title: "What the script does", body: ["The AI's summary of the script and the key figures: columns, dependencies, how many were confirmed at runtime and how many columns are explained. Below them, the script's processing stages – click one to open the script at that line."] },
+    graph: { chapter: "Results", title: "The lineage graph", body: ["Sources on the left, derived columns on the right. Solid edges carry values, dashed edges are conditions, dotted edges come from lookup tables. Drag the background to pan, drag a node to move it, scroll to zoom; the toolbar finds a column, filters, colours the graph by runtime verification and downloads it for draw.io."] },
+    allColumns: { chapter: "Results", title: "Every column at a glance", body: ["Under the graph: each column with its role, what it means, what it is derived from, the operations applied and whether its dependencies were confirmed at runtime. Click a row – or a node in the graph – to open the column."] },
     graphNode: {
-      chapter: "Graph",
+      chapter: "Results",
       title: "Trace a column",
-      body: ["Selecting a column lights up its complete upstream lineage in gold and its consumers in blue. The panel on the right summarises the column."],
+      body: ["Selecting a column lights up its complete upstream lineage in gold and its consumers in blue – and opens its details right below the graph."],
       action: "Click a derived column such as EAD or RWA.",
     },
-    columnList: { chapter: "Columns", title: "Every column, one dossier each", body: ["Filter by role or search. The tick marks columns whose AI explanation passed the grounding check."] },
-    columnHeader: { chapter: "Columns", title: "The column at a glance", body: ["Role, runtime verification and the operations applied – plus the number of direct inputs, source columns, writes and changed rows."] },
-    aiExplanation: { chapter: "Columns", title: "The AI explanation", body: ["Meaning, summary, formula and rules – every rule cites its code lines and inputs. The badges show the grounding check and the four-eyes review."] },
-    derivation: { chapter: "Columns", title: "Derivation from the code", body: ["The ground truth behind the explanation: every write in execution order, with its condition and how many rows it changed. Expand a step to see the code."] },
-    columnLineage: { chapter: "Columns", title: "Inputs, consumers and sources", body: ["Direct inputs with their OpenLineage transformation type, the columns that use this one, and the input columns it ultimately depends on."] },
-    code: { chapter: "Code", title: "The annotated code", body: ["The script with the AI's processing stages. Every statement shows the columns it writes and how many cells it changed; click a line to inspect it."] },
-    cells: {
-      chapter: "Cell trace",
-      title: "Trace a single value",
-      body: ["Green cells were filled by the script, amber cells were changed, red cells were emptied."],
-      action: "Click a coloured cell, for example in the RWA column.",
-    },
-    provenance: { chapter: "Cell trace", title: "The value's paper trail", body: ["The input value, then every line that changed it – with the formula evaluated on this row's actual values."] },
-    mapping: { chapter: "Mapping", title: "The classic mapping table", body: ["Input → output → function, one row per dependency, with OpenLineage types, code lines and runtime verification – ready for documentation."] },
-    checks: { chapter: "Verification", title: "The nine controls", body: ["Each control with its result and figures. A failed control is never hidden: it is shown here and in the export."] },
-    matrix: { chapter: "Verification", title: "Static versus runtime", body: ["Every derived column against every input column: confirmed by a probe, in the code but not observable with this data, or – rare – found only at runtime."] },
+    columnHeader: { chapter: "Column", title: "The column at a glance", body: ["Role, runtime verification and the operations applied – plus the number of direct inputs, source columns, writes and changed rows. Switch to another column here, or go back to all columns."] },
+    aiExplanation: { chapter: "Column", title: "The AI explanation", body: ["Meaning, summary, formula and rules – every rule cites its code lines and inputs. The badges show the grounding check and the four-eyes review."] },
+    derivation: { chapter: "Column", title: "Derivation from the code", body: ["The ground truth behind the explanation: every write in execution order, with its condition and how many rows it changed. Expand a step to see the code."] },
+    columnLineage: { chapter: "Column", title: "Inputs, consumers and sources", body: ["Direct inputs with their OpenLineage transformation type, the columns that use this one, and the input columns it ultimately depends on."] },
+    values: { chapter: "Column", title: "Values, row by row", body: ["The column's value in every row of the result, next to its input value: green was filled by the script, amber changed, red emptied. Open a row to see every line that changed it, with the formula evaluated on that row's values."] },
+    script: { chapter: "Script", title: "The script", body: ["The code with the AI's processing stages. The selected column's lines are highlighted, and any line number you click elsewhere opens the script right at that line."] },
+    checks: { chapter: "Checks", title: "Checks and findings", body: ["Nine controls with their figures, the findings, the run details and the agent log – one click away. A failed control is never hidden: it is shown here and in the export."] },
     newRun: { chapter: "Done", title: "Your turn", body: ["Start a new analysis on any executed cluster. It takes about a minute; earlier analyses – including the one from this tour – stay in the Runs menu."] },
   },
   complete: {
@@ -515,8 +524,8 @@ const EN: LineageOnboardingCopy = {
     body: "The analysis from this tour is yours: it stays on screen and in the Runs menu. Start the next one with New analysis.",
     tipsTitle: "Good practice",
     tips: [
-      "Start from the Verification view: a failed control tells you where to look first.",
-      "Treat the AI explanation as a summary – the derivation and the cell trace are the evidence.",
+      "Open Checks and findings first: a failed control tells you where to look.",
+      "Treat the AI explanation as a summary – the derivation and the values are the evidence.",
       "Export the Excel workbook to file the lineage with a model validation or audit.",
       "Re-run the analysis after the code of a cluster changes.",
     ],
@@ -525,8 +534,8 @@ const EN: LineageOnboardingCopy = {
 
 const DE: LineageOnboardingCopy = {
   ui: {
-    product: "Herkunfts-KI-Agent",
-    minutes: "Etwa 10 Minuten",
+    product: "Technische Herkunft",
+    minutes: "KI-Agent · etwa 10 Minuten",
     skipIntro: "Einführung überspringen",
     skipTour: "Tour beenden",
     back: "Zurück",
@@ -544,7 +553,7 @@ const DE: LineageOnboardingCopy = {
     wellDone: "Gut gemacht – weiter geht's",
     stepOf: "Schritt {n} von {total}",
     keyboard: "← → zum Blättern · Esc zum Schließen",
-    chapters: ["Sprache", "Willkommen", "Warum es schwer ist", "So arbeitet der Agent", "Beweis durch Experiment", "Den Graphen lesen", "Jeder Wert hat eine Spur", "Kontrollen", "Bereit"],
+    chapters: ["Sprache", "Willkommen", "Warum es schwer ist", "So arbeitet der Agent", "Beweis durch Experiment", "Den Graphen lesen", "Das Ergebnis lesen", "Jeder Wert hat eine Spur", "Kontrollen", "Bereit"],
   },
   language: {
     title: "Wählen Sie Ihre Sprache",
@@ -565,6 +574,7 @@ const DE: LineageOnboardingCopy = {
       "warum das Lesen von Code mit bloßem Auge Abhängigkeiten übersieht",
       "die fünf Stufen des Agenten und was jede belegt",
       "wie Sie den Herkunftsgraphen lesen und jeden Pfad verfolgen",
+      "wie das Ergebnis aufgebaut ist – auf einem Bildschirm",
       "wie Sie einen einzelnen Wert bis zu seiner Codezeile zurückverfolgen",
       "welche Kontrollen das Ergebnis prüfungsfest machen",
     ],
@@ -674,7 +684,7 @@ const DE: LineageOnboardingCopy = {
   graph: {
     eyebrow: "Den Graphen lesen",
     title: "Quellen links, Ergebnisse rechts",
-    intro: "Der Herkunftsgraph ordnet die Spalten nach Abhängigkeit. Klicken Sie auf eine Spalte, um alles hervorzuheben, wovon sie abhängt (gold), und alles, was sie verwendet (blau).",
+    intro: "Der Herkunftsgraph ordnet die Spalten nach Abhängigkeit. Klicken Sie auf eine Spalte, um alles hervorzuheben, wovon sie abhängt (gold), und alles, was sie verwendet (blau) – im Ergebnis öffnen sich ihre Details dann direkt unter dem Graphen.",
     hint: "Klicken Sie im Graphen auf eine Spalte.",
     upstream: "hängt ab von",
     downstream: "verwendet von",
@@ -692,15 +702,29 @@ const DE: LineageOnboardingCopy = {
       { key: "lookup", title: "Mapping", text: "Werte laufen durch eine Zuordnungstabelle." },
     ],
   },
+  result: {
+    eyebrow: "Das Ergebnis",
+    title: "Ein Bildschirm, von oben nach unten gelesen",
+    intro: "Jede Analyse öffnet auf demselben Bildschirm – es gibt keine Reiter, zwischen denen Sie wechseln müssen. Klicken Sie einen Teil der Seite an, um zu sehen, was er zeigt.",
+    hint: "Klicken Sie einen Teil der Seite an.",
+    exampleLabel: "In der Analyse von RWA_2",
+    parts: [
+      { key: "overview", title: "Was das Skript tut", text: "Die Zusammenfassung des Skripts durch die KI, die wichtigsten Kennzahlen und die Verarbeitungsstufen des Skripts – jede Stufe öffnet das Skript an ihren Zeilen.", example: ["13 Spalten · 12 Abhängigkeiten · 3 Mapping-Tabellen", "100 % zur Laufzeit bestätigt: 41 von 41 Abhängigkeiten", "10 Spalten erläutert – alle belegt und geprüft"] },
+      { key: "graph", title: "Herkunftsgraph", text: "Jede Spalte und jede Mapping-Tabelle, Quellen links. Ein Klick auf eine Spalte lässt ihre Herkunft aufleuchten und öffnet ihre Details direkt unter dem Graphen.", example: ["Klick auf EAD: alles, wovon EAD abhängt, wird gold, RWA blau", "Suche, Filter, Färbung nach Rolle oder Laufzeitbestätigung", "Download für draw.io · Vollbild"] },
+      { key: "details", title: "Details unter dem Graphen", text: "Ohne Auswahl eine Tabelle aller Spalten. Wählen Sie eine aus, erhalten Sie ihr Dossier: KI-Erläuterung, Ableitung aus dem Code, Eingaben und Verwender, Mapping-Tabellen, ihre Werte Zeile für Zeile und die Laufzeitbestätigung.", example: ["Alle 13 Spalten mit Rolle, Bedeutung, Eingaben und Laufzeitprüfung", "EAD = EAD, falls gemeldet, sonst Assessment Base × CCF", "Zeile Limit_5 · EAD ∅ → 18.000 (Codezeile 37)"] },
+      { key: "script", title: "Skript", text: "Der Code mit den Stufen der KI, eingeklappt, bis Sie ihn brauchen. Die Zeilen der ausgewählten Spalte sind hervorgehoben, und jede Zeilennummer im Ergebnis öffnet das Skript genau dort.", example: ["45 Zeilen – jeder Schreibzugriff mit seiner Spalte markiert", "Zeile 37 → EAD · 5 Zellen geändert"] },
+      { key: "checks", title: "Prüfungen und Befunde", text: "Neun Kontrollen, die Befunde, die Laufdetails und das Agentenprotokoll – eingeklappt, mit dem Ergebnis in einer Zeile.", example: ["9 von 9 Kontrollen bestanden · 1 Befund", "Werte durch Typkonvertierung geleert – Zeile 9"] },
+    ],
+  },
   evidence: {
     eyebrow: "Jeder Wert hat eine Spur",
-    title: "Von der Spalte zur Codezeile – bis hinunter zur einzelnen Zelle",
-    intro: "Jede Spalte erhält ein Dossier. Klicken Sie auf seine Teile, um zu sehen, was sie aussagen und wie sie geprüft werden.",
+    title: "Von der Spalte zur Codezeile – bis hinunter zum Wert jeder Zeile",
+    intro: "Wählen Sie eine Spalte – im Graphen oder in der Tabelle aller Spalten –, und ihr Dossier öffnet sich unter dem Graphen. Klicken Sie auf seine Teile, um zu sehen, was sie aussagen und wie sie geprüft werden.",
     parts: [
       { key: "explanation", title: "KI-Erläuterung", text: "Zusammenfassung in verständlicher Sprache, verfasst aus der verifizierten Herkunft. Die Abzeichen zeigen, dass jede zitierte Zeile und Eingabe die Belegprüfung bestanden hat und der zweite Prüfer bestätigt hat." },
       { key: "formula", title: "Formel", text: "Eine Zeile, die sich auf einen Blick prüfen lässt. Spaltennamen erscheinen als Chips – ein Klick öffnet deren eigenes Dossier." },
       { key: "derivation", title: "Ableitung aus dem Code", text: "Jeder Schreibzugriff auf die Spalte in Ausführungsreihenfolge, direkt aus dem Code, mit Bedingungen, Schleifenbindungen und der Zahl der Zeilen, die jeder Schritt in der Wiederholung geändert hat." },
-      { key: "cell", title: "Zellverfolgung", text: "Wählen Sie einen beliebigen Ergebniswert: Sie sehen die Zeile, die ihn erzeugt hat, und die Formel, ausgewertet mit den echten Werten dieser Zeile." },
+      { key: "cell", title: "Werte, Zeile für Zeile", text: "Jeder Wert der Spalte im Ergebnis, neben ihrem Eingabewert. Eine Zeile aufklappen: Sie sehen die Codezeile, die ihn erzeugt hat, und die Formel, ausgewertet mit den echten Werten dieser Zeile." },
       { key: "runtime", title: "Laufzeitbestätigung", text: "Welche Eingabespalten diese Spalte nachweislich beeinflussen – und welche sich mit diesen Daten nicht beobachten ließen." },
       { key: "finding", title: "Befunde", text: "Deterministische Beobachtungen wie durch Typkonvertierung geleerte Werte, Kategorien ohne Zuordnung oder Werte, die leer bleiben." },
     ],
@@ -726,7 +750,7 @@ const DE: LineageOnboardingCopy = {
   controls: {
     eyebrow: "Kontrollen",
     title: "Neun Kontrollen machen das Ergebnis prüfungsfest",
-    intro: "Jede Analyse führt dieselben deterministischen Prüfungen aus. Sie finden sie mit ihren Werten in der Ansicht „Verifikation“ und im Excel-Export.",
+    intro: "Jede Analyse führt dieselben deterministischen Prüfungen aus. Sie finden sie mit ihren Werten unter „Prüfungen und Befunde“ ganz unten im Ergebnis und im Excel-Export.",
     rules: [
       { title: "Code eingelesen", text: "Das Skript ist gültiges Python und jede Anweisung wurde analysiert." },
       { title: "Ausgabespalten stimmen", text: "Die aus dem Code abgeleiteten Spalten entsprechen denen der gespeicherten Ausführung." },
@@ -752,9 +776,9 @@ const DE: LineageOnboardingCopy = {
       "eine Ausführung wählen und eine Analyse starten",
       "die fünf Stufen und die Agentenkonsole verfolgen",
       "eine Spalte im Herkunftsgraphen verfolgen",
-      "ein Spaltendossier und seine Ableitung lesen",
-      "eine einzelne Zelle bis zu ihrer Codezeile zurückverfolgen",
-      "die Kontrollen und die Abhängigkeitsmatrix prüfen",
+      "die Erläuterung einer Spalte und ihre Ableitung lesen",
+      "ihre Werte Zeile für Zeile bis zur Codezeile zurückverfolgen",
+      "Skript, Kontrollen und Befunde finden",
     ],
   },
   tour: {
@@ -796,31 +820,23 @@ const DE: LineageOnboardingCopy = {
       body: ["Jeder Schritt in verständlicher Sprache: welche Eingabe welche Ausgaben bewegt hat, welche Spalte dokumentiert wurde, wie der Prüfer entschieden hat."],
       action: "Warten Sie, bis die Analyse fertig ist – die Tour geht von selbst weiter, sobald das Ergebnis vorliegt.",
     },
-    meta: { chapter: "Ergebnisse", title: "Die Analyse auf einen Blick", body: ["Cluster, Ausführung, Codedatei, Datensatz, Laufzeit und Modell. „Export“ liefert eine Excel-Arbeitsmappe und eine OpenLineage-Datei für Datenkataloge – beide in Ihrer Sprache."] },
-    tabs: { chapter: "Ergebnisse", title: "Sechs Ansichten auf eine Herkunft", body: ["Graph, Spaltendossiers, kommentierter Code, Zellverfolgung, Zuordnungstabelle und Verifikation. Ergebnisse öffnen im Graph; ein Klick auf eine Spalte, Zeile oder Zelle führt überall zur passenden Ansicht."] },
-    graph: { chapter: "Graph", title: "Der Herkunftsgraph", body: ["Quellen links, abgeleitete Spalten rechts. Durchgezogene Kanten tragen Werte, gestrichelte sind Bedingungen, gepunktete kommen aus Mapping-Tabellen. Hintergrund ziehen verschiebt die Ansicht, einen Knoten ziehen versetzt ihn – seine Verbindungen folgen –, Scrollen zoomt."] },
+    meta: { chapter: "Ergebnisse", title: "Die Analyse auf einen Blick", body: ["Cluster, Ausführung, Codedatei, Datensatz, Laufzeit und Modell. „Export“ liefert eine Excel-Arbeitsmappe – mit der vollständigen Zuordnung von Eingaben zu Ausgaben, der Herkunft jeder Zelle und jedem Test – und eine OpenLineage-Datei für Datenkataloge, beide in Ihrer Sprache."] },
+    overview: { chapter: "Ergebnisse", title: "Was das Skript tut", body: ["Die Zusammenfassung des Skripts durch die KI und die wichtigsten Kennzahlen: Spalten, Abhängigkeiten, wie viele davon zur Laufzeit bestätigt wurden und wie viele Spalten erläutert sind. Darunter die Verarbeitungsstufen des Skripts – ein Klick öffnet das Skript an dieser Zeile."] },
+    graph: { chapter: "Ergebnisse", title: "Der Herkunftsgraph", body: ["Quellen links, abgeleitete Spalten rechts. Durchgezogene Kanten tragen Werte, gestrichelte sind Bedingungen, gepunktete kommen aus Mapping-Tabellen. Hintergrund ziehen verschiebt die Ansicht, einen Knoten ziehen versetzt ihn, Scrollen zoomt; die Werkzeugleiste sucht eine Spalte, filtert, färbt den Graphen nach Laufzeitbestätigung und lädt ihn für draw.io herunter."] },
+    allColumns: { chapter: "Ergebnisse", title: "Alle Spalten auf einen Blick", body: ["Unter dem Graphen: jede Spalte mit ihrer Rolle, ihrer Bedeutung, woraus sie abgeleitet wird, den angewandten Operationen und ob ihre Abhängigkeiten zur Laufzeit bestätigt wurden. Ein Klick auf eine Zeile – oder auf einen Knoten im Graphen – öffnet die Spalte."] },
     graphNode: {
-      chapter: "Graph",
+      chapter: "Ergebnisse",
       title: "Eine Spalte verfolgen",
-      body: ["Eine ausgewählte Spalte zeigt ihre gesamte Herkunft in Gold und ihre Verwender in Blau. Das Feld rechts fasst die Spalte zusammen."],
+      body: ["Eine ausgewählte Spalte zeigt ihre gesamte Herkunft in Gold und ihre Verwender in Blau – und öffnet ihre Details direkt unter dem Graphen."],
       action: "Klicken Sie auf eine abgeleitete Spalte wie EAD oder RWA.",
     },
-    columnList: { chapter: "Spalten", title: "Jede Spalte, je ein Dossier", body: ["Nach Rolle filtern oder suchen. Das Häkchen markiert Spalten, deren KI-Erläuterung die Belegprüfung bestanden hat."] },
-    columnHeader: { chapter: "Spalten", title: "Die Spalte auf einen Blick", body: ["Rolle, Laufzeitbestätigung und angewandte Operationen – dazu die Zahl der direkten Eingaben, Quellspalten, Schreibzugriffe und geänderten Zeilen."] },
-    aiExplanation: { chapter: "Spalten", title: "Die KI-Erläuterung", body: ["Bedeutung, Zusammenfassung, Formel und Regeln – jede Regel nennt ihre Codezeilen und Eingaben. Die Abzeichen zeigen Belegprüfung und Vier-Augen-Prüfung."] },
-    derivation: { chapter: "Spalten", title: "Ableitung aus dem Code", body: ["Die Grundlage der Erläuterung: jeder Schreibzugriff in Ausführungsreihenfolge, mit Bedingung und der Zahl geänderter Zeilen. Einen Schritt aufklappen, um den Code zu sehen."] },
-    columnLineage: { chapter: "Spalten", title: "Eingaben, Verwender und Quellen", body: ["Direkte Eingaben mit ihrem OpenLineage-Transformationstyp, die Spalten, die diese verwenden, und die Eingabespalten, von denen sie letztlich abhängt."] },
-    code: { chapter: "Code", title: "Der kommentierte Code", body: ["Das Skript mit den Verarbeitungsstufen der KI. Jede Anweisung zeigt die geschriebenen Spalten und wie viele Zellen sie geändert hat; ein Klick auf eine Zeile öffnet den Inspektor."] },
-    cells: {
-      chapter: "Zellverfolgung",
-      title: "Einen einzelnen Wert verfolgen",
-      body: ["Grüne Zellen hat das Skript gefüllt, gelbe geändert, rote geleert."],
-      action: "Klicken Sie auf eine farbige Zelle, zum Beispiel in der Spalte RWA.",
-    },
-    provenance: { chapter: "Zellverfolgung", title: "Die Spur des Wertes", body: ["Der Eingabewert, dann jede Zeile, die ihn geändert hat – mit der Formel, ausgewertet auf den echten Werten dieser Zeile."] },
-    mapping: { chapter: "Zuordnung", title: "Die klassische Zuordnungstabelle", body: ["Eingabe → Ausgabe → Funktion, eine Zeile je Abhängigkeit, mit OpenLineage-Typen, Codezeilen und Laufzeitbestätigung – bereit für die Dokumentation."] },
-    checks: { chapter: "Verifikation", title: "Die neun Kontrollen", body: ["Jede Kontrolle mit Ergebnis und Kennzahlen. Eine nicht bestandene Kontrolle wird nie versteckt: Sie erscheint hier und im Export."] },
-    matrix: { chapter: "Verifikation", title: "Statisch gegen Laufzeit", body: ["Jede abgeleitete Spalte gegen jede Eingabespalte: durch einen Test bestätigt, im Code aber mit diesen Daten nicht beobachtbar, oder – selten – nur zur Laufzeit gefunden."] },
+    columnHeader: { chapter: "Spalte", title: "Die Spalte auf einen Blick", body: ["Rolle, Laufzeitbestätigung und angewandte Operationen – dazu die Zahl der direkten Eingaben, Quellspalten, Schreibzugriffe und geänderten Zeilen. Hier wechseln Sie zu einer anderen Spalte oder zurück zu allen Spalten."] },
+    aiExplanation: { chapter: "Spalte", title: "Die KI-Erläuterung", body: ["Bedeutung, Zusammenfassung, Formel und Regeln – jede Regel nennt ihre Codezeilen und Eingaben. Die Abzeichen zeigen Belegprüfung und Vier-Augen-Prüfung."] },
+    derivation: { chapter: "Spalte", title: "Ableitung aus dem Code", body: ["Die Grundlage der Erläuterung: jeder Schreibzugriff in Ausführungsreihenfolge, mit Bedingung und der Zahl geänderter Zeilen. Einen Schritt aufklappen, um den Code zu sehen."] },
+    columnLineage: { chapter: "Spalte", title: "Eingaben, Verwender und Quellen", body: ["Direkte Eingaben mit ihrem OpenLineage-Transformationstyp, die Spalten, die diese verwenden, und die Eingabespalten, von denen sie letztlich abhängt."] },
+    values: { chapter: "Spalte", title: "Werte, Zeile für Zeile", body: ["Der Wert der Spalte in jeder Zeile des Ergebnisses, neben ihrem Eingabewert: Grün hat das Skript gefüllt, Gelb geändert, Rot geleert. Eine Zeile aufklappen zeigt jede Codezeile, die den Wert geändert hat – mit der Formel, ausgewertet auf den Werten dieser Zeile."] },
+    script: { chapter: "Skript", title: "Das Skript", body: ["Der Code mit den Verarbeitungsstufen der KI. Die Zeilen der ausgewählten Spalte sind hervorgehoben, und jede Zeilennummer, die Sie anderswo anklicken, öffnet das Skript genau an dieser Zeile."] },
+    checks: { chapter: "Prüfungen", title: "Prüfungen und Befunde", body: ["Neun Kontrollen mit ihren Kennzahlen, die Befunde, die Laufdetails und das Agentenprotokoll – einen Klick entfernt. Eine nicht bestandene Kontrolle wird nie versteckt: Sie erscheint hier und im Export."] },
     newRun: { chapter: "Fertig", title: "Jetzt Sie", body: ["Starten Sie eine neue Analyse für einen beliebigen ausgeführten Cluster. Sie dauert etwa eine Minute; frühere Analysen – auch die aus dieser Tour – bleiben im Menü „Analysen“."] },
   },
   complete: {
@@ -828,8 +844,8 @@ const DE: LineageOnboardingCopy = {
     body: "Die Analyse aus dieser Tour gehört Ihnen: Sie bleibt auf dem Bildschirm und im Menü „Analysen“. Die nächste starten Sie mit „Neue Analyse“.",
     tipsTitle: "Gute Praxis",
     tips: [
-      "Beginnen Sie mit der Ansicht „Verifikation“: Eine nicht bestandene Kontrolle zeigt, wo Sie zuerst hinsehen sollten.",
-      "Verstehen Sie die KI-Erläuterung als Zusammenfassung – Ableitung und Zellverfolgung sind die Belege.",
+      "Öffnen Sie zuerst „Prüfungen und Befunde“: Eine nicht bestandene Kontrolle zeigt, wo Sie hinsehen sollten.",
+      "Verstehen Sie die KI-Erläuterung als Zusammenfassung – Ableitung und Werte sind die Belege.",
       "Exportieren Sie die Excel-Arbeitsmappe, um die Herkunft bei einer Modellvalidierung oder Prüfung abzulegen.",
       "Wiederholen Sie die Analyse, wenn sich der Code eines Clusters ändert.",
     ],

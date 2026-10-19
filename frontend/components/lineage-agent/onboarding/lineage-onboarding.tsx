@@ -51,10 +51,9 @@ import {
   type LineageOnboardingCopy,
   type TourStage,
   type TourStepDef,
-  type TourView,
 } from "./lineage-onboarding-content";
 
-export const LINEAGE_ONBOARDING_STORAGE_KEY = "dataflow_lineage_onboarding_v1";
+export const LINEAGE_ONBOARDING_STORAGE_KEY = "dataflow_lineage_onboarding_v2";
 
 /** What the tour needs from the lineage tab: its state and the actions it may perform for the user. */
 export type LineageTourController = {
@@ -65,21 +64,26 @@ export type LineageTourController = {
   tourRunError: string | null;
   executionsAvailable: boolean;
   executionSelected: boolean;
+  /** A column is selected: its details are shown under the graph. */
   nodeSelected: boolean;
-  cellSelected: boolean;
   showSetup: () => void;
   /** Bring the progress view of the tour's analysis on screen; it stays there (also once finished) until a results step. */
   showProgress: () => void;
-  /** Bring the tour's finished analysis on screen in the given view. */
-  showResults: (view: TourView) => void;
+  /** Bring the tour's finished analysis on screen. */
+  showResults: () => void;
   selectFirstExecution: () => void;
   /** Start the real analysis of the selected execution. */
   startRun: () => void;
+  /** Select the most instructive column (its details open under the graph). */
   selectNode: () => void;
-  selectCell: () => void;
+  /** Clear the selection: every column at a glance under the graph. */
+  clearNode: () => void;
 };
 
 type Phase = "deck" | "tour" | "complete";
+
+/** Tour steps about the selected column's details. */
+const COLUMN_STEPS = new Set(["columnHeader", "aiExplanation", "derivation", "columnLineage", "values"]);
 
 export function LineageOnboarding({
   open,
@@ -278,6 +282,7 @@ function WelcomeDeck({
               {screen === "pipeline" ? <PipelineScreen copy={copy} /> : null}
               {screen === "proof" ? <ProofScreen copy={copy} /> : null}
               {screen === "graph" ? <GraphScreen copy={copy} /> : null}
+              {screen === "result" ? <ResultScreen copy={copy} /> : null}
               {screen === "evidence" ? <EvidenceScreen copy={copy} language={language} /> : null}
               {screen === "controls" ? <ControlsScreen copy={copy} /> : null}
               {screen === "ready" ? <ReadyScreen copy={copy} onStart={startTour} /> : null}
@@ -820,6 +825,122 @@ function GraphScreen({ copy }: { copy: LineageOnboardingCopy }) {
   );
 }
 
+/** The result screen as a clickable sketch: the parts of the one page, top to bottom, and what each shows. */
+function ResultScreen({ copy }: { copy: LineageOnboardingCopy }) {
+  const { result } = copy;
+  const { active, setActive, playing, setPlaying } = usePlayer(result.parts.length, 5600);
+  const part = result.parts[active];
+  return (
+    <div>
+      <div className="flex items-end justify-between gap-6">
+        <ScreenHeading eyebrow={result.eyebrow} title={result.title} intro={result.intro} />
+        <PlayToggle playing={playing} onToggle={() => setPlaying((current) => !current)} play={copy.pipeline.play} pause={copy.pipeline.pause} />
+      </div>
+      <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
+        <div className="ob-rise space-y-1.5 rounded-2xl border border-[#1f2630] bg-[#06090d] p-3" style={{ animationDelay: "120ms" }}>
+          {result.parts.map((item, index) => (
+            <button
+              key={item.key}
+              type="button"
+              aria-pressed={index === active}
+              onClick={() => {
+                setActive(index);
+                setPlaying(false);
+              }}
+              className={cn(
+                "block w-full rounded-lg border px-3 py-2 text-left transition-all duration-300",
+                index === active ? "border-[#f5c400]/70 bg-[#f5c400]/[0.06] shadow-[0_0_0_1px_rgba(245,196,0,0.2)]" : "border-[#1f2630] bg-[#0b1017] hover:border-[#303845]",
+              )}
+            >
+              <span className={cn("flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.16em]", index === active ? "text-[#f5c400]" : "text-[#687386]")}>
+                <span className={cn("flex h-4 w-4 items-center justify-center rounded-full text-[9px]", index === active ? "bg-[#f5c400] text-black" : "bg-[#1c222b] text-[#8c96a8]")}>{index + 1}</span>
+                {item.title}
+              </span>
+              <ResultSketch kind={item.key} />
+            </button>
+          ))}
+          <p className="flex items-center gap-1.5 px-1 pt-1 text-[11px] text-[#687386]"><MousePointerClick className="h-3.5 w-3.5 text-[#f5c400]" />{result.hint}</p>
+        </div>
+        <div key={part.key} className="ob-rise self-start rounded-2xl border border-[#1f2630] bg-[#0b1017] p-5">
+          <p className="text-[10.5px] font-semibold uppercase tracking-[0.2em] text-[#f5c400]">{active + 1} / {result.parts.length}</p>
+          <h3 className="mt-1.5 text-lg font-semibold text-white">{part.title}</h3>
+          <p className="mt-2 text-sm leading-7 text-[#c2cad5]">{part.text}</p>
+          <div className="mt-4 rounded-xl border border-[#252a33] bg-[#05080c] p-4">
+            <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#687386]">{result.exampleLabel}</p>
+            {part.example.map((line, lineIndex) => (
+              <p key={lineIndex} className="ob-rise font-mono text-[12px] leading-6 text-[#e5e9ef]" style={{ animationDelay: `${160 + lineIndex * 220}ms` }}>
+                <span className="mr-1.5 text-[#f5c400]">›</span>
+                {line}
+              </p>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** A wireframe of one part of the result screen. */
+function ResultSketch({ kind }: { kind: "overview" | "graph" | "details" | "script" | "checks" }) {
+  const bar = "block h-1.5 rounded-full bg-[#1f2630]";
+  if (kind === "overview") {
+    return (
+      <span className="mt-2 block">
+        <span className={cn(bar, "w-11/12")} />
+        <span className={cn(bar, "mt-1 w-3/4")} />
+        <span className="mt-2 grid grid-cols-4 gap-1.5">
+          {["13", "12", "100 %", "10"].map((value) => (
+            <span key={value} className="rounded border border-[#1f2630] bg-[#0f141b] px-1.5 py-1 font-mono text-[10px] font-semibold text-white">{value}</span>
+          ))}
+        </span>
+      </span>
+    );
+  }
+  if (kind === "graph") {
+    const nodes: [number, number, string][] = [[4, 6, "#64748b"], [4, 34, "#22d3ee"], [92, 6, "#34d399"], [92, 34, "#34d399"], [180, 20, "#34d399"], [268, 20, "#34d399"]];
+    const links: [number, number][] = [[0, 2], [1, 3], [2, 4], [3, 4], [4, 5]];
+    return (
+      <svg viewBox="0 0 330 56" className="mt-2 block h-auto w-full" aria-hidden="true">
+        {links.map(([from, to]) => {
+          const [fx, fy] = nodes[from];
+          const [tx, ty] = nodes[to];
+          return <path key={`${from}-${to}`} d={`M ${fx + 58} ${fy + 8} C ${fx + 74} ${fy + 8}, ${tx - 16} ${ty + 8}, ${tx} ${ty + 8}`} fill="none" stroke="#3a4553" strokeWidth={1.4} />;
+        })}
+        {nodes.map(([x, y, color], index) => (
+          <g key={index}>
+            <rect x={x} y={y} width={58} height={16} rx={4} fill="#0f141b" stroke={index === 4 ? "#f5c400" : "#2a313c"} strokeWidth={index === 4 ? 1.4 : 1} />
+            <rect x={x} y={y + 3} width={2} height={10} rx={1} fill={color} />
+          </g>
+        ))}
+      </svg>
+    );
+  }
+  if (kind === "details") {
+    return (
+      <span className="mt-2 grid grid-cols-2 gap-2">
+        <span className="space-y-1 rounded border border-[#1f2630] bg-[#0f141b] p-1.5">
+          <span className="block font-mono text-[10px] font-semibold text-[#f5c400]">EAD</span>
+          <span className={cn(bar, "w-full")} />
+          <span className={cn(bar, "w-4/5")} />
+          <span className={cn(bar, "w-2/3")} />
+        </span>
+        <span className="space-y-1 rounded border border-[#1f2630] bg-[#0f141b] p-1.5">
+          {["Limit_5", "Loan_1", "Deposit_2"].map((row) => (
+            <span key={row} className="flex items-center justify-between font-mono text-[9px] text-[#8c96a8]"><span>{row}</span><span className="h-1.5 w-8 rounded-full bg-emerald-400/40" /></span>
+          ))}
+        </span>
+      </span>
+    );
+  }
+  return (
+    <span className="mt-1.5 flex items-center gap-2 rounded border border-[#1f2630] bg-[#0f141b] px-2 py-1">
+      <ArrowRight className="h-3 w-3 text-[#5d6878]" />
+      <span className={cn(bar, "w-1/3")} />
+      {kind === "checks" && <span className="ml-auto font-mono text-[9.5px] text-emerald-300">9 / 9</span>}
+    </span>
+  );
+}
+
 function EvidenceScreen({ copy, language }: { copy: LineageOnboardingCopy; language: LineageLocale }) {
   const { evidence } = copy;
   const mock = evidence.mock;
@@ -1063,8 +1184,6 @@ function SpotlightTour({
         return current.tourRun === "done";
       case "selectNode":
         return current.nodeSelected;
-      case "selectCell":
-        return current.cellSelected;
       default:
         return true;
     }
@@ -1089,9 +1208,10 @@ function SpotlightTour({
     const current = controllerRef.current;
     if (step.stage === "setup" && current.stage !== "setup") current.showSetup();
     if (step.stage === "progress") current.showProgress();
-    if (step.stage === "results") current.showResults(step.view ?? "graph");
-    // The provenance panel exists only for a selected cell.
-    if (step.id === "provenance" && !current.cellSelected) current.selectCell();
+    if (step.stage === "results") current.showResults();
+    // The table of all columns shows while nothing is selected; the steps about one column need a selected column.
+    if (step.id === "allColumns" && current.nodeSelected) current.clearNode();
+    if (COLUMN_STEPS.has(step.id) && !current.nodeSelected) current.selectNode();
     const timer = window.setTimeout(() => {
       const element = findTarget(step);
       if (!element) return;
@@ -1183,7 +1303,6 @@ function SpotlightTour({
     if (step.action === "selectExecution") current.selectFirstExecution();
     if (step.action === "startRun") current.startRun();
     if (step.action === "selectNode") current.selectNode();
-    if (step.action === "selectCell") current.selectCell();
   };
 
   useEffect(() => {

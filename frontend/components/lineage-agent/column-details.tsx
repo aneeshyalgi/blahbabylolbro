@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import {
-  ArrowRight, BadgeCheck, Bot, ChevronDown, ChevronRight, Database, GitBranch, History, ListChecks, Search, ShieldCheck, Sparkles, Table2, UserCheck,
+  ArrowLeft, ArrowRight, BadgeCheck, Bot, ChevronDown, ChevronRight, Code2, Database, GitBranch, History, Layers, Rows3, ShieldCheck, Sparkles, Table2, UserCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -12,135 +12,127 @@ import {
 } from "./atoms";
 import { FindingCard } from "./findings";
 import type { Model } from "./model";
-import type { ColumnDoc, GroundingIssue, LineageColumn, Navigator, Role, Rule } from "./types";
+import type { ColumnDoc, GroundingIssue, LineageColumn, Navigator, Rule } from "./types";
 
-const FILTERS = ["all", "derived", "created", "passthrough"] as const;
-type Filter = (typeof FILTERS)[number];
+/** The columns in the order of the result: output columns first, then helper columns the script drops. */
+function orderedColumns(model: Model): LineageColumn[] {
+  return [...model.analysis.columns.filter((column) => column.in_output), ...model.analysis.columns.filter((column) => !column.in_output)];
+}
 
-export function ColumnsView({ model, selected, onSelect, nav }: { model: Model; selected: string | null; onSelect: (column: string) => void; nav: Navigator }) {
+/* ---------------------------------------------------------------------------------------------------------------- */
+/* Every column at a glance (nothing selected)                                                                      */
+/* ---------------------------------------------------------------------------------------------------------------- */
+
+export function AllColumns({ model, nav }: { model: Model; nav: Navigator }) {
   const t = useTranslations("lineageAgent.columns");
-  const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<Filter>("all");
-  const columns = useMemo(() => {
-    const output = model.analysis.columns.filter((column) => column.in_output);
-    const others = model.analysis.columns.filter((column) => !column.in_output);
-    return [...output, ...others];
-  }, [model]);
-  const visible = columns.filter((column) => {
-    if (query.trim() && !column.name.toLowerCase().includes(query.trim().toLowerCase())) return false;
-    if (filter === "derived") return ["cast", "enriched", "overwritten"].includes(column.role);
-    if (filter === "created") return ["created", "renamed"].includes(column.role);
-    if (filter === "passthrough") return ["passthrough", "dropped", "intermediate"].includes(column.role);
-    return true;
-  });
-  const current = (selected && model.byName.get(selected)) || columns.find((column) => column.role !== "passthrough") || columns[0];
-  const counts: Record<Filter, number> = {
-    all: columns.length,
-    derived: columns.filter((column) => ["cast", "enriched", "overwritten"].includes(column.role)).length,
-    created: columns.filter((column) => ["created", "renamed"].includes(column.role)).length,
-    passthrough: columns.filter((column) => ["passthrough", "dropped", "intermediate"].includes(column.role)).length,
-  };
-
+  const columns = orderedColumns(model);
   return (
-    <div className="grid gap-4 xl:grid-cols-[300px_minmax(0,1fr)]">
-      <aside data-tour="lineage-column-list" className={cn(PANEL, "flex h-fit flex-col xl:sticky xl:top-4 xl:max-h-[calc(100vh-120px)]")}>
-        <div className="space-y-2.5 border-b border-[#1f252e] p-3">
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#5d6878]" />
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder={t("search")}
-              className="h-8 w-full rounded-md border border-[#252a33] bg-[#0f141b] pl-8 pr-2 text-[12px] text-white outline-none placeholder:text-[#5d6878] focus:border-[#f5c400]/50"
-            />
-          </div>
-          <div className="flex flex-wrap gap-1">
-            {FILTERS.map((item) => (
-              <button
-                key={item}
-                type="button"
-                onClick={() => setFilter(item)}
-                className={cn("rounded-full border px-2 py-0.5 text-[11px]", filter === item ? "border-[#f5c400]/40 bg-[#f5c400]/10 text-[#f5c400]" : "border-[#252a33] text-[#8c96a8] hover:text-white")}
-              >
-                {t(`filter.${item}`)} <span className="tabular-nums opacity-70">{counts[item]}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-        <ul className="min-h-0 flex-1 overflow-y-auto p-1.5">
-          {visible.map((column) => {
-            const active = current?.name === column.name;
-            const doc = model.result.ai.columns[column.name];
-            return (
-              <li key={column.name}>
-                <button
-                  type="button"
-                  onClick={() => onSelect(column.name)}
-                  className={cn("group flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left transition-colors", active ? "bg-[#f5c400]/10" : "hover:bg-[#121821]")}
-                >
-                  <span className="h-7 w-[3px] shrink-0 rounded-full" style={{ background: ROLE_STYLES[column.role].bar }} />
-                  <span className="min-w-0 flex-1">
-                    <span className={cn("block truncate font-mono text-[12.5px]", active ? "text-[#f5c400]" : "text-[#e5e9f0]")}>{column.name}</span>
-                    <span className="mt-0.5 block truncate text-[10.5px] text-[#687386]">
-                      {t(`roleShort.${column.role}`)}
-                      {column.upstream.length > 0 && ` · ${t("inputsCount", { count: column.upstream.length })}`}
+    <section data-tour="lineage-columns" className={cn(PANEL, "overflow-hidden")}>
+      <div className="px-5 pb-3 pt-4">
+        <SectionTitle icon={<Layers className="h-4 w-4 text-[#f5c400]" />} title={t("all.title", { count: columns.length })} hint={t("all.hint")} />
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-[12px]">
+          <thead className="border-y border-[#1f252e] bg-[#0f141b] text-left text-[10px] uppercase tracking-wide text-[#687386]">
+            <tr>
+              <th className="px-5 py-2 font-semibold">{t("all.column")}</th>
+              <th className="px-3 py-2 font-semibold">{t("all.meaning")}</th>
+              <th className="px-3 py-2 font-semibold">{t("all.from")}</th>
+              <th className="px-3 py-2 font-semibold">{t("all.operations")}</th>
+              <th className="px-5 py-2 font-semibold">{t("all.runtime")}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {columns.map((column) => {
+              const doc = model.result.ai.columns[column.name];
+              const text = doc?.meaning || doc?.summary || "";
+              const muted = column.role === "passthrough" || !column.in_output;
+              return (
+                <tr key={column.name} data-column={column.name} onClick={() => nav.openColumn(column.name)} className="cursor-pointer border-b border-[#151b23] align-top transition-colors last:border-b-0 hover:bg-white/[0.025]">
+                  <td className="px-5 py-2.5">
+                    <span className="flex items-start gap-2.5">
+                      <span className="mt-0.5 h-8 w-[3px] shrink-0 rounded-full" style={{ background: ROLE_STYLES[column.role].bar }} />
+                      <span className="min-w-0">
+                        <span className={cn("block font-mono text-[12.5px] font-medium", muted ? "text-[#aab3c2]" : "text-white")}>{column.name}</span>
+                        <RoleBadge role={column.role} className="mt-1" />
+                      </span>
                     </span>
-                  </span>
-                  {doc?.grounding?.status === "verified" && <BadgeCheck className="h-3.5 w-3.5 shrink-0 text-emerald-400/80" />}
-                </button>
-              </li>
-            );
-          })}
-          {!visible.length && <li className="px-3 py-6 text-center text-[12px] text-[#687386]">{t("noMatch")}</li>}
-        </ul>
-      </aside>
-      {current && <ColumnDetail key={current.name} model={model} column={current} nav={nav} />}
-    </div>
+                  </td>
+                  <td className="max-w-[420px] px-3 py-2.5">
+                    <span className="line-clamp-2 leading-relaxed text-[#c2cad5]">{text ? plainText(text, model.columnNames) : column.role === "passthrough" ? t("passthroughText") : "—"}</span>
+                  </td>
+                  <td className="px-3 py-2.5">
+                    <span className="flex max-w-[300px] flex-wrap gap-1">
+                      {column.upstream.map((entry) => <ColumnChip key={entry.column} name={entry.column} muted />)}
+                      {column.lookups.map((name) => <span key={name} className="inline-flex items-center gap-1 rounded-md border border-dashed border-violet-400/30 px-1.5 py-[1px] font-mono text-[10.5px] text-violet-200"><Table2 className="h-3 w-3" />{name}</span>)}
+                      {!column.upstream.length && !column.lookups.length && <span className="text-[11.5px] text-[#5d6878]">{column.in_input ? t("all.inputItself") : "—"}</span>}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2.5">
+                    <span className="flex max-w-[220px] flex-wrap gap-1">{column.operations.map((operation) => <OperationChip key={operation} operation={operation} />)}</span>
+                  </td>
+                  <td className="px-5 py-2.5"><VerificationBadge status={model.verification(column.name)} /></td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }
 
-function ColumnDetail({ model, column, nav }: { model: Model; column: LineageColumn; nav: Navigator }) {
+/* ---------------------------------------------------------------------------------------------------------------- */
+/* One column                                                                                                       */
+/* ---------------------------------------------------------------------------------------------------------------- */
+
+export function ColumnDetail({ model, column, nav, onBack }: { model: Model; column: LineageColumn; nav: Navigator; onBack: () => void }) {
   const t = useTranslations("lineageAgent.columns");
   const doc = model.result.ai.columns[column.name] as ColumnDoc | undefined;
   const findings = model.result.findings.filter((finding) => finding.columns.includes(column.name));
-  const inputProfile = model.result.profiles.input[column.name];
-  const outputProfile = model.result.profiles.output[column.name];
   const dependency = model.result.runtime.dependencies[column.name];
   const changed = Object.values(model.result.cells.changes[column.name] ?? {}).length;
   const computed = model.result.cells.computed.filter((key) => key.endsWith(`|${column.name}`)).length;
   const lines = [...new Set(column.chain.map((id) => model.analysis.nodes[id].line).filter((line): line is number => Boolean(line)))].sort((a, b) => a - b);
+  const columns = orderedColumns(model);
 
   return (
     <div className="min-w-0 space-y-4">
-      {/* Header */}
       <section data-tour="lineage-column-header" className={cn(PANEL, "relative overflow-hidden px-5 py-4")}>
         <span className="absolute inset-y-0 left-0 w-1" style={{ background: ROLE_STYLES[column.role].bar }} />
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="min-w-0">
-            <p className={EYEBROW}>{t("column")}</p>
-            <h2 className="mt-1 break-all font-mono text-[22px] font-semibold text-white">{column.name}</h2>
-            {doc?.meaning && <p className="mt-1.5 max-w-3xl text-[13px] italic leading-relaxed text-[#aab3c2]">{plainText(doc.meaning, model.columnNames)}</p>}
-            <div className="mt-3 flex flex-wrap items-center gap-1.5">
-              <RoleBadge role={column.role} />
-              <VerificationBadge status={model.verification(column.name)} />
-              {column.in_input && column.in_output && <span className="rounded-full border border-[#2c3440] px-2 py-[1px] text-[10.5px] text-[#aab3c2]">{t("inInputAndOutput")}</span>}
-              {!column.in_input && column.in_output && <span className="rounded-full border border-violet-400/30 px-2 py-[1px] text-[10.5px] text-violet-300">{t("newColumn")}</span>}
-              {column.possible && <span className="rounded-full border border-amber-400/30 px-2 py-[1px] text-[10.5px] text-amber-300">{t("possible")}</span>}
-              {column.operations.map((operation) => <OperationChip key={operation} operation={operation} />)}
-            </div>
-          </div>
-          <div className="flex shrink-0 gap-2">
-            <button type="button" onClick={() => nav.openColumn(column.name, "graph")} className="flex items-center gap-1.5 rounded-md border border-[#2c3440] px-2.5 py-1.5 text-[12px] text-[#c2cad5] hover:border-[#f5c400]/50 hover:text-[#f5c400]">
-              <GitBranch className="h-3.5 w-3.5" /> {t("showInGraph")}
-            </button>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <button type="button" onClick={onBack} className="flex items-center gap-1.5 rounded-md border border-[#2c3440] px-2.5 py-1 text-[11.5px] text-[#c2cad5] hover:border-[#f5c400]/50 hover:text-[#f5c400]">
+            <ArrowLeft className="h-3.5 w-3.5" /> {t("back")}
+          </button>
+          <div className="flex items-center gap-2">
             {lines[0] && (
-              <button type="button" onClick={() => nav.openLine(lines[0])} className="flex items-center gap-1.5 rounded-md border border-[#2c3440] px-2.5 py-1.5 text-[12px] text-[#c2cad5] hover:border-[#f5c400]/50 hover:text-[#f5c400]">
-                <ListChecks className="h-3.5 w-3.5" /> {t("showInCode")}
+              <button type="button" onClick={() => nav.openLine(lines[0])} className="flex items-center gap-1.5 rounded-md border border-[#2c3440] px-2.5 py-1 text-[11.5px] text-[#c2cad5] hover:border-[#f5c400]/50 hover:text-[#f5c400]">
+                <Code2 className="h-3.5 w-3.5" /> {t("showInCode")}
               </button>
             )}
+            <label className="flex items-center gap-1.5 text-[11.5px] text-[#8c96a8]">
+              {t("switch")}
+              <select
+                value={column.name}
+                onChange={(event) => nav.openColumn(event.target.value)}
+                className="h-7 max-w-[220px] rounded-md border border-[#252a33] bg-[#0f141b] px-2 font-mono text-[11.5px] text-white outline-none focus:border-[#f5c400]/50"
+              >
+                {columns.map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}
+              </select>
+            </label>
           </div>
         </div>
-        <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+        <h2 className="mt-3 break-all font-mono text-[22px] font-semibold text-white">{column.name}</h2>
+        {doc?.meaning && <p className="mt-1 max-w-3xl text-[13px] italic leading-relaxed text-[#aab3c2]">{plainText(doc.meaning, model.columnNames)}</p>}
+        <div className="mt-3 flex flex-wrap items-center gap-1.5">
+          <RoleBadge role={column.role} />
+          <VerificationBadge status={model.verification(column.name)} />
+          {column.in_input && column.in_output && <span className="rounded-full border border-[#2c3440] px-2 py-[1px] text-[10.5px] text-[#aab3c2]">{t("inInputAndOutput")}</span>}
+          {!column.in_input && column.in_output && <span className="rounded-full border border-violet-400/30 px-2 py-[1px] text-[10.5px] text-violet-300">{t("newColumn")}</span>}
+          {column.possible && <span className="rounded-full border border-amber-400/30 px-2 py-[1px] text-[10.5px] text-amber-300">{t("possible")}</span>}
+          {column.operations.map((operation) => <OperationChip key={operation} operation={operation} />)}
+        </div>
+        <div className="mt-4 grid gap-2 sm:grid-cols-3 lg:grid-cols-5">
           <Fact label={t("facts.directInputs")} value={column.upstream.length} />
           <Fact label={t("facts.sources")} value={column.sources.filter((source) => source.column !== column.name).length} />
           <Fact label={t("facts.writes")} value={column.chain.length} />
@@ -149,21 +141,15 @@ function ColumnDetail({ model, column, nav }: { model: Model; column: LineageCol
         </div>
       </section>
 
-      <div className="grid gap-4 2xl:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
         <div className="min-w-0 space-y-4">
           <AiExplanation model={model} column={column} doc={doc} nav={nav} />
           <Derivation model={model} column={column} nav={nav} />
         </div>
         <div className="min-w-0 space-y-4">
-          <LineagePanel model={model} column={column} nav={nav} />
+          <LineagePanel column={column} nav={nav} />
           {column.lookups_all.length > 0 && <LookupPanel model={model} column={column} nav={nav} />}
-          <section className={cn(PANEL, "space-y-3 p-4")}>
-            <SectionTitle icon={<Database className="h-4 w-4 text-[#f5c400]" />} title={t("profile.title")} hint={t("profile.hint")} />
-            <div className="grid grid-cols-2 gap-3">
-              <ProfileCard label={t("profile.input")} profile={column.in_input ? inputProfile : undefined} empty={t("profile.notInInput")} />
-              <ProfileCard label={t("profile.output")} profile={column.in_output ? outputProfile : undefined} empty={t("profile.notInOutput")} />
-            </div>
-          </section>
+          <ValuesPanel model={model} column={column} nav={nav} />
           {column.role !== "passthrough" && dependency && (
             <section className={cn(PANEL, "space-y-3 p-4")}>
               <SectionTitle icon={<ShieldCheck className="h-4 w-4 text-[#f5c400]" />} title={t("runtime.title")} hint={t("runtime.hint")} />
@@ -201,11 +187,11 @@ function RuleList({ rules, model, nav }: { rules: Rule[]; model: Model; nav: Nav
         <li key={index} className="flex gap-3 rounded-md border border-[#1a2029] bg-[#0d1218] px-3 py-2.5">
           <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#f5c400]/15 text-[10.5px] font-bold text-[#f5c400]">{index + 1}</span>
           <div className="min-w-0 flex-1">
-            <p className="text-[12.5px] leading-relaxed text-[#dbe2ec]"><RichText text={rule.text} columns={model.columnNames} onColumn={(name) => nav.openColumn(name)} /></p>
+            <p className="text-[12.5px] leading-relaxed text-[#dbe2ec]"><RichText text={rule.text} columns={model.columnNames} onColumn={nav.openColumn} /></p>
             {(rule.lines.length > 0 || rule.inputs.length > 0) && (
               <div className="mt-1.5 flex flex-wrap items-center gap-1">
                 {rule.lines.map((line) => <LineChip key={line} line={line} onClick={nav.openLine} />)}
-                {rule.inputs.map((input) => <ColumnChip key={input} name={input} muted onClick={(name) => nav.openColumn(name)} />)}
+                {rule.inputs.map((input) => <ColumnChip key={input} name={input} muted onClick={nav.openColumn} />)}
               </div>
             )}
           </div>
@@ -221,7 +207,7 @@ function AiExplanation({ model, column, doc, nav }: { model: Model; column: Line
   const [showOriginal, setShowOriginal] = useState(false);
   if (column.role === "passthrough" || !doc || doc.status === "passthrough") {
     return (
-      <section className={cn(PANEL, "p-4")}>
+      <section data-tour="lineage-ai-explanation" className={cn(PANEL, "p-4")}>
         <SectionTitle icon={<Sparkles className="h-4 w-4 text-[#f5c400]" />} title={t("title")} />
         <p className="mt-2 text-[12.5px] leading-relaxed text-[#8c96a8]">{column.role === "passthrough" ? t("passthrough") : t("notDocumented")}</p>
       </section>
@@ -229,7 +215,7 @@ function AiExplanation({ model, column, doc, nav }: { model: Model; column: Line
   }
   if (doc.status === "failed") {
     return (
-      <section className={cn(PANEL, "p-4")}>
+      <section data-tour="lineage-ai-explanation" className={cn(PANEL, "p-4")}>
         <SectionTitle icon={<Sparkles className="h-4 w-4 text-[#f5c400]" />} title={t("title")} />
         <p className="mt-2 text-[12.5px] text-rose-300">{t("failed")}</p>
       </section>
@@ -256,11 +242,11 @@ function AiExplanation({ model, column, doc, nav }: { model: Model; column: Line
           </div>
         }
       />
-      {shown.summary && <p className="text-[13.5px] leading-relaxed text-[#e5e9f0]"><RichText text={shown.summary} columns={model.columnNames} onColumn={(name) => nav.openColumn(name)} /></p>}
+      {shown.summary && <p className="text-[13.5px] leading-relaxed text-[#e5e9f0]"><RichText text={shown.summary} columns={model.columnNames} onColumn={nav.openColumn} /></p>}
       {shown.formula && (
         <div className="rounded-md border border-[#f5c400]/20 bg-[linear-gradient(120deg,rgba(245,196,0,0.06),transparent_70%)] px-3.5 py-2.5">
           <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#a8862a]">{t("formula")}</p>
-          <Formula text={shown.formula} columns={model.columnNames} onColumn={(name) => nav.openColumn(name)} />
+          <Formula text={shown.formula} columns={model.columnNames} onColumn={nav.openColumn} />
         </div>
       )}
       {shown.rules && shown.rules.length > 0 && (
@@ -274,7 +260,7 @@ function AiExplanation({ model, column, doc, nav }: { model: Model; column: Line
           <p className={EYEBROW}>{t("notes")}</p>
           {doc.notes.map((note, index) => (
             <div key={index} className={cn("flex items-start gap-2 rounded-md border px-3 py-2 text-[12px] leading-relaxed", note.severity === "warning" ? "border-amber-400/25 bg-amber-400/[0.05] text-amber-100" : "border-[#1f252e] bg-[#0d1218] text-[#c2cad5]")}>
-              <span className="min-w-0 flex-1"><RichText text={note.text} columns={model.columnNames} onColumn={(name) => nav.openColumn(name)} /></span>
+              <span className="min-w-0 flex-1"><RichText text={note.text} columns={model.columnNames} onColumn={nav.openColumn} /></span>
               {note.lines.map((line) => <LineChip key={line} line={line} onClick={nav.openLine} />)}
             </div>
           ))}
@@ -372,14 +358,14 @@ function Derivation({ model, column, nav }: { model: Model; column: LineageColum
                 <div className="space-y-2 px-3 pb-3">
                   {node.pretty && (
                     <div className="rounded border border-[#1a2029] bg-[#080b10] px-2.5 py-1.5">
-                      <Formula text={node.pretty} columns={model.columnNames} onColumn={(name) => nav.openColumn(name)} />
+                      <Formula text={node.pretty} columns={model.columnNames} onColumn={nav.openColumn} />
                     </div>
                   )}
                   {node.renamed_from && <p className="text-[12px] text-[#aab3c2]">{t("renamedFrom", { column: node.renamed_from })}</p>}
                   {(node.conditions ?? []).map((condition, index) => (
                     <div key={index} className="rounded border border-dashed border-amber-400/30 bg-amber-400/[0.04] px-2.5 py-1.5 text-[12px]">
                       <span className="mr-2 text-[10px] font-semibold uppercase tracking-wide text-amber-300">{t(`condition.${condition.kind}`)}</span>
-                      {condition.pretty ? <Formula text={condition.pretty} columns={model.columnNames} onColumn={(name) => nav.openColumn(name)} className="text-[11.5px]" /> : <span className="font-mono text-[11.5px] text-[#dbe2ec]">{condition.code}</span>}
+                      {condition.pretty ? <Formula text={condition.pretty} columns={model.columnNames} onColumn={nav.openColumn} className="text-[11.5px]" /> : <span className="font-mono text-[11.5px] text-[#dbe2ec]">{condition.code}</span>}
                       {condition.expanded && condition.code !== condition.expanded && <span className="ml-2 font-mono text-[11px] text-[#8c96a8]">({condition.code})</span>}
                     </div>
                   ))}
@@ -397,7 +383,7 @@ function Derivation({ model, column, nav }: { model: Model; column: LineageColum
   );
 }
 
-function LineagePanel({ model, column, nav }: { model: Model; column: LineageColumn; nav: Navigator }) {
+function LineagePanel({ column, nav }: { column: LineageColumn; nav: Navigator }) {
   const t = useTranslations("lineageAgent.columns.lineage");
   const own = column.sources.filter((source) => source.column !== column.name);
   return (
@@ -409,15 +395,15 @@ function LineagePanel({ model, column, nav }: { model: Model; column: LineageCol
           {column.upstream.length === 0 && column.lookups.length === 0 && <p className="text-[11.5px] text-[#5d6878]">{column.input_used || column.role === "passthrough" ? t("onlyItself") : "—"}</p>}
           {column.upstream.map((entry) => (
             <div key={entry.column} className="rounded-md border border-[#1f252e] bg-[#0d1218] p-1.5">
-              <ColumnChip name={entry.column} onClick={(name) => nav.openColumn(name)} />
+              <ColumnChip name={entry.column} onClick={nav.openColumn} />
               <div className="mt-1 flex flex-wrap gap-1">{entry.transformations.map((item) => <TransformationBadge key={`${item.type}${item.subtype}`} transformation={item} compact />)}</div>
               {entry.historical && <p className="mt-1 text-[10px] text-amber-300">{t("historical")}</p>}
             </div>
           ))}
           {column.lookups.map((name) => (
-            <div key={name} className="flex items-center gap-1.5 rounded-md border border-dashed border-violet-400/30 bg-violet-400/[0.04] p-1.5 font-mono text-[11px] text-violet-200">
+            <button key={name} type="button" onClick={() => nav.openLookup(name)} className="flex w-full items-center gap-1.5 rounded-md border border-dashed border-violet-400/30 bg-violet-400/[0.04] p-1.5 font-mono text-[11px] text-violet-200 hover:border-violet-300/60">
               <Table2 className="h-3 w-3" /> {name}
-            </div>
+            </button>
           ))}
         </div>
         <div className="flex h-full flex-col items-center justify-center gap-1 px-1 pt-5">
@@ -428,7 +414,7 @@ function LineagePanel({ model, column, nav }: { model: Model; column: LineageCol
         <div className="space-y-1.5">
           <p className="text-[10px] uppercase tracking-wide text-[#687386]">{t("usedBy")}</p>
           {column.downstream.length === 0 && <p className="text-[11.5px] text-[#5d6878]">{t("final")}</p>}
-          {column.downstream.map((name) => <div key={name}><ColumnChip name={name} onClick={(target) => nav.openColumn(target)} /></div>)}
+          {column.downstream.map((name) => <div key={name}><ColumnChip name={name} onClick={nav.openColumn} /></div>)}
         </div>
       </div>
       {own.length > 0 && (
@@ -469,18 +455,7 @@ function LookupPanel({ model, column, nav }: { model: Model; column: LineageColu
               </button>
               <LineChip line={lookup.line} end={lookup.end_line} onClick={nav.openLine} />
             </div>
-            {open === name && lookup.kind === "mapping" && (
-              <table className="w-full text-[11.5px]">
-                <tbody>
-                  {lookup.entries.map(([key, value], index) => (
-                    <tr key={index} className="border-t border-[#1a2029]">
-                      <td className="w-1/2 px-3 py-1 font-mono"><ValueText value={key} /></td>
-                      <td className="px-3 py-1 font-mono"><ArrowRight className="mr-2 inline h-3 w-3 text-[#5d6878]" /><ValueText value={value} /></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
+            {open === name && lookup.kind === "mapping" && <LookupEntries entries={lookup.entries} />}
             {open === name && unmapped.map((entry) => (
               <p key={entry.line} className="border-t border-amber-400/20 bg-amber-400/[0.05] px-3 py-2 text-[11.5px] text-amber-100">
                 {t("unmapped", { values: entry.values.map((item) => `${item.value} (${item.rows}×)`).join(", ") })}
@@ -493,30 +468,129 @@ function LookupPanel({ model, column, nav }: { model: Model; column: LineageColu
   );
 }
 
-function ProfileCard({ label, profile, empty }: { label: string; profile?: { non_null: number; total: number; samples: unknown[] }; empty: string }) {
-  const t = useTranslations("lineageAgent.columns.profile");
-  if (!profile) {
-    return (
-      <div className="rounded-md border border-dashed border-[#252a33] p-3">
-        <p className="text-[10px] uppercase tracking-wide text-[#687386]">{label}</p>
-        <p className="mt-2 text-[11.5px] text-[#5d6878]">{empty}</p>
-      </div>
-    );
-  }
-  const filled = profile.total ? profile.non_null / profile.total : 0;
+function LookupEntries({ entries }: { entries: [unknown, unknown][] }) {
   return (
-    <div className="rounded-md border border-[#1f252e] bg-[#0d1218] p-3">
-      <p className="text-[10px] uppercase tracking-wide text-[#687386]">{label}</p>
-      <p className="mt-1 text-[13px] font-semibold tabular-nums text-white">{t("filled", { filled: profile.non_null, total: profile.total })}</p>
-      <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-[#1a212c]">
-        <div className="h-full rounded-full bg-[#f5c400]/70" style={{ width: `${Math.round(filled * 100)}%` }} />
-      </div>
-      <div className="mt-2 flex flex-wrap gap-1">
-        {profile.samples.map((sample, index) => (
-          <span key={index} className="rounded bg-[#121821] px-1.5 py-[1px] font-mono text-[10.5px]"><ValueText value={sample} /></span>
+    <table className="w-full text-[11.5px]">
+      <tbody>
+        {entries.map(([key, value], index) => (
+          <tr key={index} className="border-t border-[#1a2029]">
+            <td className="w-1/2 px-3 py-1 font-mono"><ValueText value={key} /></td>
+            <td className="px-3 py-1 font-mono"><ArrowRight className="mr-2 inline h-3 w-3 text-[#5d6878]" /><ValueText value={value} /></td>
+          </tr>
         ))}
+      </tbody>
+    </table>
+  );
+}
+
+type CellKind = "filled" | "changed" | "emptied" | "unchanged";
+
+const CELL_STYLES: Record<CellKind, string> = {
+  filled: "bg-emerald-400/[0.10] text-emerald-100",
+  changed: "bg-amber-400/[0.10] text-amber-100",
+  emptied: "bg-rose-400/[0.10] text-rose-200",
+  unchanged: "text-[#aab3c2]",
+};
+
+const VALUE_ROWS = 8;
+
+/** The column's value in every traced row of the result: the input value, the result and the lines that changed it.
+ *  A row opens its paper trail: every change with the formula evaluated on that row's values. */
+function ValuesPanel({ model, column, nav }: { model: Model; column: LineageColumn; nav: Navigator }) {
+  const t = useTranslations("lineageAgent.columns.values");
+  const tOps = useTranslations("lineageAgent.operations");
+  const cells = model.result.cells;
+  const [all, setAll] = useState(false);
+  const [open, setOpen] = useState<string | null>(null);
+  const computed = useMemo(() => new Set(cells.computed), [cells.computed]);
+  // A readable row key: the first pass-through text column with unique values (e.g. a position id).
+  const keyColumn = useMemo(() => {
+    for (const item of model.analysis.columns) {
+      if (item.role !== "passthrough" || item.name === column.name) continue;
+      const values = cells.rows.map((row) => row.values[item.name]);
+      if (values.length && values.every((value) => typeof value === "string") && new Set(values).size === values.length) return item.name;
+    }
+    return null;
+  }, [model, cells.rows, column.name]);
+  if (!cells.columns.includes(column.name) && !cells.input_columns.includes(column.name)) return null;
+  const inInput = cells.input_columns.includes(column.name);
+  const history = cells.changes[column.name] ?? {};
+  const kindOf = (row: string, value: unknown): CellKind => {
+    const changes = history[row];
+    if (!changes?.length) return "unchanged";
+    if (computed.has(`${row}|${column.name}`)) return "filled";
+    if (value === null || value === undefined) return "emptied";
+    const before = changes[0].before;
+    return before === null || before === undefined ? "filled" : "changed";
+  };
+  const rows = all ? cells.rows : cells.rows.slice(0, VALUE_ROWS);
+  const filled = cells.rows.filter((row) => row.values[column.name] !== null && row.values[column.name] !== undefined).length;
+  const changedRows = cells.rows.filter((row) => history[row.label]?.length).length;
+  const grid = inInput ? "grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1fr)_auto]" : "grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_auto]";
+  return (
+    <section data-tour="lineage-values" className={cn(PANEL, "overflow-hidden")}>
+      <div className="p-4 pb-3">
+        <SectionTitle
+          icon={<Rows3 className="h-4 w-4 text-[#f5c400]" />}
+          title={t("title")}
+          hint={t("hint", { filled, rows: cells.rows.length, changed: changedRows })}
+        />
       </div>
-    </div>
+      <div className={cn("grid border-y border-[#1f252e] bg-[#0f141b] text-[10px] font-semibold uppercase tracking-wide text-[#687386]", grid)}>
+        <span className="px-4 py-1.5 pl-[34px]">{t("row")}</span>
+        {inInput && <span className="px-2 py-1.5">{t("input")}</span>}
+        <span className="px-2 py-1.5">{t("result")}</span>
+        <span className="px-4 py-1.5 text-right">{t("changedBy")}</span>
+      </div>
+      <ul className="text-[11.5px]">
+        {rows.map((row) => {
+          const value = row.values[column.name];
+          const kind = kindOf(row.label, value);
+          const changes = history[row.label] ?? [];
+          const expanded = open === row.label;
+          return (
+            <li key={row.label} className="border-b border-[#151b23] last:border-b-0">
+              <button type="button" disabled={!changes.length} onClick={() => setOpen(expanded ? null : row.label)} aria-expanded={changes.length ? expanded : undefined} className={cn("grid w-full items-center text-left", grid, changes.length ? "hover:bg-white/[0.025]" : "cursor-default")}>
+                <span className="flex min-w-0 items-center gap-1.5 px-4 py-1.5 font-mono text-[11px] text-[#687386]">
+                  {changes.length ? (expanded ? <ChevronDown className="h-3 w-3 shrink-0" /> : <ChevronRight className="h-3 w-3 shrink-0" />) : <span className="w-3 shrink-0" />}
+                  <span className="shrink-0">{row.label}</span>
+                  {keyColumn && <span className="truncate text-[#aab3c2]"><ValueText value={row.values[keyColumn]} /></span>}
+                </span>
+                {inInput && <span className="truncate px-2 py-1.5 font-mono text-[#8c96a8]"><ValueText value={cells.input[row.label]?.[column.name]} /></span>}
+                <span className={cn("truncate px-2 py-1.5 font-mono", CELL_STYLES[kind])}><ValueText value={value} /></span>
+                <span className="flex justify-end gap-1 px-4 py-1.5">{[...new Set(changes.map((change) => change.line))].map((line) => <LineChip key={line} line={line} />)}</span>
+              </button>
+              {expanded && (
+                <ol className="space-y-1.5 border-t border-[#151b23] bg-[#080b10] px-4 py-2.5">
+                  {changes.map((change, index) => {
+                    const node = model.writeAt(column.name, change.line);
+                    return (
+                      <li key={index} className="rounded-md border border-[#1f252e] bg-[#0d1218] px-3 py-2">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <LineChip line={change.line} onClick={nav.openLine} />
+                          {node?.operation && <span className="text-[11.5px] font-semibold text-white">{tOps.has(node.operation) ? tOps(node.operation) : node.operation}</span>}
+                          <span className="ml-auto flex items-center gap-1.5 font-mono text-[11.5px]"><ValueText value={change.before} /><span className="text-[#5d6878]">→</span><ValueText value={change.after} className="font-semibold" /></span>
+                        </div>
+                        {node?.pretty && <div className="mt-1.5"><Formula text={node.pretty} columns={model.columnNames} values={change.inputs} onColumn={nav.openColumn} className="text-[11.5px]" /></div>}
+                        {(node?.conditions ?? []).length > 0 && <p className="mt-1 font-mono text-[11px] text-amber-200/90">{t("when")} {node!.conditions!.map((condition) => condition.expanded ?? condition.code).join(" · ")}</p>}
+                      </li>
+                    );
+                  })}
+                </ol>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      {(cells.rows.length > VALUE_ROWS || cells.total_rows > cells.rows.length) && (
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[#1f252e] px-4 py-2 text-[11px] text-[#687386]">
+          {cells.rows.length > VALUE_ROWS ? (
+            <button type="button" onClick={() => setAll((value) => !value)} className="font-semibold text-[#c2cad5] hover:text-[#f5c400]">{all ? t("fewer") : t("more", { count: cells.rows.length })}</button>
+          ) : <span />}
+          {cells.total_rows > cells.rows.length && <span>{t("limited", { shown: cells.rows.length, total: cells.total_rows })}</span>}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -527,11 +601,62 @@ function DependencyRow({ label, tone, items, nav, hint }: { label: string; tone:
     <div>
       <p className={cn("text-[11.5px] font-semibold", tones[tone])}>{label} <span className="tabular-nums opacity-70">({items.length})</span></p>
       {hint && <p className="text-[11px] text-[#687386]">{hint}</p>}
-      <div className="mt-1.5 flex flex-wrap gap-1">{items.map((name) => <ColumnChip key={name} name={name} onClick={(target) => nav.openColumn(target)} />)}</div>
+      <div className="mt-1.5 flex flex-wrap gap-1">{items.map((name) => <ColumnChip key={name} name={name} onClick={nav.openColumn} />)}</div>
     </div>
   );
 }
 
-export function roleOrder(role: Role): number {
-  return ["created", "renamed", "overwritten", "enriched", "cast", "passthrough", "dropped", "intermediate"].indexOf(role);
+/* ---------------------------------------------------------------------------------------------------------------- */
+/* One lookup table                                                                                                 */
+/* ---------------------------------------------------------------------------------------------------------------- */
+
+export function LookupDetail({ model, name, nav, onBack }: { model: Model; name: string; nav: Navigator; onBack: () => void }) {
+  const t = useTranslations("lineageAgent.graph");
+  const tColumns = useTranslations("lineageAgent.columns");
+  const lookup = model.analysis.lookups.find((item) => item.name === name);
+  if (!lookup) return null;
+  const unmapped = model.result.runtime.unmapped.filter((item) => item.name === name && item.values.length);
+  return (
+    <section data-tour="lineage-lookup" className={cn(PANEL, "relative overflow-hidden px-5 py-4")}>
+      <span className="absolute inset-y-0 left-0 w-1 bg-violet-400" />
+      <button type="button" onClick={onBack} className="flex items-center gap-1.5 rounded-md border border-[#2c3440] px-2.5 py-1 text-[11.5px] text-[#c2cad5] hover:border-[#f5c400]/50 hover:text-[#f5c400]">
+        <ArrowLeft className="h-3.5 w-3.5" /> {tColumns("back")}
+      </button>
+      <p className={cn(EYEBROW, "mt-3")}>{t("lookupTable")}</p>
+      <div className="mt-1 flex flex-wrap items-center gap-2">
+        <h2 className="font-mono text-[20px] font-semibold text-violet-200">{lookup.name}</h2>
+        <LineChip line={lookup.line} end={lookup.end_line} onClick={nav.openLine} />
+      </div>
+      <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
+        <div className="overflow-hidden rounded-md border border-[#1f252e]">
+          {lookup.kind === "mapping" ? (
+            <>
+              <div className="grid grid-cols-2 bg-[#0f141b] text-[10px] uppercase tracking-wide text-[#687386]"><span className="px-3 py-1.5">{t("key")}</span><span className="px-3 py-1.5">{t("value")}</span></div>
+              <LookupEntries entries={lookup.entries} />
+            </>
+          ) : (
+            <p className="p-3 text-[12px] text-[#8c96a8]">{t("referenceTable", { columns: lookup.entries.length })}</p>
+          )}
+        </div>
+        <div className="space-y-4">
+          {lookup.keys_from.length > 0 && (
+            <div>
+              <p className={EYEBROW}>{t("keyColumn")}</p>
+              <div className="mt-2 flex flex-wrap gap-1.5">{lookup.keys_from.map((column) => <ColumnChip key={column} name={column} onClick={nav.openColumn} />)}</div>
+            </div>
+          )}
+          <div>
+            <p className={EYEBROW}>{t("usedBy")}</p>
+            <div className="mt-2 flex flex-wrap gap-1.5">{lookup.used_by.map((column) => <ColumnChip key={column} name={column} onClick={nav.openColumn} />)}</div>
+          </div>
+          {unmapped.map((entry) => (
+            <div key={entry.line} className="rounded-md border border-amber-400/30 bg-amber-400/[0.06] p-3 text-[11.5px] text-amber-100">
+              {t("unmapped", { column: entry.column, count: entry.values.reduce((sum, item) => sum + item.rows, 0) })}
+              <div className="mt-1.5 flex flex-wrap gap-1">{entry.values.map((item) => <span key={item.value} className="rounded bg-amber-400/10 px-1.5 font-mono">{item.value} ×{item.rows}</span>)}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
 }

@@ -2,19 +2,14 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { useTranslations } from "next-intl";
-import {
-  ArrowRight, Database, Download, FunctionSquare, Maximize2, Minimize2, Minus, Move, Plus, RotateCcw, ScanSearch, Search, Sigma, Table2, Wand2, X,
-} from "lucide-react";
+import { ArrowRight, Database, Download, FunctionSquare, Maximize2, Minimize2, Minus, Plus, RotateCcw, ScanSearch, Search, Sigma, Table2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import {
-  ColumnChip, EYEBROW, Formula, LineChip, OperationChip, ROLE_STYLES, RichText, RoleBadge, TransformationBadge, ValueText, VerificationBadge,
-  type Verification,
-} from "./atoms";
+import { ROLE_STYLES, TransformationBadge, type Verification } from "./atoms";
 import { downloadText } from "./download";
 import { lineageToDrawIo } from "./drawio";
 import { NODE_HEIGHT, NODE_WIDTH, graphBounds, layoutGraph, lineageOf, lookupId, routeEdges, type GraphEdge, type GraphNode } from "./graph-layout";
 import type { Model } from "./model";
-import type { Navigator } from "./types";
+import type { Focus } from "./types";
 
 const VERIFICATION_COLORS: Record<Verification, string> = {
   verified: "#34d399",
@@ -50,11 +45,11 @@ function writePositions(key: string | null, positions: Positions) {
   }
 }
 
-export function GraphView({ model, selected, onSelect, nav, layoutKey }: {
+export function GraphView({ model, selected, onSelect, layoutKey }: {
   model: Model;
-  selected: string | null;
-  onSelect: (column: string | null) => void;
-  nav: Navigator;
+  /** The column or lookup table whose details are shown under the graph. */
+  selected: Focus | null;
+  onSelect: (focus: Focus | null) => void;
   /** Identifies the analysis: nodes the user moved keep their place for it (in this browser). */
   layoutKey?: string;
 }) {
@@ -67,7 +62,6 @@ export function GraphView({ model, selected, onSelect, nav, layoutKey }: {
   const [colorMode, setColorMode] = useState<"role" | "verification">("role");
   const [query, setQuery] = useState("");
   const [fullscreen, setFullscreen] = useState(false);
-  const [selectedLookup, setSelectedLookup] = useState<string | null>(null);
   const [hoverNode, setHoverNode] = useState<string | null>(null);
   const [hoverEdge, setHoverEdge] = useState<{ edge: GraphEdge; x: number; y: number } | null>(null);
   const [transform, setTransform] = useState<Transform>({ x: 0, y: 0, k: 1 });
@@ -80,10 +74,11 @@ export function GraphView({ model, selected, onSelect, nav, layoutKey }: {
   const nodeDrag = useRef<{ id: string; pointerX: number; pointerY: number; x: number; y: number; moved: boolean } | null>(null);
   const suppressClick = useRef(false);
   const internal = useRef(false);
-  const select = (column: string | null) => {
+  const select = (focus: Focus | null) => {
     internal.current = true;
-    onSelect(column);
+    onSelect(focus);
   };
+  const selectedId = selected ? (selected.kind === "lookup" ? lookupId(selected.name) : selected.name) : null;
 
   const layout = useMemo(
     () => layoutGraph(model.analysis, { showLookups, showIndirect, showIsolated }),
@@ -183,20 +178,24 @@ export function GraphView({ model, selected, onSelect, nav, layoutKey }: {
     [nodeById],
   );
 
-  // A column selected elsewhere (Columns view, findings) is brought into view.
+  // A column selected elsewhere (the details, a finding) is brought into view; back to all columns shows the whole graph.
   useEffect(() => {
     if (internal.current) {
       internal.current = false;
       return;
     }
-    if (selected && nodeById.has(selected)) {
-      const timer = window.setTimeout(() => focusNode(selected), 80);
+    if (!selectedId) {
+      fit();
+      return;
+    }
+    if (nodeById.has(selectedId)) {
+      const timer = window.setTimeout(() => focusNode(selectedId), 80);
       return () => window.clearTimeout(timer);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected]);
+  }, [selectedId]);
 
-  const anchor = selected ?? (selectedLookup ? lookupId(selectedLookup) : null) ?? draggingNode ?? hoverNode;
+  const anchor = selectedId ?? draggingNode ?? hoverNode;
   const lineage = useMemo(() => (anchor ? lineageOf(edges, anchor) : null), [anchor, edges]);
   const matches = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -236,10 +235,7 @@ export function GraphView({ model, selected, onSelect, nav, layoutKey }: {
   const onPointerUp = () => {
     const current = drag.current;
     drag.current = null;
-    if (current && !current.moved) {
-      select(null);
-      setSelectedLookup(null);
-    }
+    if (current && !current.moved) select(null);
   };
 
   // Moving a node: a press that travels more than a few pixels drags it; a press that stays put is a click.
@@ -283,15 +279,12 @@ export function GraphView({ model, selected, onSelect, nav, layoutKey }: {
     downloadText(xml, `technical-lineage-${model.result.code.filename.replace(/\.py$/, "")}.drawio`, "application/xml");
   };
 
-  const selectedColumn = selected ? model.byName.get(selected) ?? null : null;
-  const lookup = selectedLookup ? model.analysis.lookups.find((item) => item.name === selectedLookup) ?? null : null;
-
   return (
     <div
       data-tour="lineage-graph"
       className={cn(
         "flex overflow-hidden rounded-lg border border-[#252a33] bg-[#090c11]",
-        fullscreen ? "fixed inset-3 z-50 shadow-[0_30px_120px_rgba(0,0,0,0.75)]" : "relative h-[calc(100vh-345px)] min-h-[560px]",
+        fullscreen ? "fixed inset-3 z-50 shadow-[0_30px_120px_rgba(0,0,0,0.75)]" : "relative h-[560px]",
       )}
     >
       <div className="relative flex min-w-0 flex-1 flex-col">
@@ -306,8 +299,7 @@ export function GraphView({ model, selected, onSelect, nav, layoutKey }: {
                 if (event.key === "Enter") {
                   const first = nodes.find((node) => matches.has(node.id));
                   if (first) {
-                    if (first.kind === "column") select(first.id);
-                    else setSelectedLookup(first.label);
+                    select(first.kind === "column" ? { kind: "column", name: first.id } : { kind: "lookup", name: first.label });
                     focusNode(first.id);
                   }
                 }
@@ -413,7 +405,7 @@ export function GraphView({ model, selected, onSelect, nav, layoutKey }: {
               const color = nodeColor(node);
               const isMatch = matches.has(node.id);
               const column = node.column;
-              const isSelected = node.kind === "column" ? selected === node.id : selectedLookup === node.label;
+              const isSelected = selectedId === node.id;
               const dragging = draggingNode === node.id;
               return (
                 <div
@@ -433,16 +425,11 @@ export function GraphView({ model, selected, onSelect, nav, layoutKey }: {
                       suppressClick.current = false;
                       return;
                     }
-                    if (node.kind === "column") {
-                      setSelectedLookup(null);
-                      select(selected === node.id ? null : node.id);
-                    } else {
-                      select(null);
-                      setSelectedLookup(selectedLookup === node.label ? null : node.label);
-                    }
+                    if (selectedId === node.id) select(null);
+                    else select(node.kind === "column" ? { kind: "column", name: node.id } : { kind: "lookup", name: node.label });
                   }}
                   onKeyDown={(event) => {
-                    if (event.key === "Enter" && node.kind === "column") select(node.id);
+                    if (event.key === "Enter") select(node.kind === "column" ? { kind: "column", name: node.id } : { kind: "lookup", name: node.label });
                     const step = event.shiftKey ? 40 : 10;
                     const delta = ({ ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] } as Record<string, [number, number]>)[event.key];
                     if (delta) {
@@ -540,47 +527,6 @@ export function GraphView({ model, selected, onSelect, nav, layoutKey }: {
           </div>
         </div>
       </div>
-
-      {/* Inspector */}
-      <aside className="flex w-[340px] shrink-0 flex-col overflow-y-auto border-l border-[#1f252e] bg-[#0b0f15]">
-        {selectedColumn ? (
-          <ColumnInspector model={model} column={selectedColumn.name} nav={nav} onClose={() => select(null)} />
-        ) : lookup ? (
-          <LookupInspector model={model} name={lookup.name} nav={nav} onClose={() => setSelectedLookup(null)} />
-        ) : (
-          <div className="space-y-5 p-4">
-            <div>
-              <p className={EYEBROW}>{t("about")}</p>
-              <p className="mt-2 text-[12.5px] leading-relaxed text-[#aab3c2]">{t("aboutBody")}</p>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <Stat label={t("stats.columns")} value={nodes.filter((node) => node.kind === "column").length} />
-              <Stat label={t("stats.edges")} value={edges.filter((edge) => edge.kind === "column").length} />
-              <Stat label={t("stats.lookups")} value={nodes.filter((node) => node.kind === "lookup").length} />
-              <Stat label={t("stats.layers")} value={new Set(nodes.map((node) => node.layer)).size} />
-            </div>
-            <div className="space-y-2 text-[12px] text-[#8c96a8]">
-              <p className="flex items-start gap-2"><Wand2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#f5c400]" />{t("tipSelect")}</p>
-              <p className="flex items-start gap-2"><ScanSearch className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#f5c400]" />{t("tipNavigate")}</p>
-              <p className="flex items-start gap-2"><Move className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#f5c400]" />{t("tipMove")}</p>
-            </div>
-            {model.analysis.dataset_ops.length > 0 && (
-              <div className="rounded-md border border-amber-400/25 bg-amber-400/[0.05] p-3">
-                <p className="text-[11.5px] font-semibold text-amber-200">{t("datasetOps")}</p>
-                <ul className="mt-1.5 space-y-1">
-                  {model.analysis.dataset_ops.map((op, index) => (
-                    <li key={index} className="flex items-center gap-1.5 text-[11.5px] text-[#c2cad5]">
-                      {op.line && <LineChip line={op.line} onClick={nav.openLine} />}
-                      <span className="font-semibold">{op.kind}</span>
-                      <span className="truncate font-mono text-[#8c96a8]">{op.columns.join(", ")}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </div>
-        )}
-      </aside>
     </div>
   );
 }
@@ -636,154 +582,5 @@ function EdgeSample({ label, dashed, color = "#6b7280" }: { label: string; dashe
       <svg width="22" height="6"><line x1="0" y1="3" x2="22" y2="3" stroke={color} strokeWidth="1.6" strokeDasharray={dashed} /></svg>
       {label}
     </span>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="rounded-md border border-[#1f252e] bg-[#0f141b] px-3 py-2">
-      <p className="text-[10px] uppercase tracking-wide text-[#687386]">{label}</p>
-      <p className="mt-0.5 text-[18px] font-semibold tabular-nums text-white">{value}</p>
-    </div>
-  );
-}
-
-function ColumnInspector({ model, column, nav, onClose }: { model: Model; column: string; nav: Navigator; onClose: () => void }) {
-  const t = useTranslations("lineageAgent.graph");
-  const tColumns = useTranslations("lineageAgent.columns");
-  const item = model.byName.get(column)!;
-  const doc = model.result.ai.columns[column];
-  const lines = [...new Set(item.chain.map((id) => model.analysis.nodes[id].line).filter((line): line is number => Boolean(line)))].sort((a, b) => a - b);
-  return (
-    <div className="space-y-4 p-4">
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className={EYEBROW}>{t("selectedColumn")}</p>
-          <p className="mt-1 break-all font-mono text-[15px] font-semibold text-white">{column}</p>
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            <RoleBadge role={item.role} />
-            <VerificationBadge status={model.verification(column)} />
-          </div>
-        </div>
-        <button type="button" onClick={onClose} className="rounded p-1 text-[#687386] hover:text-white" aria-label={t("close")}>
-          <X className="h-4 w-4" />
-        </button>
-      </div>
-      {doc?.summary ? (
-        <p className="text-[12.5px] leading-relaxed text-[#c9d1dd]"><RichText text={doc.summary} columns={model.columnNames} onColumn={(name) => nav.openColumn(name, "graph")} /></p>
-      ) : item.role === "passthrough" ? (
-        <p className="text-[12.5px] leading-relaxed text-[#8c96a8]">{tColumns("passthroughText")}</p>
-      ) : null}
-      {doc?.formula && (
-        <div className="rounded-md border border-[#1f252e] bg-[#080b10] px-3 py-2">
-          <Formula text={doc.formula} columns={model.columnNames} onColumn={(name) => nav.openColumn(name, "graph")} />
-        </div>
-      )}
-      {item.operations.length > 0 && (
-        <div className="flex flex-wrap gap-1">{item.operations.map((operation) => <OperationChip key={operation} operation={operation} />)}</div>
-      )}
-      {item.upstream.length > 0 && (
-        <div>
-          <p className={EYEBROW}>{t("directInputs")}</p>
-          <ul className="mt-2 space-y-1.5">
-            {item.upstream.map((entry) => (
-              <li key={entry.column} className="flex flex-wrap items-center gap-1.5">
-                <ColumnChip name={entry.column} onClick={(name) => nav.openColumn(name, "graph")} />
-                {entry.transformations.map((transformation) => <TransformationBadge key={`${transformation.type}${transformation.subtype}`} transformation={transformation} compact />)}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-      {item.lookups.length > 0 && (
-        <div>
-          <p className={EYEBROW}>{t("lookupTables")}</p>
-          <div className="mt-2 flex flex-wrap gap-1.5">{item.lookups.map((name) => <span key={name} className="rounded-md border border-violet-400/30 bg-violet-400/[0.08] px-1.5 py-[1px] font-mono text-[11px] text-violet-200">{name}</span>)}</div>
-        </div>
-      )}
-      {item.downstream.length > 0 && (
-        <div>
-          <p className={EYEBROW}>{t("usedBy")}</p>
-          <div className="mt-2 flex flex-wrap gap-1.5">{item.downstream.map((name) => <ColumnChip key={name} name={name} onClick={(target) => nav.openColumn(target, "graph")} />)}</div>
-        </div>
-      )}
-      {item.sources.length > 0 && item.role !== "passthrough" && (
-        <div>
-          <p className={EYEBROW}>{t("sources", { count: item.sources.length })}</p>
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {item.sources.map((source) => (
-              <span key={source.column} className={cn("rounded-md border px-1.5 py-[1px] font-mono text-[11px]", source.mode === "direct" ? "border-[#2c3440] text-[#dbe2ec]" : "border-dashed border-amber-400/40 text-amber-200")}>
-                {source.column}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
-      {lines.length > 0 && (
-        <div>
-          <p className={EYEBROW}>{t("lines")}</p>
-          <div className="mt-2 flex flex-wrap gap-1">{lines.map((line) => <LineChip key={line} line={line} onClick={nav.openLine} />)}</div>
-        </div>
-      )}
-      <button type="button" onClick={() => nav.openColumn(column, "columns")} className="flex w-full items-center justify-center gap-2 rounded-md border border-[#f5c400]/40 bg-[#f5c400]/10 px-3 py-2 text-[12.5px] font-semibold text-[#f5c400] transition-colors hover:bg-[#f5c400]/20">
-        {t("openDetails")}
-        <ArrowRight className="h-3.5 w-3.5" />
-      </button>
-    </div>
-  );
-}
-
-function LookupInspector({ model, name, nav, onClose }: { model: Model; name: string; nav: Navigator; onClose: () => void }) {
-  const t = useTranslations("lineageAgent.graph");
-  const lookup = model.analysis.lookups.find((item) => item.name === name)!;
-  const unmapped = model.result.runtime.unmapped.filter((item) => item.name === name && item.values.length);
-  return (
-    <div className="space-y-4 p-4">
-      <div className="flex items-start justify-between gap-2">
-        <div>
-          <p className={EYEBROW}>{t("lookupTable")}</p>
-          <p className="mt-1 font-mono text-[15px] font-semibold text-violet-200">{lookup.name}</p>
-          <div className="mt-2"><LineChip line={lookup.line} end={lookup.end_line} onClick={nav.openLine} /></div>
-        </div>
-        <button type="button" onClick={onClose} className="rounded p-1 text-[#687386] hover:text-white" aria-label={t("close")}>
-          <X className="h-4 w-4" />
-        </button>
-      </div>
-      {lookup.kind === "mapping" ? (
-        <div className="overflow-hidden rounded-md border border-[#1f252e]">
-          <table className="w-full text-[11.5px]">
-            <thead className="bg-[#0f141b] text-left text-[10px] uppercase tracking-wide text-[#687386]">
-              <tr><th className="px-2.5 py-1.5">{t("key")}</th><th className="px-2.5 py-1.5">{t("value")}</th></tr>
-            </thead>
-            <tbody>
-              {lookup.entries.map(([key, value], index) => (
-                <tr key={index} className="border-t border-[#1a2029]">
-                  <td className="px-2.5 py-1 font-mono"><ValueText value={key} /></td>
-                  <td className="px-2.5 py-1 font-mono"><ValueText value={value} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <p className="text-[12px] text-[#8c96a8]">{t("referenceTable", { columns: lookup.entries.length })}</p>
-      )}
-      {lookup.keys_from.length > 0 && (
-        <div>
-          <p className={EYEBROW}>{t("keyColumn")}</p>
-          <div className="mt-2 flex flex-wrap gap-1.5">{lookup.keys_from.map((column) => <ColumnChip key={column} name={column} onClick={(target) => nav.openColumn(target, "graph")} />)}</div>
-        </div>
-      )}
-      <div>
-        <p className={EYEBROW}>{t("usedBy")}</p>
-        <div className="mt-2 flex flex-wrap gap-1.5">{lookup.used_by.map((column) => <ColumnChip key={column} name={column} onClick={(target) => nav.openColumn(target, "graph")} />)}</div>
-      </div>
-      {unmapped.map((entry) => (
-        <div key={entry.line} className="rounded-md border border-amber-400/30 bg-amber-400/[0.06] p-3 text-[11.5px] text-amber-100">
-          {t("unmapped", { column: entry.column, count: entry.values.reduce((sum, item) => sum + item.rows, 0) })}
-          <div className="mt-1.5 flex flex-wrap gap-1">{entry.values.map((item) => <span key={item.value} className="rounded bg-amber-400/10 px-1.5 font-mono">{item.value} ×{item.rows}</span>)}</div>
-        </div>
-      ))}
-    </div>
   );
 }
