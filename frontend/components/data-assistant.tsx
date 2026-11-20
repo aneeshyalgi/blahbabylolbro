@@ -81,7 +81,7 @@ export function DataAssistant() {
   };
 
   return (
-    <div className="fixed bottom-5 right-5 z-50 flex flex-col items-end gap-3">
+    <div className="fixed bottom-5 right-5 z-50 flex flex-col items-end gap-3" data-floating-assistant="">
       {open && (
         <section
           className="flex h-[min(520px,calc(100vh-96px))] w-[min(390px,calc(100vw-32px))] flex-col overflow-hidden rounded-lg border bg-background shadow-2xl"

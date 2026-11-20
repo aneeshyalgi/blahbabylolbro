@@ -1,477 +1,179 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useTranslations } from "next-intl";
-import { Play, Loader2, Download, Maximize, X } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { API_ENDPOINTS } from "@/lib/api-config";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { useEffect, useState } from "react";
+import { useLocale, useTranslations } from "next-intl";
+import { ChevronDown, CircleAlert, Download, Loader2, Maximize2, Play, TableProperties, X } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { EmptyState, PANEL, SECONDARY_BUTTON, Tag, WorkingBar, formatDateTime, relativeTime } from "@/components/workspace/ui";
+import { downloadRunExcel, RunResultView, type RunResult } from "@/components/results/run-data-dialog";
 
-interface ResultDataSectionProps {
-  isLoading?: boolean;
-  datasetId?: string | null;
-  selectedCodeId?: string | null;
-  selectedClusterId?: string | null;
-  executionTimestamp?: string | null;
-  runRequestNonce?: number;
-  onRunActionStateChange?: (controls: {
-    disabled: boolean;
-    executing: boolean;
-    label: string;
-  }) => void;
-  resultData?: unknown;
-  onResultDataChange?: (data: unknown) => void;
-  /** Called after a run completes and execution is linked to a cluster (so parent can refresh execution lists). */
-  onRunComplete?: () => void;
-}
+export type RunError = { message: string; line?: number | null; traceback?: string | null };
 
-const STORAGE_LAST_EXECUTION = "dataflow_results_last_execution";
-
-function getStoredLastExecution(): { execution_id: string; dataset_id: string; code_id: string } | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = localStorage.getItem(STORAGE_LAST_EXECUTION);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as { execution_id?: string; dataset_id?: string; code_id?: string };
-    if (parsed?.execution_id && parsed?.dataset_id && parsed?.code_id) return parsed as { execution_id: string; dataset_id: string; code_id: string };
-    return null;
-  } catch {
-    return null;
-  }
-}
-
+/**
+ * The result panel of the Results tab: the cluster's latest run (or the one just made) with its figures and table,
+ * the error of a failed run, Excel export and a full-screen view.
+ */
 export function ResultDataSection({
-  isLoading = false,
-  datasetId,
-  selectedCodeId,
-  selectedClusterId,
-  executionTimestamp,
-  runRequestNonce = 0,
-  onRunActionStateChange,
-  resultData: resultDataProp,
-  onResultDataChange,
-  onRunComplete,
-}: ResultDataSectionProps) {
-  const [executing, setExecuting] = useState(false);
-  const [resultDataLocal, setResultDataLocal] = useState<any>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [fullScreenOpen, setFullScreenOpen] = useState(false);
-  const t = useTranslations("resultData");
+  result,
+  runAt,
+  loading,
+  running,
+  error,
+  codeName,
+  datasetName,
+  onDismissError,
+}: {
+  result: RunResult | null;
+  runAt: string | null;
+  loading: boolean;
+  running: boolean;
+  error: RunError | null;
+  codeName: string;
+  datasetName: string;
+  onDismissError: () => void;
+}) {
+  const t = useTranslations("resultsTab");
+  const locale = useLocale();
+  const [fullScreen, setFullScreen] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [traceOpen, setTraceOpen] = useState(false);
+  const hasRows = Boolean(result?.data?.length);
 
-  const resultData = onResultDataChange != null ? resultDataProp : resultDataLocal;
-  const setResultData = onResultDataChange ?? setResultDataLocal;
-  const runDisabled = executing || !datasetId || !selectedCodeId;
-
-  // Clear results when dataset changes
   useEffect(() => {
-    if (onResultDataChange) onResultDataChange(null);
-    else setResultDataLocal(null);
-    setError(null);
-  }, [datasetId, selectedCodeId]);
+    if (!fullScreen) return;
+    const close = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setFullScreen(false);
+    };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [fullScreen]);
 
-  // Restore last result when dataset + code match stored execution (e.g. after tab switch or refresh)
   useEffect(() => {
-    if (!datasetId || !selectedCodeId || !setResultData) return;
-    const currentEmpty = resultData == null || !(resultData as { data?: unknown[] })?.data?.length;
-    if (!currentEmpty) return;
-    const last = getStoredLastExecution();
-    if (!last || last.dataset_id !== datasetId || last.code_id !== selectedCodeId) return;
-    let cancelled = false;
-    fetch(API_ENDPOINTS.resultById(last.execution_id))
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (!cancelled && data?.data != null) setResultData(data);
-      })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, [datasetId, selectedCodeId, resultData, setResultData]);
+    setTraceOpen(false);
+  }, [error]);
 
-  const performRun = async () => {
-    if (!datasetId || !selectedCodeId) return;
-    const response = await fetch(API_ENDPOINTS.execute, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        dataset_id: datasetId,
-        code_id: selectedCodeId,
-      }),
-    });
-    const result = await response.json();
-    if (!response.ok || result.status === "error") {
-      setError(result.error || result.detail || `Execution failed (${response.status})`);
-      return;
-    }
-    if (!result.execution_id || !result.dataset_id || !result.code_id) {
-      setError("Execution completed without the required result identifiers.");
-      return;
-    }
-    setResultData(result);
-    if (typeof window !== "undefined" && result.execution_id && result.dataset_id && result.code_id) {
-      localStorage.setItem(
-        STORAGE_LAST_EXECUTION,
-        JSON.stringify({
-          execution_id: result.execution_id,
-          dataset_id: result.dataset_id,
-          code_id: result.code_id,
-        })
-      );
-    }
+  useEffect(() => {
+    setExportError(null);
+  }, [result?.execution_id]);
 
-    if (selectedClusterId) {
-      try {
-        const linkRes = await fetch(API_ENDPOINTS.clusterLinkExecution(selectedClusterId), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ execution_id: result.execution_id }),
-        });
-        if (!linkRes.ok) {
-          console.error("Link execution to cluster:", await linkRes.text());
-        }
-      } catch (linkError) {
-        console.error("Cluster execution linkage failed:", linkError);
-      }
-    }
-
-    onRunComplete?.();
-  };
-
-  const handleRunCode = async () => {
-    if (!selectedClusterId) {
-      alert(t("selectDatasetAndCode"));
-      return;
-    }
-
-    if (!datasetId || !selectedCodeId) {
-      setError("The selected cluster is missing its dataset or code file.");
-      return;
-    }
-
-    setExecuting(true);
-    setError(null);
-
+  const exportRun = async () => {
+    if (!result?.execution_id || exporting) return;
+    setExporting(true);
+    setExportError(null);
     try {
-      await performRun();
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
+      await downloadRunExcel(result.execution_id);
+    } catch (problem) {
+      setExportError(`${t("exportFailed")}${problem instanceof Error && problem.message ? `: ${problem.message}` : ""}`);
     } finally {
-      setExecuting(false);
-    }
-  };
-
-  useEffect(() => {
-    onRunActionStateChange?.({
-      disabled: runDisabled,
-      executing,
-      label: executing ? t("executing") : t("runCode"),
-    });
-  }, [onRunActionStateChange, runDisabled, executing, t]);
-
-  useEffect(() => {
-    if (runRequestNonce <= 0) return;
-    void handleRunCode()
-  }, [runRequestNonce]);
-
-  const handleExportExcel = async () => {
-    if (!resultData || !resultData.execution_id) {
-      alert(t("noResultsToExport"));
-      return;
-    }
-
-    try {
-      const response = await fetch(API_ENDPOINTS.exportResult(resultData.execution_id), {
-        method: 'GET',
-      });
-
-      if (!response.ok) {
-        throw new Error('Export failed');
-      }
-
-      // Get filename from header or use default
-      const contentDisposition = response.headers.get('content-disposition');
-      let filename = 'results.xlsx';
-      if (contentDisposition) {
-        const match = contentDisposition.match(/filename="(.+)"/);
-        if (match) filename = match[1];
-      }
-
-      // Download the file
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
-    } catch (error: any) {
-      alert(`${t("exportFailed")}: ${error.message}`);
-    }
-  };
-
-  const isComputedCell = (rowIdx: number, columnName: string) => {
-    if (!resultData || !resultData.computed_cells) return false;
-    return resultData.computed_cells.some(
-      (cell: any) => cell.row === rowIdx && cell.column === columnName
-    );
-  };
-
-  const formatValue = (value: number | null) => {
-    if (value === null) return null;
-    if (value < 2) return value.toFixed(2);
-    return value.toLocaleString();
-  };
-
-  /** Format cell for display: show "—" for null, undefined, or numeric 0; otherwise format number or string. */
-  const formatCellDisplay = (value: unknown): string => {
-    if (value === null || value === undefined) return '—';
-    if (typeof value === 'number' && value === 0) return '—';
-    if (typeof value === 'number') return Number(value).toLocaleString();
-    return String(value);
-  };
-
-  const formatExecutionTimestamp = (value: string | null | undefined): string | null => {
-    if (!value) return null;
-    try {
-      return new Date(value).toLocaleString();
-    } catch {
-      return value;
+      setExporting(false);
     }
   };
 
   return (
-    <>
-      <Card>
-      <CardHeader className="pb-4">
-        <div className="flex flex-row flex-wrap items-center justify-between gap-4">
-          <div>
-            <CardTitle className="text-base font-semibold">{t("title")}</CardTitle>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {t("subtitle")}
-            </p>
-          </div>
-          <div className="flex flex-row flex-wrap items-center gap-2">
-            <div className="flex gap-2">
-            {!onRunActionStateChange && (
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button 
-                      size="sm"
-                      onClick={handleRunCode}
-                      disabled={runDisabled}
-                    >
-                      {executing ? (
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      ) : (
-                        <Play className="mr-2 h-4 w-4" />
-                      )}
-                      {executing ? t("executing") : t("runCode")}
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p>{t("executeTooltip")}</p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
+    <section className={PANEL} aria-label={t("resultTitle")}>
+      <div className="flex flex-wrap items-center gap-3 border-b border-[#1f252e] px-5 py-3.5">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[#252a33] bg-[#0f141b]">
+          <TableProperties className="h-4 w-4 text-[#aab3c2]" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <h3 className="text-[14px] font-semibold text-white">{t("resultTitle")}</h3>
+          <p className="mt-0.5 truncate text-[12px] text-[#8c96a8]">
+            {runAt ? (
+              <span title={formatDateTime(runAt, locale)}>
+                {t("shownRun", { time: formatDateTime(runAt, locale), ago: relativeTime(runAt, locale) })}
+              </span>
+            ) : (
+              t("resultDescription")
             )}
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button 
-                    variant="outline" 
-                    size="sm"
-                    onClick={handleExportExcel}
-                    disabled={!resultData || !resultData.data}
-                  >
-                    <Download className="mr-2 h-4 w-4" />
-                    {t("exportExcel")}
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>{t("exportTooltip")}</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button 
-                    variant="ghost" 
-                    size="sm"
-                    onClick={() => setFullScreenOpen(true)}
-                    disabled={!resultData || !resultData.data}
-                  >
-                    <Maximize className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>{t("fullScreenTooltip")}</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-            </div>
-          </div>
+          </p>
         </div>
-      </CardHeader>
-      <CardContent>
-        {error && (
-          <div className="mb-4 p-4 bg-destructive/10 border border-destructive rounded-lg">
-            <p className="text-sm font-semibold text-destructive mb-2">{t("executionError")}</p>
-            <pre className="text-xs text-destructive whitespace-pre-wrap">{error}</pre>
-          </div>
-        )}
-        {isLoading || executing ? (
-          <div className="space-y-3">
-            {[1, 2, 3, 4].map((i) => (
-              <Skeleton key={i} className="h-12 w-full" />
-            ))}
-          </div>
-        ) : !resultData || !resultData.data || resultData.data.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-12 text-center">
-            <Play className="mb-4 h-12 w-12 text-muted-foreground" />
-            <h3 className="text-lg font-medium text-foreground">
-              {t("noResultData")}
-            </h3>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {t("runCodeToGenerate")}
-            </p>
-          </div>
-        ) : (
-          <div>
-            <div className="mb-4 p-3 bg-muted rounded-lg">
-              <p className="text-sm text-muted-foreground">
-                <strong>{t("executionSummary")}</strong> {resultData.summary.total_values_computed} {t("valuesComputedAcross")} {Object.keys(resultData.summary.computed_by_column || {}).length} {t("columns")}
-              </p>
-              {formatExecutionTimestamp(executionTimestamp) && (
-                <p className="mt-2 text-xs text-muted-foreground">
-                  <strong>Execution timestamp:</strong> {formatExecutionTimestamp(executionTimestamp)}
-                </p>
-              )}
-            </div>
-            <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
-              <Table>
-                <TableHeader className="sticky top-0 bg-card">
-                    <TableRow>
-                    {resultData.summary.columns.map((col: string) => (
-                      <TableHead key={col} className="whitespace-nowrap">
-                        {col}
-                      </TableHead>
-                    ))}
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {resultData.data.map((row: any, rowIdx: number) => (
-                    <TableRow key={rowIdx}>
-                      {resultData.summary.columns.map((col: string) => {
-                        const value = row[col];
-                        const isComputed = isComputedCell(rowIdx, col);
-                        const isNumeric = typeof value === 'number';
-                        
-                        return (
-                          <TableCell 
-                            key={col} 
-                            className={`whitespace-nowrap ${isNumeric ? 'text-right' : ''} ${
-                              isComputed ? 'bg-success/15 text-success-foreground font-medium' : ''
-                            }`}
-                          >
-                            {formatCellDisplay(value)}
-                          </TableCell>
-                        );
-                      })}
-                    </TableRow>
-                  ))}
-              </TableBody>
-            </Table>
-          </div>
-          <div className="mt-4 flex items-center gap-4 text-xs text-muted-foreground">
-            <div className="flex items-center gap-2">
-              <div className="h-3 w-3 rounded bg-success/15 border border-success/30" />
-              <span>{t("computedValues")}</span>
-            </div>
-          </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <button type="button" className={SECONDARY_BUTTON} onClick={() => void exportRun()} disabled={!hasRows || exporting || running}>
+            {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+            {t("exportExcel")}
+          </button>
+          <button type="button" className={cn(SECONDARY_BUTTON, "px-2.5")} onClick={() => setFullScreen(true)} disabled={!hasRows} aria-label={t("fullScreen")} title={t("fullScreen")}>
+            <Maximize2 className="h-4 w-4" />
+          </button>
         </div>
-        )}
-      </CardContent>
-      
-      {/* Full Screen View */}
-      {fullScreenOpen && (
-        <div className="fixed inset-0 z-50 bg-background/95 backdrop-blur-sm flex items-center justify-center p-4 md:p-8 overflow-y-auto">
-          <div className="w-full max-w-7xl flex flex-col gap-4 my-auto">
-            <div className="flex items-center justify-between gap-4 sticky top-0 bg-background/95 backdrop-blur-sm pb-4 z-10">
-              <div className="flex-1 min-w-0">
-                <h3 className="text-xl md:text-2xl font-semibold text-foreground truncate">
-                  {t("fullResultData")}
-                </h3>
-                <p className="text-sm text-muted-foreground mt-1">
-                  {resultData && `${resultData.data?.length || 0} rows × ${resultData.summary?.columns?.length || 0} columns`}
-                </p>
+      </div>
+
+      <div className="space-y-4 p-5">
+        {exportError ? <p role="alert" className="rounded-md border border-rose-400/30 bg-rose-400/[0.07] px-3 py-2 text-[12.5px] text-rose-200">{exportError}</p> : null}
+
+        {error ? (
+          <div role="alert" className="rounded-lg border border-rose-400/30 bg-rose-400/[0.06] px-4 py-3">
+            <div className="flex items-start gap-3">
+              <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-rose-300" />
+              <div className="min-w-0 flex-1">
+                <p className="text-[13px] font-semibold text-rose-100">{error.line ? t("runFailedLine", { line: error.line, code: codeName }) : t("runFailed")}</p>
+                <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-[12px] leading-5 text-rose-200">{error.message}</pre>
+                {error.traceback ? (
+                  <div className="mt-2">
+                    <button type="button" onClick={() => setTraceOpen((open) => !open)} className="inline-flex items-center gap-1 text-[11.5px] font-medium text-rose-200/80 hover:text-rose-100" aria-expanded={traceOpen}>
+                      <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", traceOpen && "rotate-180")} />
+                      {traceOpen ? t("hideDetails") : t("showDetails")}
+                    </button>
+                    {traceOpen ? (
+                      <pre className="mt-2 max-h-[260px] overflow-auto rounded-md border border-rose-400/20 bg-[#0b0f15] p-3 font-mono text-[11px] leading-[18px] text-[#c9d1dc]">{error.traceback}</pre>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
-              <button
-                onClick={() => setFullScreenOpen(false)}
-                className="p-2 md:p-3 rounded-lg bg-card border border-border text-muted-foreground hover:text-foreground hover:bg-accent transition-all"
-                aria-label="Exit fullscreen"
-              >
-                <X className="w-5 h-5" />
+              <button type="button" onClick={onDismissError} aria-label={t("dismiss")} className="rounded p-1 text-rose-200/70 hover:bg-rose-400/10 hover:text-rose-100">
+                <X className="h-3.5 w-3.5" />
               </button>
             </div>
-            <div className="flex-1 overflow-auto rounded-lg border border-border bg-card">
-              {resultData && resultData.data && (
-                <Table>
-                  <TableHeader className="sticky top-0 bg-card z-10">
-                    <TableRow>
-                      {resultData.summary.columns.map((col: string) => (
-                        <TableHead key={col} className="whitespace-nowrap">
-                          {col}
-                        </TableHead>
-                      ))}
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {resultData.data.map((row: any, rowIdx: number) => (
-                      <TableRow key={rowIdx}>
-                        {resultData.summary.columns.map((col: string) => {
-                          const value = row[col];
-                          const isComputed = isComputedCell(rowIdx, col);
-                          const isNumeric = typeof value === 'number';
+          </div>
+        ) : null}
 
-                          return (
-                            <TableCell
-                              key={col}
-                              className={`whitespace-nowrap ${isNumeric ? 'text-right' : ''} ${
-                                isComputed ? 'bg-success/15 text-success-foreground font-medium' : ''
-                              }`}
-                            >
-                              {formatCellDisplay(value)}
-                            </TableCell>
-                          );
-                        })}
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
+        {running ? (
+          <div className="space-y-2" role="status">
+            <p className="text-[12.5px] text-[#aab3c2]">{t("runningStatus", { code: codeName, dataset: datasetName })}</p>
+            <WorkingBar />
+          </div>
+        ) : null}
+
+        {loading && !hasRows ? (
+          <div className="space-y-3" aria-busy="true">
+            <div className="grid grid-cols-3 gap-2.5">
+              {[0, 1, 2].map((index) => <Skeleton key={index} className="h-[62px] bg-[#121821]" />)}
+            </div>
+            <Skeleton className="h-[220px] bg-[#121821]" />
+          </div>
+        ) : hasRows && result ? (
+          <div className={cn("transition-opacity", running && "opacity-50")}>
+            <RunResultView result={result} maxHeight="520px" />
+          </div>
+        ) : !running ? (
+          <EmptyState icon={Play} title={t("noResultTitle")} hint={t("noResultHint")} className="py-10" />
+        ) : null}
+      </div>
+
+      {fullScreen && result ? (
+        <div className="fixed inset-0 z-50 flex flex-col bg-[#05080c]/95 p-6 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label={t("fullResultTitle")}>
+          <div className="mx-auto flex w-full max-w-[1800px] min-h-0 flex-1 flex-col gap-4">
+            <div className="flex items-center gap-3">
+              <div className="min-w-0 flex-1">
+                <h3 className="text-[17px] font-semibold text-white">{t("fullResultTitle")}</h3>
+                <p className="mt-0.5 text-[12.5px] text-[#8c96a8]">
+                  {t("fullResultMeta", { rows: result.data?.length ?? 0, columns: result.summary?.columns?.length ?? 0 })}
+                  {runAt ? ` · ${formatDateTime(runAt, locale)}` : ""}
+                </p>
+              </div>
+              <Tag>{t("escToClose")}</Tag>
+              <button type="button" onClick={() => setFullScreen(false)} aria-label={t("close")} className="flex h-9 w-9 items-center justify-center rounded-md border border-[#2a313c] bg-[#0f141b] text-[#aab3c2] hover:border-[#f5c400]/40 hover:text-white">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="min-h-0 flex-1">
+              <RunResultView result={result} maxHeight="calc(100vh - 260px)" />
             </div>
           </div>
         </div>
-      )}
-    </Card>
-    </>
+      ) : null}
+    </section>
   );
 }

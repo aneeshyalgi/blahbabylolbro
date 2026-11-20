@@ -1,47 +1,26 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useTranslations } from "next-intl";
-import { Search, Plus, Trash2, Play, RefreshCw, Pencil, Maximize2, X } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
+import { useLocale, useTranslations } from "next-intl";
+import {
+  ArrowRight,
+  Boxes,
+  CalendarDays,
+  Clock3,
+  Database,
+  FileCode2,
+  GitCompareArrows,
+  History,
+  Loader2,
+  Maximize2,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Star,
+  Trash2,
+} from "lucide-react";
 import { API_ENDPOINTS } from "@/lib/api-config";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { Textarea } from "@/components/ui/textarea";
-import { useToast } from "@/hooks/use-toast";
-import { useClusterSelection } from "@/context/cluster-selection-context";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Badge } from "@/components/ui/badge";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -52,20 +31,43 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useToast } from "@/hooks/use-toast";
+import { useClusterSelection } from "@/context/cluster-selection-context";
+import { cn } from "@/lib/utils";
+import {
+  EmptyState,
+  EYEBROW,
+  FactTile,
+  IconAction,
+  INPUT,
+  PageHeader,
+  PANEL,
+  PRIMARY_BUTTON,
+  SearchField,
+  SECONDARY_BUTTON,
+  Tag,
+  formatDateTime,
+  moveInList,
+  relativeTime,
+} from "@/components/workspace/ui";
+import { RunDataDialog } from "@/components/results/run-data-dialog";
 
 interface Cluster {
   id: string;
   name: string;
   reporting_date: string;
   dataset_id: string;
-  dataset_name: string;
-  dataset_version: string;
-  code_id: string;
-  code_filename: string;
-  code_version: string;
+  dataset_name: string | null;
+  dataset_version: string | null;
+  code_id: string | null;
+  code_filename: string | null;
+  code_version: string | null;
   created_date: string;
-  description: string;
-  is_reference: boolean;
+  description: string | null;
+  is_reference: boolean | number;
 }
 
 interface Dataset {
@@ -79,1001 +81,740 @@ interface CodeFile {
   id: string;
   filename: string;
   version: string;
-  description: string;
+  description?: string;
 }
 
-interface ClusterExecution {
+interface ClusterRun {
   id: string;
+  cluster_id: string;
   execution_id: string;
   executed_date: string;
-  dataset_name: string;
-  dataset_version: string;
+  dataset_name: string | null;
+  dataset_version: string | null;
   code_filename: string | null;
   code_version: string | null;
-  summary: any;
+  summary?: { total_values_computed?: number } | null;
 }
 
-const STORAGE_CLUSTER_ID = "dataflow_clusters_selected_id";
+type ClusterForm = { name: string; reporting_date: string; dataset_id: string; code_id: string; description: string; is_reference: boolean };
 
+const STORAGE_CLUSTER_ID = "dataflow_clusters_selected_id";
+const EMPTY_FORM: ClusterForm = { name: "", reporting_date: "", dataset_id: "", code_id: "", description: "", is_reference: false };
+const TRIGGER = "h-9 w-full min-w-0 border-[#252a33] bg-[#0f141b] text-[13px] text-[#e5e9f0] hover:bg-[#121821] dark:bg-[#0f141b] dark:hover:bg-[#121821]";
+
+function formatDay(value: string | null | undefined, locale: string): string {
+  if (!value) return "–";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString(locale, { dateStyle: "medium" });
+}
+
+/** "2026-11-17" for a date input, from a stored date or timestamp. */
+function dateInputValue(value: string | null | undefined): string {
+  if (!value) return "";
+  if (/^\d{4}-\d{2}-\d{2}/.test(value)) return value.slice(0, 10);
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "" : date.toISOString().slice(0, 10);
+}
+
+function withVersion(name: string | null | undefined, version: string | null | undefined): string {
+  if (!name) return "–";
+  return version ? `${name} · ${version}` : name;
+}
+
+async function errorText(response: Response): Promise<string> {
+  const payload = await response.json().catch(() => ({}));
+  return typeof payload?.detail === "string" ? payload.detail : `HTTP ${response.status}`;
+}
+
+/** The Clusters tab: a cluster ties a dataset and a code file to a reporting date; its runs are listed here. */
 export function ClusteringTabContent() {
-  const [clusters, setClusters] = useState<Cluster[]>([]);
+  const t = useTranslations("clustersTab");
+  const locale = useLocale();
+  const { toast } = useToast();
+  const { baseClusterId, comparisonClusterId, setBaseClusterId, setComparisonClusterId } = useClusterSelection();
+  const [clusters, setClusters] = useState<Cluster[] | null>(null);
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [codeFiles, setCodeFiles] = useState<CodeFile[]>([]);
-  const [selectedCluster, setSelectedCluster] = useState<Cluster | null>(null);
-  const [savedClusterIdToRestore, setSavedClusterIdToRestore] = useState<string | null>(() =>
-    typeof window !== "undefined" ? localStorage.getItem(STORAGE_CLUSTER_ID) : null
-  );
-  const [executions, setExecutions] = useState<ClusterExecution[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState("");
-  const [executing, setExecuting] = useState(false);
-  const [detailsDialogOpen, setDetailsDialogOpen] = useState(false);
-  const [viewingCluster, setViewingCluster] = useState<Cluster | null>(null);
-  const [isFullscreen, setIsFullscreen] = useState(false);
-  const [viewingExecutionData, setViewingExecutionData] = useState<any>(null);
-  const [loadingExecutionData, setLoadingExecutionData] = useState(false);
-  const [editFormData, setEditFormData] = useState<{
-    name: string;
-    reporting_date: string;
-    dataset_id: string;
-    code_id: string;
-  }>({
-    name: "",
-    reporting_date: "",
-    dataset_id: "",
-    code_id: "",
-  });
-  const [updatingCluster, setUpdatingCluster] = useState(false);
-  const [executionToDelete, setExecutionToDelete] = useState<ClusterExecution | null>(null);
-  const [deletingExecution, setDeletingExecution] = useState(false);
-  const { toast } = useToast();
-  const {
-    baseClusterId,
-    comparisonClusterId,
-    setBaseClusterId,
-    setComparisonClusterId,
-  } = useClusterSelection();
-  const t = useTranslations("clustering");
-  const tCommon = useTranslations("common");
+  const [runs, setRuns] = useState<ClusterRun[] | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [form, setForm] = useState<ClusterForm>(EMPTY_FORM);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [editing, setEditing] = useState<Cluster | null>(null);
+  const [editForm, setEditForm] = useState<ClusterForm>(EMPTY_FORM);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<Cluster | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [viewing, setViewing] = useState<ClusterRun | null>(null);
+  const [runToRemove, setRunToRemove] = useState<ClusterRun | null>(null);
+  const [removingRun, setRemovingRun] = useState(false);
+  const restored = useRef(false);
+  const listRef = useRef<HTMLDivElement>(null);
 
-  // Form state
-  const [formData, setFormData] = useState({
-    name: "",
-    reporting_date: "",
-    dataset_id: "",
-    code_id: "",
-    description: "",
-    is_reference: false,
-  });
-
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (selectedCluster?.id) localStorage.setItem(STORAGE_CLUSTER_ID, selectedCluster.id);
-    else localStorage.removeItem(STORAGE_CLUSTER_ID);
-  }, [selectedCluster?.id]);
-
-  useEffect(() => {
-    if (selectedCluster) {
-      loadExecutions(selectedCluster.id);
-    }
-  }, [selectedCluster]);
-
-  // Live search effect
-  useEffect(() => {
-    const delayDebounce = setTimeout(() => {
-      handleSearch();
-    }, 300);
-
-    return () => clearTimeout(delayDebounce);
-  }, [searchTerm]);
-
-  const loadData = async () => {
+  const loadAll = useCallback(async () => {
+    setLoadFailed(false);
     try {
-      setLoading(true);
-      const [clustersRes, datasetsRes, codeFilesRes] = await Promise.all([
+      const [clustersResponse, datasetsResponse, codeResponse, runsResponse] = await Promise.all([
         fetch(API_ENDPOINTS.clusters),
         fetch(API_ENDPOINTS.datasets),
         fetch(API_ENDPOINTS.code),
+        fetch(API_ENDPOINTS.clustersExecutions),
       ]);
-
-      const clustersData = await clustersRes.json();
-      const datasetsData = await datasetsRes.json();
-      const codeFilesData = await codeFilesRes.json();
-
-      const clustersList = clustersData.clusters || [];
-      setClusters(clustersList);
-      setDatasets(datasetsData.datasets || []);
-      setCodeFiles(codeFilesData.code_files || []);
-      if (savedClusterIdToRestore && clustersList.length > 0) {
-        const found = clustersList.find((c: Cluster) => c.id === savedClusterIdToRestore);
-        if (found) setSelectedCluster(found);
-        setSavedClusterIdToRestore(null);
-      }
-
-      if (baseClusterId && !clustersList.some((c: Cluster) => c.id === baseClusterId)) {
-        setBaseClusterId("");
-      }
-      if (comparisonClusterId && !clustersList.some((c: Cluster) => c.id === comparisonClusterId)) {
-        setComparisonClusterId("");
-      }
-    } catch (error) {
-      console.error("Error loading data:", error);
-      toast({
-        title: t("toastLoadError"),
-        description: t("toastLoadErrorDesc"),
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
+      if (!clustersResponse.ok) throw new Error(`HTTP ${clustersResponse.status}`);
+      const list: Cluster[] = (await clustersResponse.json()).clusters ?? [];
+      setClusters(list);
+      setDatasets(datasetsResponse.ok ? (await datasetsResponse.json()).datasets ?? [] : []);
+      setCodeFiles(codeResponse.ok ? (await codeResponse.json()).code_files ?? [] : []);
+      setRuns(runsResponse.ok ? (await runsResponse.json()).executions ?? [] : []);
+    } catch {
+      setLoadFailed(true);
+      setClusters((current) => current ?? []);
+      setRuns((current) => current ?? []);
     }
-  };
+  }, []);
 
-  const loadExecutions = async (clusterId: string) => {
+  useEffect(() => {
+    void loadAll();
+  }, [loadAll]);
+
+  // The remembered selection, once the clusters are known; comparison defaults pointing at deleted clusters are cleared.
+  useEffect(() => {
+    if (!clusters || loadFailed) return;
+    if (!restored.current) {
+      restored.current = true;
+      try {
+        const saved = localStorage.getItem(STORAGE_CLUSTER_ID);
+        if (saved && clusters.some((cluster) => cluster.id === saved)) setSelectedId(saved);
+      } catch {
+        // Storage unavailable: nothing remembered.
+      }
+    } else if (selectedId && !clusters.some((cluster) => cluster.id === selectedId)) {
+      setSelectedId(null);
+    }
+    if (baseClusterId && !clusters.some((cluster) => cluster.id === baseClusterId)) setBaseClusterId("");
+    if (comparisonClusterId && !clusters.some((cluster) => cluster.id === comparisonClusterId)) setComparisonClusterId("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clusters]);
+
+  useEffect(() => {
+    if (!restored.current) return;
     try {
-      const response = await fetch(API_ENDPOINTS.clusterById(clusterId));
-      const data = await response.json();
-      setExecutions(data.executions || []);
-    } catch (error) {
-      console.error("Error loading executions:", error);
+      if (selectedId) localStorage.setItem(STORAGE_CLUSTER_ID, selectedId);
+      else localStorage.removeItem(STORAGE_CLUSTER_ID);
+    } catch {
+      // Storage unavailable: the selection lasts for this visit.
     }
+  }, [selectedId]);
+
+  const runsByCluster = useMemo(() => {
+    const grouped: Record<string, ClusterRun[]> = {};
+    for (const run of runs ?? []) (grouped[run.cluster_id] ??= []).push(run);
+    return grouped;
+  }, [runs]);
+
+  const visible = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return clusters ?? [];
+    return (clusters ?? []).filter((cluster) =>
+      [cluster.name, cluster.description, cluster.dataset_name, cluster.code_filename].some((text) => (text ?? "").toLowerCase().includes(needle)),
+    );
+  }, [clusters, query]);
+
+  const selected = clusters?.find((cluster) => cluster.id === selectedId) ?? null;
+  const selectedRuns = selected ? runsByCluster[selected.id] ?? [] : [];
+
+  const nameTaken = (name: string, except?: string) => {
+    const wanted = name.trim().toLowerCase();
+    return Boolean(wanted) && (clusters ?? []).some((cluster) => cluster.id !== except && cluster.name.trim().toLowerCase() === wanted);
   };
+  const createNameTaken = nameTaken(form.name);
+  const canCreate = Boolean(form.name.trim() && form.reporting_date && form.dataset_id && form.code_id) && !createNameTaken && !creating;
 
-  const handleCreateCluster = async () => {
-    if (!formData.name || !formData.reporting_date || !formData.dataset_id || !formData.code_id) {
-      toast({
-        title: t("toastMissingFields"),
-        description: t("toastMissingFieldsDesc"),
-        variant: "destructive",
-      });
-      return;
-    }
-
+  const create = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!canCreate) return;
+    setCreating(true);
+    setCreateError(null);
     try {
       const response = await fetch(API_ENDPOINTS.clusters, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(formData),
+        body: JSON.stringify({ ...form, name: form.name.trim(), description: form.description.trim() }),
       });
-
-      if (!response.ok) throw new Error("Failed to create cluster");
-
-      toast({
-        title: t("toastCreateSuccess"),
-        description: t("toastCreateSuccessDesc"),
-      });
-
-      // Reset form
-      setFormData({
-        name: "",
-        reporting_date: "",
-        dataset_id: "",
-        code_id: "",
-        description: "",
-        is_reference: false,
-      });
-
-      loadData();
-    } catch (error) {
-      console.error("Error creating cluster:", error);
-      toast({
-        title: t("toastCreateFailed"),
-        description: t("toastCreateFailedDesc"),
-        variant: "destructive",
-      });
+      if (!response.ok) throw new Error(await errorText(response));
+      const payload = await response.json().catch(() => ({}));
+      toast({ title: t("created"), description: t("createdDesc", { name: form.name.trim() }) });
+      setForm(EMPTY_FORM);
+      await loadAll();
+      if (payload?.cluster_id) setSelectedId(payload.cluster_id);
+    } catch (problem) {
+      setCreateError(problem instanceof Error ? problem.message : t("createFailed"));
+    } finally {
+      setCreating(false);
     }
   };
 
-  const handleDeleteCluster = async (clusterId: string) => {
-    try {
-      const response = await fetch(API_ENDPOINTS.clusterById(clusterId), {
-        method: "DELETE",
-      });
-
-      if (!response.ok) throw new Error("Failed to delete cluster");
-
-      toast({
-        title: t("toastDeleteSuccess"),
-        description: t("toastDeleteSuccessDesc"),
-      });
-
-      if (selectedCluster?.id === clusterId) {
-        setSelectedCluster(null);
-        setExecutions([]);
-      }
-
-      loadData();
-    } catch (error) {
-      console.error("Error deleting cluster:", error);
-      toast({
-        title: t("toastDeleteFailed"),
-        description: t("toastDeleteFailedDesc"),
-        variant: "destructive",
-      });
-    }
-  };
-
-  const handleEditCluster = (cluster: Cluster) => {
-    setViewingCluster(cluster);
-    const reportingDateStr = cluster.reporting_date;
-    const reportingDateForInput =
-      typeof reportingDateStr === "string" && /^\d{4}-\d{2}-\d{2}/.test(reportingDateStr)
-        ? reportingDateStr.slice(0, 10)
-        : reportingDateStr
-          ? new Date(reportingDateStr).toISOString().slice(0, 10)
-          : "";
-    setEditFormData({
+  const openEdit = (cluster: Cluster) => {
+    setEditing(cluster);
+    setEditError(null);
+    setEditForm({
       name: cluster.name ?? "",
-      reporting_date: reportingDateForInput,
-      dataset_id: cluster.dataset_id,
-      code_id: cluster.code_id,
+      reporting_date: dateInputValue(cluster.reporting_date),
+      dataset_id: cluster.dataset_id ?? "",
+      code_id: cluster.code_id ?? "",
+      description: cluster.description ?? "",
+      is_reference: Boolean(cluster.is_reference),
     });
-    setDetailsDialogOpen(true);
   };
 
-  const handleUpdateCluster = async () => {
-    if (!viewingCluster) return;
-    if (!editFormData.name?.trim()) {
-      toast({
-        title: t("toastMissingName"),
-        description: t("toastMissingNameDesc"),
-        variant: "destructive",
-      });
-      return;
-    }
-    if (!editFormData.reporting_date?.trim()) {
-      toast({
-        title: t("toastMissingDate"),
-        description: t("toastMissingDateDesc"),
-        variant: "destructive",
-      });
-      return;
-    }
-    const clusterId = viewingCluster.id;
+  const editNameTaken = editing ? nameTaken(editForm.name, editing.id) : false;
+  const canSaveEdit = Boolean(editing && editForm.name.trim() && editForm.reporting_date) && !editNameTaken && !savingEdit;
+
+  const saveEdit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!editing || !canSaveEdit) return;
+    setSavingEdit(true);
+    setEditError(null);
     try {
-      setUpdatingCluster(true);
-      const response = await fetch(API_ENDPOINTS.clusterById(clusterId), {
+      const response = await fetch(API_ENDPOINTS.clusterById(editing.id), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name: editFormData.name,
-          reporting_date: editFormData.reporting_date,
-          dataset_id: editFormData.dataset_id,
-          code_id: editFormData.code_id,
+          name: editForm.name.trim(),
+          reporting_date: editForm.reporting_date,
+          dataset_id: editForm.dataset_id,
+          code_id: editForm.code_id,
         }),
       });
-      if (!response.ok) throw new Error("Failed to update cluster");
-      toast({ title: t("toastUpdateSuccess"), description: t("toastUpdateSuccessDesc") });
-      setDetailsDialogOpen(false);
-      setViewingCluster(null);
-      loadData();
-      if (selectedCluster?.id === clusterId) {
-        setSelectedCluster(null);
-      }
-    } catch (error) {
-      console.error("Error updating cluster:", error);
-      toast({
-        title: t("toastUpdateFailed"),
-        description: t("toastUpdateFailedDesc"),
-        variant: "destructive",
-      });
+      if (!response.ok) throw new Error(await errorText(response));
+      toast({ title: t("updated"), description: t("updatedDesc", { name: editForm.name.trim() }) });
+      setEditing(null);
+      await loadAll();
+    } catch (problem) {
+      setEditError(problem instanceof Error ? problem.message : t("updateFailed"));
     } finally {
-      setUpdatingCluster(false);
+      setSavingEdit(false);
     }
   };
 
-  const handleDeleteExecution = (execution: ClusterExecution) => {
-    setExecutionToDelete(execution);
-  };
-
-  const handleConfirmDeleteExecution = async () => {
-    if (!executionToDelete || !selectedCluster) return;
-    setDeletingExecution(true);
+  const deleteCluster = async () => {
+    if (!confirmDelete) return;
+    setDeleting(true);
     try {
-      const response = await fetch(API_ENDPOINTS.clusterExecutionDelete(executionToDelete.id), {
-        method: "DELETE",
-      });
-      if (!response.ok) throw new Error("Failed to delete execution");
-      toast({
-        title: t("toastExecutionRemoved"),
-        description: t("toastExecutionRemovedDesc"),
-      });
-      setExecutionToDelete(null);
-      loadExecutions(selectedCluster.id);
-    } catch (error) {
-      toast({
-        title: t("toastRemoveFailed"),
-        description: t("toastRemoveFailedDesc"),
-        variant: "destructive",
-      });
+      const response = await fetch(API_ENDPOINTS.clusterById(confirmDelete.id), { method: "DELETE" });
+      if (!response.ok) throw new Error(await errorText(response));
+      toast({ title: t("deleted"), description: t("deletedDesc", { name: confirmDelete.name }) });
+      if (selectedId === confirmDelete.id) setSelectedId(null);
+      setConfirmDelete(null);
+      setEditing(null);
+      await loadAll();
+    } catch (problem) {
+      toast({ title: t("deleteFailed"), description: problem instanceof Error ? problem.message : undefined, variant: "destructive" });
     } finally {
-      setDeletingExecution(false);
+      setDeleting(false);
     }
   };
 
-  const handleViewExecutionData = async (executionId: string) => {
+  const removeRun = async () => {
+    if (!runToRemove) return;
+    setRemovingRun(true);
     try {
-      setLoadingExecutionData(true);
-      setIsFullscreen(true);
-      
-      const response = await fetch(API_ENDPOINTS.resultById(executionId));
-      if (!response.ok) throw new Error("Failed to load execution data");
-      
-      const data = await response.json();
-      setViewingExecutionData(data);
-    } catch (error) {
-      console.error("Error loading execution data:", error);
-      toast({
-        title: t("toastLoadExecutionFailed"),
-        description: t("toastLoadExecutionFailedDesc"),
-        variant: "destructive",
-      });
-      setIsFullscreen(false);
+      const response = await fetch(API_ENDPOINTS.clusterExecutionDelete(runToRemove.id), { method: "DELETE" });
+      if (!response.ok) throw new Error(await errorText(response));
+      toast({ title: t("runRemoved"), description: t("runRemovedDesc") });
+      setRunToRemove(null);
+      await loadAll();
+    } catch (problem) {
+      toast({ title: t("removeFailed"), description: problem instanceof Error ? problem.message : undefined, variant: "destructive" });
     } finally {
-      setLoadingExecutionData(false);
+      setRemovingRun(false);
     }
   };
 
-  const handleExecuteCluster = async () => {
-    if (!selectedCluster) {
-      toast({
-        title: t("toastNoClusterSelected"),
-        description: t("toastNoClusterSelectedDesc"),
-        variant: "destructive",
-      });
-      return;
-    }
-
-    try {
-      setExecuting(true);
-      const response = await fetch(
-        API_ENDPOINTS.clusterExecute(selectedCluster.id),
-        { method: "POST" }
-      );
-
-      const result = await response.json();
-
-      if (result.status === "success") {
-        toast({
-          title: t("toastExecuteSuccess"),
-          description: t("toastExecuteSuccessDesc", { count: result.summary?.total_values_computed || 0 }),
-        });
-        loadExecutions(selectedCluster.id);
-      } else {
-        toast({
-          title: t("toastExecutionError"),
-          description: result.error || tCommon("error"),
-          variant: "destructive",
-        });
-      }
-    } catch (error) {
-      console.error("Error executing cluster:", error);
-      toast({
-        title: t("toastExecuteFailed"),
-        description: t("toastExecuteFailedDesc"),
-        variant: "destructive",
-      });
-    } finally {
-      setExecuting(false);
+  const onListKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.target !== event.currentTarget && !(event.target as HTMLElement).dataset?.clusterRow) return;
+    const current = visible.find((cluster) => cluster.id === selectedId);
+    if (moveInList(event.key, visible, current, (cluster) => {
+      setSelectedId(cluster.id);
+      requestAnimationFrame(() => listRef.current?.querySelector<HTMLElement>(`[data-cluster-row="${cluster.id}"]`)?.focus());
+    })) {
+      event.preventDefault();
+    } else if ((event.key === "Enter" || event.key === "F2") && current) {
+      event.preventDefault();
+      openEdit(current);
     }
   };
 
-  const handleSearch = async () => {
-    try {
-      const url = searchTerm
-        ? `${API_ENDPOINTS.clusters}?search=${encodeURIComponent(searchTerm)}`
-        : API_ENDPOINTS.clusters;
-      
-      const response = await fetch(url);
-      const data = await response.json();
-      setClusters(data.clusters || []);
-    } catch (error) {
-      console.error("Error searching clusters:", error);
-    }
-  };
-
-  const formatDate = (dateString: string) => {
-    try {
-      return new Date(dateString).toLocaleDateString();
-    } catch {
-      return dateString;
-    }
-  };
-
-  const formatDateTime = (dateString: string) => {
-    try {
-      return new Date(dateString).toLocaleString();
-    } catch {
-      return dateString;
-    }
-  };
-
-  const formatCellDisplay = (value: unknown): string => {
-    if (value === null || value === undefined) return "—";
-    if (typeof value === "number" && value === 0) return "—";
-    if (typeof value === "number") return Number(value).toLocaleString();
-    return String(value);
-  };
+  const loading = clusters === null;
+  const total = clusters?.length ?? 0;
 
   return (
-    <>
-      <AlertDialog open={!!executionToDelete} onOpenChange={(open) => !open && setExecutionToDelete(null)}>
-        <AlertDialogContent>
+    <div className="space-y-5 pb-16">
+      <PageHeader icon={Boxes} title={t("title")} description={t("description")}>
+        <button type="button" className={SECONDARY_BUTTON} onClick={() => void loadAll()}>
+          <RefreshCw className="h-4 w-4" />
+          {t("refresh")}
+        </button>
+      </PageHeader>
+
+      <div className="grid gap-5 xl:grid-cols-[minmax(300px,360px)_minmax(0,1fr)]">
+        {/* Left: a new cluster */}
+        <div className="min-w-0">
+          <form className={PANEL} onSubmit={(event) => void create(event)} aria-label={t("newTitle")}>
+            <PanelHeading icon={Plus} title={t("newTitle")} description={t("newDescription")} />
+            <div className="space-y-3.5 p-5">
+              <Field label={t("name")} required htmlFor="cluster-name" error={createNameTaken ? t("nameTaken") : undefined}>
+                <input
+                  id="cluster-name"
+                  className={cn(INPUT, createNameTaken && "border-rose-400/60")}
+                  placeholder={t("namePlaceholder")}
+                  value={form.name}
+                  onChange={(event) => setForm({ ...form, name: event.target.value })}
+                  aria-invalid={createNameTaken}
+                />
+              </Field>
+              <Field label={t("reportingDate")} required htmlFor="cluster-date">
+                <input id="cluster-date" type="date" className={cn(INPUT, "[color-scheme:dark]")} value={form.reporting_date} onChange={(event) => setForm({ ...form, reporting_date: event.target.value })} />
+              </Field>
+              <Field label={t("dataset")} required>
+                <Select value={form.dataset_id} onValueChange={(value) => setForm({ ...form, dataset_id: value })}>
+                  <SelectTrigger className={TRIGGER} aria-label={t("dataset")}>
+                    <SelectValue placeholder={t("selectDataset")} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {datasets.map((dataset) => (
+                      <SelectItem key={dataset.id} value={dataset.id}>{withVersion(dataset.user_name || dataset.filename, dataset.version)}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Field label={t("code")} required>
+                <Select value={form.code_id} onValueChange={(value) => setForm({ ...form, code_id: value })}>
+                  <SelectTrigger className={TRIGGER} aria-label={t("code")}>
+                    <SelectValue placeholder={t("selectCode")} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {codeFiles.map((code) => (
+                      <SelectItem key={code.id} value={code.id}>{withVersion(code.filename, code.version)}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Field label={t("descriptionLabel")} htmlFor="cluster-description">
+                <textarea
+                  id="cluster-description"
+                  rows={2}
+                  className={cn(INPUT, "h-auto resize-y py-2 leading-5")}
+                  placeholder={t("descriptionPlaceholder")}
+                  value={form.description}
+                  onChange={(event) => setForm({ ...form, description: event.target.value })}
+                />
+              </Field>
+              <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-[#1f252e] bg-[#0f141b] px-3 py-2.5">
+                <Checkbox checked={form.is_reference} onCheckedChange={(checked) => setForm({ ...form, is_reference: checked === true })} className="mt-0.5 border-[#3a4352] bg-[#0b0f15] data-[state=checked]:border-[#f5c400] data-[state=checked]:bg-[#f5c400] data-[state=checked]:text-[#0b0f15] dark:bg-[#0b0f15] dark:data-[state=checked]:bg-[#f5c400]" />
+                <span className="min-w-0">
+                  <span className="block text-[12.5px] font-medium text-white">{t("reference")}</span>
+                  <span className="block text-[11.5px] leading-4 text-[#8c96a8]">{t("referenceHint")}</span>
+                </span>
+              </label>
+              {createError ? <p role="alert" className="rounded-md border border-rose-400/30 bg-rose-400/[0.07] px-3 py-2 text-[12.5px] text-rose-200">{createError}</p> : null}
+              <button type="submit" className={cn(PRIMARY_BUTTON, "w-full justify-center")} disabled={!canCreate}>
+                {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                {creating ? t("creating") : t("create")}
+              </button>
+              {!datasets.length || !codeFiles.length ? <p className="text-[11.5px] leading-4 text-[#8c96a8]">{t("needSources")}</p> : null}
+            </div>
+          </form>
+        </div>
+
+        {/* Right: the clusters and the selected one's runs */}
+        <div className="min-w-0 space-y-5">
+          <section className={PANEL} aria-label={t("listTitle")}>
+            <div className="flex flex-wrap items-center gap-3 border-b border-[#1f252e] px-5 py-3.5">
+              <h3 className="flex items-center gap-2 text-[14px] font-semibold text-white">
+                {t("listTitle")}
+                {!loading ? <Tag className="font-mono">{total}</Tag> : null}
+              </h3>
+              <SearchField value={query} onChange={setQuery} placeholder={t("search")} clearLabel={t("clearSearch")} className="ml-auto w-full max-w-[260px]" />
+            </div>
+            {/* The comparison defaults: which clusters the compare and lineage tabs start with (tagged in the rows below). */}
+            {total ? (
+              <div role="group" aria-labelledby="cluster-defaults-title" className="@container border-b border-[#1f252e] bg-white/[0.015] px-5 py-3">
+                <div className="flex flex-col gap-2.5 @3xl:flex-row @3xl:items-center @3xl:gap-6">
+                  <div className="flex min-w-0 flex-1 items-start gap-2.5">
+                    <GitCompareArrows className="mt-px h-4 w-4 shrink-0 text-[#8c96a8]" aria-hidden="true" />
+                    <div className="min-w-0">
+                      <p id="cluster-defaults-title" className="text-[12.5px] font-medium leading-4 text-[#e5e9f0]">{t("defaultsTitle")}</p>
+                      <p className="mt-0.5 text-[11.5px] leading-4 text-[#8c96a8]">{t("defaultsDescription")}</p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 @3xl:w-[min(440px,54%)] @3xl:shrink-0">
+                    <DefaultClusterSelect
+                      label={t("baseCluster")}
+                      tag={t("baseTag")}
+                      tone="sky"
+                      value={baseClusterId}
+                      clusters={clusters ?? []}
+                      noneLabel={t("none")}
+                      onChange={setBaseClusterId}
+                    />
+                    <ArrowRight className="h-3.5 w-3.5 text-[#5d6878]" aria-hidden="true" />
+                    <DefaultClusterSelect
+                      label={t("comparisonCluster")}
+                      tag={t("comparisonTag")}
+                      tone="amber"
+                      value={comparisonClusterId}
+                      clusters={clusters ?? []}
+                      noneLabel={t("none")}
+                      onChange={setComparisonClusterId}
+                    />
+                  </div>
+                </div>
+              </div>
+            ) : null}
+            {loading ? (
+              <div className="space-y-2 p-4">
+                {[0, 1, 2].map((index) => <Skeleton key={index} className="h-[58px] w-full bg-[#121821]" />)}
+              </div>
+            ) : loadFailed && !total ? (
+              <EmptyState icon={Boxes} title={t("loadFailed")}>
+                <button type="button" className={SECONDARY_BUTTON} onClick={() => void loadAll()}>
+                  <RefreshCw className="h-4 w-4" />
+                  {t("retry")}
+                </button>
+              </EmptyState>
+            ) : !total ? (
+              <EmptyState icon={Boxes} title={t("emptyTitle")} hint={t("emptyHint")} />
+            ) : !visible.length ? (
+              <p className="px-5 py-8 text-center text-[12.5px] text-[#8c96a8]">{t("noMatch", { query: query.trim() })}</p>
+            ) : (
+              <div ref={listRef} role="listbox" aria-label={t("listTitle")} tabIndex={-1} onKeyDown={onListKeyDown} className="max-h-[420px] overflow-y-auto p-2">
+                {visible.map((cluster) => {
+                  const active = cluster.id === selectedId;
+                  const clusterRuns = runsByCluster[cluster.id] ?? [];
+                  const lastRun = clusterRuns[0]?.executed_date;
+                  return (
+                    <div
+                      key={cluster.id}
+                      role="option"
+                      aria-selected={active}
+                      tabIndex={active || (!selectedId && cluster === visible[0]) ? 0 : -1}
+                      data-cluster-row={cluster.id}
+                      onClick={() => setSelectedId(cluster.id)}
+                      onDoubleClick={() => openEdit(cluster)}
+                      className={cn(
+                        "group flex cursor-pointer items-center gap-3 rounded-lg border px-3.5 py-2.5 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[#f5c400]/40",
+                        active ? "border-[#f5c400]/45 bg-[#f5c400]/[0.05]" : "border-transparent hover:border-[#252a33] hover:bg-white/[0.02]",
+                      )}
+                    >
+                      <span className={cn("h-8 w-1 shrink-0 rounded-full", active ? "bg-[#f5c400]" : "bg-[#252a33]")} />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="truncate text-[13.5px] font-semibold text-white">{cluster.name}</span>
+                          {cluster.is_reference ? (
+                            <Tag tone="gold">
+                              <Star className="h-3 w-3" />
+                              {t("referenceTag")}
+                            </Tag>
+                          ) : null}
+                          {cluster.id === baseClusterId ? <Tag tone="sky">{t("baseTag")}</Tag> : null}
+                          {cluster.id === comparisonClusterId ? <Tag tone="amber">{t("comparisonTag")}</Tag> : null}
+                        </div>
+                        <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5 text-[11.5px] text-[#8c96a8]">
+                          <span className="inline-flex items-center gap-1"><CalendarDays className="h-3 w-3" />{formatDay(cluster.reporting_date, locale)}</span>
+                          <span className={cn("inline-flex min-w-0 items-center gap-1", !cluster.dataset_name && "text-amber-300")}>
+                            <Database className="h-3 w-3 shrink-0" />
+                            <span className="truncate">{cluster.dataset_name ? withVersion(cluster.dataset_name, cluster.dataset_version) : t("missing")}</span>
+                          </span>
+                          <span className={cn("inline-flex min-w-0 items-center gap-1", !cluster.code_filename && "text-amber-300")}>
+                            <FileCode2 className="h-3 w-3 shrink-0" />
+                            <span className="truncate font-mono">{cluster.code_filename ? withVersion(cluster.code_filename, cluster.code_version) : t("missing")}</span>
+                          </span>
+                        </div>
+                      </div>
+                      <div className="hidden shrink-0 text-right text-[11.5px] sm:block">
+                        <p className="text-[#c9d1dc]">{t("runCount", { count: clusterRuns.length })}</p>
+                        <p className="text-[#687386]" title={lastRun ? formatDateTime(lastRun, locale) : undefined}>{lastRun ? relativeTime(lastRun, locale) : t("neverRun")}</p>
+                      </div>
+                      <IconAction label={t("editLabel", { name: cluster.name })} onClick={() => openEdit(cluster)} className="opacity-60 group-hover:opacity-100">
+                        <Pencil className="h-3.5 w-3.5" />
+                      </IconAction>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+
+          {selected ? (
+            <section className={PANEL} aria-label={selected.name}>
+              <div className="flex flex-wrap items-start gap-3 border-b border-[#1f252e] px-5 py-4">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="text-[16px] font-semibold text-white">{selected.name}</h3>
+                    {selected.is_reference ? (
+                      <Tag tone="gold">
+                        <Star className="h-3 w-3" />
+                        {t("referenceTag")}
+                      </Tag>
+                    ) : null}
+                    {selected.id === baseClusterId ? <Tag tone="sky">{t("baseTag")}</Tag> : null}
+                    {selected.id === comparisonClusterId ? <Tag tone="amber">{t("comparisonTag")}</Tag> : null}
+                  </div>
+                  {selected.description ? <p className="mt-1 text-[12.5px] leading-5 text-[#aab3c2]">{selected.description}</p> : null}
+                </div>
+                <button type="button" className={SECONDARY_BUTTON} onClick={() => openEdit(selected)}>
+                  <Pencil className="h-4 w-4" />
+                  {t("edit")}
+                </button>
+              </div>
+              <div className="grid gap-2.5 px-5 pt-4 sm:grid-cols-2 2xl:grid-cols-4">
+                <FactTile icon={CalendarDays} label={t("reportingDate")} value={formatDay(selected.reporting_date, locale)} />
+                <FactTile icon={Database} label={t("dataset")} value={selected.dataset_name ? withVersion(selected.dataset_name, selected.dataset_version) : t("missing")} warning={!selected.dataset_name} />
+                <FactTile icon={FileCode2} label={t("code")} value={selected.code_filename ? withVersion(selected.code_filename, selected.code_version) : t("missing")} mono={Boolean(selected.code_filename)} warning={!selected.code_filename} />
+                <FactTile icon={Clock3} label={t("createdLabel")} value={formatDateTime(selected.created_date, locale)} />
+              </div>
+
+              <div className="px-5 pb-5 pt-4">
+                <div className="mb-2 flex items-center gap-2">
+                  <History className="h-3.5 w-3.5 text-[#8c96a8]" />
+                  <span className={EYEBROW}>{t("runsTitle")}</span>
+                  <Tag className="font-mono">{selectedRuns.length}</Tag>
+                </div>
+                {!selectedRuns.length ? (
+                  <p className="rounded-lg border border-dashed border-[#2a313c] px-4 py-6 text-center text-[12.5px] text-[#8c96a8]">{t("noRuns")}</p>
+                ) : (
+                  <div className="max-h-[320px] overflow-auto rounded-lg border border-[#1f252e]">
+                    <table className="w-full border-separate border-spacing-0 text-[12.5px]">
+                      <thead className="sticky top-0 z-10 bg-[#0f141b]">
+                        <tr className="whitespace-nowrap text-left text-[10.5px] uppercase tracking-[0.14em] text-[#687386]">
+                          <th scope="col" className="border-b border-[#1f252e] px-4 py-2 font-semibold">{t("colRun")}</th>
+                          <th scope="col" className="border-b border-[#1f252e] px-3 py-2 font-semibold">{t("dataset")}</th>
+                          <th scope="col" className="border-b border-[#1f252e] px-3 py-2 font-semibold">{t("code")}</th>
+                          <th scope="col" className="border-b border-[#1f252e] px-3 py-2 text-right font-semibold max-2xl:w-px max-2xl:whitespace-normal">{t("colValues")}</th>
+                          <th scope="col" className="w-[84px] border-b border-[#1f252e] px-4 py-2"><span className="sr-only">{t("colActions")}</span></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedRuns.map((run) => (
+                          <tr key={run.id} className="transition-colors hover:bg-white/[0.02]">
+                            <td className="whitespace-nowrap border-b border-[#161b22] px-4 py-2.5">
+                              <span className="block text-[#e5e9f0]">{formatDateTime(run.executed_date, locale)}</span>
+                              <span className="text-[11px] text-[#687386]">{relativeTime(run.executed_date, locale)}</span>
+                            </td>
+                            {/* Dataset and code share the width left over (max-w-0) and truncate, so the actions never scroll out of view. */}
+                            <td className="w-[22%] max-w-0 truncate border-b border-[#161b22] px-3 py-2.5 text-[#c9d1dc]" title={withVersion(run.dataset_name, run.dataset_version)}>{withVersion(run.dataset_name, run.dataset_version)}</td>
+                            <td className="w-[28%] max-w-0 truncate border-b border-[#161b22] px-3 py-2.5 font-mono text-[12px] text-[#c9d1dc]" title={withVersion(run.code_filename, run.code_version)}>{withVersion(run.code_filename, run.code_version)}</td>
+                            <td className="border-b border-[#161b22] px-3 py-2.5 text-right font-mono tabular-nums text-emerald-300">{(run.summary?.total_values_computed ?? 0).toLocaleString(locale)}</td>
+                            <td className="border-b border-[#161b22] px-4 py-2.5">
+                              <div className="flex items-center justify-end gap-0.5">
+                                <IconAction label={t("viewData")} onClick={() => setViewing(run)}>
+                                  <Maximize2 className="h-3.5 w-3.5" />
+                                </IconAction>
+                                <IconAction label={t("removeRun")} tone="danger" onClick={() => setRunToRemove(run)} disabled={removingRun}>
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </IconAction>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </section>
+          ) : !loading && total ? (
+            <section className={PANEL}>
+              <EmptyState icon={History} title={t("pickTitle")} hint={t("pickHint")} className="py-10" />
+            </section>
+          ) : null}
+        </div>
+      </div>
+
+      {/* Edit */}
+      <Dialog open={editing !== null} onOpenChange={(open) => { if (!open && !savingEdit) setEditing(null); }}>
+        <DialogContent className="border-[#252a33] bg-[#0b0f15] sm:max-w-2xl">
+          <form onSubmit={(event) => void saveEdit(event)} className="space-y-4">
+            <DialogHeader>
+              <DialogTitle className="text-white">{t("editTitle")}</DialogTitle>
+              <DialogDescription className="text-[#8c96a8]">{t("editDescription")}</DialogDescription>
+            </DialogHeader>
+            {editing ? (
+              <>
+                <div className="grid gap-3.5 sm:grid-cols-2">
+                  <Field label={t("name")} required htmlFor="edit-cluster-name" error={editNameTaken ? t("nameTaken") : undefined}>
+                    <input id="edit-cluster-name" className={cn(INPUT, editNameTaken && "border-rose-400/60")} value={editForm.name} onChange={(event) => setEditForm({ ...editForm, name: event.target.value })} aria-invalid={editNameTaken} />
+                  </Field>
+                  <Field label={t("reportingDate")} required htmlFor="edit-cluster-date">
+                    <input id="edit-cluster-date" type="date" className={cn(INPUT, "[color-scheme:dark]")} value={editForm.reporting_date} onChange={(event) => setEditForm({ ...editForm, reporting_date: event.target.value })} />
+                  </Field>
+                  <Field label={t("dataset")}>
+                    <Select value={editForm.dataset_id} onValueChange={(value) => setEditForm({ ...editForm, dataset_id: value })}>
+                      <SelectTrigger className={TRIGGER} aria-label={t("dataset")}>
+                        <SelectValue placeholder={t("selectDataset")} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {datasets.map((dataset) => <SelectItem key={dataset.id} value={dataset.id}>{withVersion(dataset.user_name || dataset.filename, dataset.version)}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                  <Field label={t("code")}>
+                    <Select value={editForm.code_id} onValueChange={(value) => setEditForm({ ...editForm, code_id: value })}>
+                      <SelectTrigger className={TRIGGER} aria-label={t("code")}>
+                        <SelectValue placeholder={t("selectCode")} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {codeFiles.map((code) => <SelectItem key={code.id} value={code.id}>{withVersion(code.filename, code.version)}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                </div>
+                <div className="grid gap-2.5 sm:grid-cols-2">
+                  <FactTile icon={Star} label={t("status")} value={editing.is_reference ? t("referenceTag") : t("standard")} />
+                  <FactTile icon={Clock3} label={t("createdLabel")} value={formatDateTime(editing.created_date, locale)} />
+                </div>
+                {editing.description ? (
+                  <div className="rounded-lg border border-[#1f252e] bg-[#0f141b] px-3 py-2">
+                    <p className={EYEBROW}>{t("descriptionLabel")}</p>
+                    <p className="mt-0.5 text-[12.5px] leading-5 text-[#c9d1dc]">{editing.description}</p>
+                  </div>
+                ) : null}
+                {editError ? <p role="alert" className="rounded-md border border-rose-400/30 bg-rose-400/[0.07] px-3 py-2 text-[12.5px] text-rose-200">{editError}</p> : null}
+                <DialogFooter className="items-center gap-2 border-t border-[#1f252e] pt-4 sm:justify-between">
+                  <button type="button" className={cn(SECONDARY_BUTTON, "border-rose-400/30 text-rose-300 hover:border-rose-400/60 hover:text-rose-200")} onClick={() => setConfirmDelete(editing)} disabled={savingEdit}>
+                    <Trash2 className="h-4 w-4" />
+                    {t("deleteCluster")}
+                  </button>
+                  <div className="flex gap-2">
+                    <button type="button" className={SECONDARY_BUTTON} onClick={() => setEditing(null)} disabled={savingEdit}>{t("cancel")}</button>
+                    <button type="submit" className={PRIMARY_BUTTON} disabled={!canSaveEdit}>
+                      {savingEdit ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                      {savingEdit ? t("saving") : t("save")}
+                    </button>
+                  </div>
+                </DialogFooter>
+              </>
+            ) : null}
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete cluster */}
+      <AlertDialog open={confirmDelete !== null} onOpenChange={(open) => { if (!open && !deleting) setConfirmDelete(null); }}>
+        <AlertDialogContent className="border-[#252a33] bg-[#0b0f15]">
           <AlertDialogHeader>
-            <AlertDialogTitle>{t("removeExecutionQuestion")}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t("removeExecutionWarning")}
+            <AlertDialogTitle className="text-white">{t("deleteTitle", { name: confirmDelete?.name ?? "" })}</AlertDialogTitle>
+            <AlertDialogDescription className="text-[#aab3c2]">
+              {t("deleteBody", { count: confirmDelete ? (runsByCluster[confirmDelete.id] ?? []).length : 0 })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={deletingExecution}>{tCommon("cancel")}</AlertDialogCancel>
+            <AlertDialogCancel disabled={deleting}>{t("cancel")}</AlertDialogCancel>
             <AlertDialogAction
-              onClick={(e) => {
-                e.preventDefault();
-                handleConfirmDeleteExecution();
+              className="bg-rose-500 text-white hover:bg-rose-500/90"
+              disabled={deleting}
+              onClick={(event) => {
+                event.preventDefault();
+                void deleteCluster();
               }}
-              disabled={deletingExecution}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              {deletingExecution ? t("removing") : t("remove")}
+              {deleting ? t("deleting") : t("deleteAction")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
 
-    <div className="grid grid-cols-2 gap-6">
-      {/* Left Panel: Cluster Form */}
-      <Card>
-        <CardHeader>
-          <CardTitle>{t("clusterConfiguration")}</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="cluster-name">{t("clusterName")}</Label>
-            <Input
-              id="cluster-name"
-              placeholder={t("clusterNamePlaceholder")}
-              value={formData.name}
-              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="reporting-date">{t("reportingDate")}</Label>
-            <Input
-              id="reporting-date"
-              type="date"
-              value={formData.reporting_date}
-              onChange={(e) => setFormData({ ...formData, reporting_date: e.target.value })}
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="dataset">{t("dataset")}</Label>
-            <Select
-              value={formData.dataset_id}
-              onValueChange={(value) => setFormData({ ...formData, dataset_id: value })}
+      {/* Remove a run from the history */}
+      <AlertDialog open={runToRemove !== null} onOpenChange={(open) => { if (!open && !removingRun) setRunToRemove(null); }}>
+        <AlertDialogContent className="border-[#252a33] bg-[#0b0f15]">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-white">{t("removeRunTitle")}</AlertDialogTitle>
+            <AlertDialogDescription className="text-[#aab3c2]">
+              {t("removeRunBody", { time: runToRemove ? formatDateTime(runToRemove.executed_date, locale) : "" })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={removingRun}>{t("cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-rose-500 text-white hover:bg-rose-500/90"
+              disabled={removingRun}
+              onClick={(event) => {
+                event.preventDefault();
+                void removeRun();
+              }}
             >
-              <SelectTrigger id="dataset">
-                <SelectValue placeholder={t("selectDataset")} />
-              </SelectTrigger>
-              <SelectContent>
-                {datasets.map((dataset) => (
-                  <SelectItem key={dataset.id} value={dataset.id}>
-                    {dataset.user_name} ({dataset.version})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+              {removingRun ? t("removing") : t("remove")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
-          <div className="space-y-2">
-            <Label htmlFor="code-version">{t("softwareVersion")}</Label>
-            <Select
-              value={formData.code_id}
-              onValueChange={(value) => setFormData({ ...formData, code_id: value })}
-            >
-              <SelectTrigger id="code-version">
-                <SelectValue placeholder={t("selectCodeVersion")} />
-              </SelectTrigger>
-              <SelectContent>
-                {codeFiles.map((code) => (
-                  <SelectItem key={code.id} value={code.id}>
-                    {code.filename} ({code.version})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="description">{t("description")}</Label>
-            <Textarea
-              id="description"
-              placeholder={t("optionalDescription")}
-              value={formData.description}
-              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-              rows={3}
-            />
-          </div>
-
-          <div className="flex items-center space-x-2">
-            <Checkbox
-              id="is-reference"
-              checked={formData.is_reference}
-              onCheckedChange={(checked) =>
-                setFormData({ ...formData, is_reference: checked as boolean })
-              }
-            />
-            <Label htmlFor="is-reference" className="cursor-pointer">
-              {t("markAsReference")}
-            </Label>
-          </div>
-
-          <div className="flex gap-2">
-            <Button onClick={handleCreateCluster} className="flex-1">
-              <Plus className="mr-2 h-4 w-4" />
-              {t("createCluster")}
-            </Button>
-            <Button variant="outline" onClick={loadData}>
-              <RefreshCw className="h-4 w-4" />
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Right Panel: Cluster List & Execution History */}
-      <div className="space-y-6">
-        {/* Cluster List */}
-        <Card>
-          <CardHeader>
-            <CardTitle>{t("clusterManagement")}</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-3 rounded-lg border border-border bg-muted/20 p-3">
-              <p className="text-sm font-medium text-foreground">Global cluster selection</p>
-              <p className="text-xs text-muted-foreground">
-                Select once here. Compare and Lineage tabs will reuse these defaults.
-              </p>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div className="space-y-2">
-                  <Label className="text-xs text-muted-foreground">Base cluster</Label>
-                  <Select
-                    value={baseClusterId || "__none__"}
-                    onValueChange={(value) => setBaseClusterId(value === "__none__" ? "" : value)}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select base cluster" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__none__">None</SelectItem>
-                      {clusters.map((cluster) => (
-                        <SelectItem key={`base-${cluster.id}`} value={cluster.id}>
-                          {cluster.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label className="text-xs text-muted-foreground">Comparison cluster</Label>
-                  <Select
-                    value={comparisonClusterId || "__none__"}
-                    onValueChange={(value) => setComparisonClusterId(value === "__none__" ? "" : value)}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select comparison cluster" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__none__">None</SelectItem>
-                      {clusters.map((cluster) => (
-                        <SelectItem key={`comparison-${cluster.id}`} value={cluster.id}>
-                          {cluster.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex gap-2">
-              <Input
-                placeholder={t("searchClusters")}
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
-            </div>
-
-            <div className="max-h-[400px] overflow-y-auto space-y-2">
-              {loading ? (
-                <>
-                  <Skeleton className="h-16 w-full" />
-                  <Skeleton className="h-16 w-full" />
-                </>
-              ) : clusters.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-4">
-                  {t("noClustersFound")}
-                </p>
-              ) : (
-                clusters.map((cluster) => (
-                  <div
-                    key={cluster.id}
-                    className={`border rounded-lg p-3 cursor-pointer transition-colors ${
-                      selectedCluster?.id === cluster.id
-                        ? "border-primary bg-primary/5"
-                        : "border-border hover:border-primary/50"
-                    }`}
-                    onClick={() => setSelectedCluster(cluster)}
-                  >
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2">
-                          <h4 className="font-semibold text-sm">{cluster.name}</h4>
-                          {cluster.is_reference && (
-                            <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded">
-                              {t("referenceBadge")}
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-xs text-muted-foreground mt-1">
-                          {formatDate(cluster.reporting_date)} • {cluster.dataset_name} (
-                          {cluster.dataset_version}) • Code: {cluster.code_version}
-                        </p>
-                      </div>
-                      <TooltipProvider>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleEditCluster(cluster);
-                              }}
-                              className="h-8 w-8"
-                            >
-                              <Pencil className="h-4 w-4" />
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            <p>{t("editTooltip")}</p>
-                          </TooltipContent>
-                        </Tooltip>
-                      </TooltipProvider>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-
-          </CardContent>
-        </Card>
-
-        {/* Execution History */}
-        {selectedCluster && (
-          <Card>
-            <CardHeader>
-              <CardTitle>{t("executionHistoryTitle", { name: selectedCluster.name })}</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {executions.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-4">
-                  {t("noExecutionsYet")}
-                </p>
-              ) : (
-                <div className="max-h-[300px] overflow-y-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>{t("repDate")}</TableHead>
-                        <TableHead>{t("dataset")}</TableHead>
-                        <TableHead>{t("code")}</TableHead>
-                        <TableHead>{t("timestamp")}</TableHead>
-                        <TableHead>{t("values")}</TableHead>
-                        <TableHead>{t("actions")}</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {executions.map((execution) => (
-                        <TableRow key={execution.id}>
-                          <TableCell>{formatDate(selectedCluster.reporting_date)}</TableCell>
-                          <TableCell>
-                            {execution.dataset_name} ({execution.dataset_version})
-                          </TableCell>
-                          <TableCell>
-                            {execution.code_filename != null
-                              ? `${execution.code_filename}${execution.code_version ? ` (${execution.code_version})` : ""}`
-                              : execution.code_version ?? "—"}
-                          </TableCell>
-                          <TableCell className="text-xs">
-                            {formatDateTime(execution.executed_date)}
-                          </TableCell>
-                          <TableCell>
-                            {execution.summary?.total_values_computed || 0}
-                          </TableCell>
-                          <TableCell className="flex gap-1">
-                            <TooltipProvider>
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-8 w-8"
-                                    onClick={() => handleViewExecutionData(execution.execution_id)}
-                                  >
-                                    <Maximize2 className="h-4 w-4" />
-                                  </Button>
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                  <p>{t("viewData")}</p>
-                                </TooltipContent>
-                              </Tooltip>
-                            </TooltipProvider>
-                            <TooltipProvider>
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
-                                    onClick={() => handleDeleteExecution(execution)}
-                                    disabled={deletingExecution}
-                                  >
-                                    <Trash2 className="h-4 w-4" />
-                                  </Button>
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                  <p>{t("removeFromHistory")}</p>
-                                </TooltipContent>
-                              </Tooltip>
-                            </TooltipProvider>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        )}
-      </div>
-
-      {/* Cluster Details / Edit Dialog */}
-      <Dialog open={detailsDialogOpen} onOpenChange={setDetailsDialogOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>{t("clusterDetails")}</DialogTitle>
-            <DialogDescription>
-              {t("clusterDetailsDesc")}
-            </DialogDescription>
-          </DialogHeader>
-          {viewingCluster && (
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label className="text-xs text-muted-foreground">{t("clusterName")}</Label>
-                  <Input
-                    value={editFormData.name}
-                    onChange={(e) => setEditFormData((prev) => ({ ...prev, name: e.target.value }))}
-                    placeholder={t("clusterNamePlaceholder")}
-                  />
-                </div>
-                <div>
-                  <Label className="text-xs text-muted-foreground">{t("status")}</Label>
-                  <div>
-                    {viewingCluster.is_reference ? (
-                      <Badge>{t("referenceCluster")}</Badge>
-                    ) : (
-                      <Badge variant="secondary">{t("standard")}</Badge>
-                    )}
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <Label className="text-xs text-muted-foreground">{t("reportingDate")}</Label>
-                  <Input
-                    type="date"
-                    value={editFormData.reporting_date}
-                    onChange={(e) => setEditFormData((prev) => ({ ...prev, reporting_date: e.target.value }))}
-                  />
-                </div>
-                <div>
-                  <Label className="text-xs text-muted-foreground">{t("created")}</Label>
-                  <p className="font-medium">{formatDateTime(viewingCluster.created_date)}</p>
-                </div>
-                <div className="space-y-2 col-span-2">
-                  <Label className="text-xs text-muted-foreground">{t("dataset")}</Label>
-                  <Select
-                    value={editFormData.dataset_id}
-                    onValueChange={(value) => setEditFormData((prev) => ({ ...prev, dataset_id: value }))}
-                  >
-                    <SelectTrigger className="w-full min-w-0">
-                      <SelectValue placeholder={t("selectDataset")} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {datasets.map((dataset) => (
-                        <SelectItem key={dataset.id} value={dataset.id}>
-                          {dataset.user_name} ({dataset.version})
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2 col-span-2">
-                  <Label className="text-xs text-muted-foreground">{t("code")}</Label>
-                  <Select
-                    value={editFormData.code_id}
-                    onValueChange={(value) => setEditFormData((prev) => ({ ...prev, code_id: value }))}
-                  >
-                    <SelectTrigger className="w-full min-w-0">
-                      <SelectValue placeholder={t("selectCodeVersion")} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {codeFiles.map((code) => (
-                        <SelectItem key={code.id} value={code.id}>
-                          {code.filename} ({code.version})
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              {viewingCluster.description && (
-                <div>
-                  <Label className="text-xs text-muted-foreground">{t("description")}</Label>
-                  <p className="text-sm mt-1">{viewingCluster.description}</p>
-                </div>
-              )}
-              <div className="flex justify-end gap-2 pt-4 border-t">
-                <Button
-                  variant="destructive"
-                  onClick={() => {
-                    handleDeleteCluster(viewingCluster.id);
-                    setDetailsDialogOpen(false);
-                  }}
-                >
-                  <Trash2 className="mr-2 h-4 w-4" />
-                  {t("deleteCluster")}
-                </Button>
-                <Button variant="outline" onClick={() => setDetailsDialogOpen(false)}>
-                  {t("close")}
-                </Button>
-                <Button onClick={handleUpdateCluster} disabled={updatingCluster}>
-                  {updatingCluster ? t("saving") : t("saveChanges")}
-                </Button>
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
-
-      {/* Execution Data Fullscreen */}
-      {isFullscreen && (
-        <div className="fixed inset-0 z-50 bg-background/95 backdrop-blur-sm flex items-center justify-center p-4 md:p-8 overflow-y-auto">
-          <div className="w-full max-w-7xl flex flex-col gap-4 my-auto">
-            
-            {/* Header with Close Button */}
-            <div className="flex items-center justify-between gap-4 sticky top-0 bg-background/95 backdrop-blur-sm pb-4 z-10">
-              <div className="flex-1 min-w-0">
-                <h3 className="text-xl md:text-2xl font-semibold text-foreground truncate">
-                  {t("executionResults")}
-                </h3>
-                <p className="text-sm text-muted-foreground mt-1">
-                  {t("executionResultsDesc")}
-                </p>
-              </div>
-              
-              {/* Exit Fullscreen Button */}
-              <button
-                onClick={() => setIsFullscreen(false)}
-                className="p-2 md:p-3 rounded-lg bg-card border border-border text-muted-foreground hover:text-foreground hover:bg-accent transition-all"
-                aria-label="Exit fullscreen"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            
-            {/* Content */}
-            <div className="space-y-6 pb-8">
-              {loadingExecutionData ? (
-                <div className="flex items-center justify-center py-12">
-                  <div className="text-center">
-                    <RefreshCw className="h-8 w-8 animate-spin mx-auto mb-2 text-muted-foreground" />
-                    <p className="text-sm text-muted-foreground">{t("loadingExecutionData")}</p>
-                  </div>
-                </div>
-              ) : viewingExecutionData ? (
-                <div className="space-y-4">
-                  <div className="grid grid-cols-3 gap-4 p-4 bg-muted rounded-lg">
-                    <div>
-                      <Label className="text-xs text-muted-foreground">{t("rowsProcessed")}</Label>
-                      <p className="text-lg font-semibold">
-                        {viewingExecutionData.summary?.rows_processed || 0}
-                      </p>
-                    </div>
-                    <div>
-                      <Label className="text-xs text-muted-foreground">{t("totalValuesComputed")}</Label>
-                      <p className="text-lg font-semibold">
-                        {viewingExecutionData.summary?.total_values_computed || 0}
-                      </p>
-                    </div>
-                    <div>
-                      <Label className="text-xs text-muted-foreground">{t("columns")}</Label>
-                      <p className="text-lg font-semibold">
-                        {viewingExecutionData.summary?.columns?.length || 0}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div>
-                    <Label className="mb-2 block">{t("computedByColumn")}</Label>
-                    <div className="grid grid-cols-2 gap-2">
-                      {viewingExecutionData.summary?.computed_by_column &&
-                        Object.entries(viewingExecutionData.summary.computed_by_column).map(
-                          ([column, count]) => (
-                            <div
-                              key={column}
-                              className="flex justify-between items-center p-2 bg-muted rounded"
-                            >
-                              <span className="text-sm font-medium">{column}</span>
-                              <Badge>{count as number} {t("values")}</Badge>
-                            </div>
-                          )
-                        )}
-                    </div>
-                  </div>
-
-                  <div>
-                    <Label className="mb-2 block">{t("resultDataLabel")}</Label>
-                    <div className="border rounded-lg overflow-hidden">
-                      <div className="max-h-[400px] overflow-auto">
-                        <Table>
-                          <TableHeader>
-                            <TableRow>
-                              {viewingExecutionData.summary?.columns?.map((col: string) => (
-                                <TableHead key={col}>{col}</TableHead>
-                              ))}
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            {viewingExecutionData.data?.map((row: any, rowIndex: number) => (
-                              <TableRow key={rowIndex}>
-                                {viewingExecutionData.summary?.columns?.map((col: string) => {
-                                  const isComputed = viewingExecutionData.computed_cells?.some(
-                                    (cell: any) =>
-                                      cell.row === rowIndex && cell.column === col
-                                  );
-                                  return (
-                                    <TableCell
-                                      key={col}
-                                      className={
-                                        isComputed ? "bg-green-100 dark:bg-green-900/20" : ""
-                                      }
-                                    >
-                                      {formatCellDisplay(row[col])}
-                                    </TableCell>
-                                  );
-                                })}
-                              </TableRow>
-                            ))}
-                          </TableBody>
-                        </Table>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <p className="text-center text-muted-foreground py-8">{t("noDataAvailable")}</p>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      <RunDataDialog
+        executionId={viewing?.execution_id ?? null}
+        title={t("runOf", { cluster: selected?.name ?? "" })}
+        description={viewing ? `${formatDateTime(viewing.executed_date, locale)} · ${withVersion(viewing.dataset_name, viewing.dataset_version)} · ${withVersion(viewing.code_filename, viewing.code_version)}` : undefined}
+        onClose={() => setViewing(null)}
+      />
     </div>
-    </>
+  );
+}
+
+const NO_CLUSTER = "__none__";
+
+/** One comparison default: the tag its cluster carries in the list, then the chosen cluster. */
+function DefaultClusterSelect({ label, tag, tone, value, clusters, noneLabel, onChange }: {
+  label: string;
+  tag: string;
+  tone: "sky" | "amber";
+  value: string;
+  clusters: Cluster[];
+  noneLabel: string;
+  onChange: (clusterId: string) => void;
+}) {
+  const chosen = clusters.find((cluster) => cluster.id === value);
+  return (
+    <Select value={value || NO_CLUSTER} onValueChange={(next) => onChange(next === NO_CLUSTER ? "" : next)}>
+      <SelectTrigger className={cn(TRIGGER, "gap-2 pl-1.5", !value && "text-[#8c96a8]")} aria-label={label} title={chosen ? `${label}: ${chosen.name}` : label}>
+        <Tag tone={tone} className="shrink-0">{tag}</Tag>
+        <span className="min-w-0 flex-1 truncate text-left">
+          <SelectValue />
+        </span>
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value={NO_CLUSTER}>{noneLabel}</SelectItem>
+        {clusters.map((cluster) => <SelectItem key={cluster.id} value={cluster.id}>{cluster.name}</SelectItem>)}
+      </SelectContent>
+    </Select>
+  );
+}
+
+function PanelHeading({ icon: Icon, title, description }: { icon: typeof Plus; title: string; description: string }) {
+  return (
+    <div className="flex items-start gap-3 border-b border-[#1f252e] px-5 py-3.5">
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[#252a33] bg-[#0f141b]">
+        <Icon className="h-4 w-4 text-[#aab3c2]" />
+      </span>
+      <div className="min-w-0">
+        <h3 className="text-[14px] font-semibold text-white">{title}</h3>
+        <p className="mt-0.5 text-[12px] leading-[18px] text-[#8c96a8]">{description}</p>
+      </div>
+    </div>
+  );
+}
+
+function Field({ label, required, htmlFor, error, children }: { label: string; required?: boolean; htmlFor?: string; error?: string; children: ReactNode }) {
+  return (
+    <div className="min-w-0 space-y-1.5">
+      <label htmlFor={htmlFor} className="flex items-center gap-1 text-[12px] font-medium text-[#c9d1dc]">
+        {label}
+        {required ? <span className="text-[#f5c400]" aria-hidden="true">*</span> : null}
+      </label>
+      {children}
+      {error ? <p className="text-[11.5px] text-rose-300">{error}</p> : null}
+    </div>
   );
 }

@@ -1,23 +1,21 @@
 "use client";
 
-import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
+import { useCallback, useRef, useState, type ReactNode, type Ref } from "react";
 import { useTranslations } from "next-intl";
-import { ChevronDown, ClipboardCheck, Crosshair, Flag, FlaskConical, MousePointerClick, ScrollText, TriangleAlert } from "lucide-react";
+import { ChevronDown, ClipboardCheck, Crosshair, Flag, MousePointerClick, ScrollText, TriangleAlert } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
-  CASE_COLORS, CheckIcon, EYEBROW, ImpactBadge, PANEL, REACH_COLORS, ReachBar, SEVERITY_STYLES, SeverityIcon, Stat, TermChip, UseChip, useNumbers,
+  CASE_COLORS, CheckIcon, EYEBROW, ImpactBadge, PANEL, REACH_COLORS, ReachBar, SEVERITY_STYLES, SeverityIcon, TermChip, UseChip, useNumbers,
 } from "./atoms";
+import { FlowGraph } from "./flow-graph";
 import { AgentConsole } from "./log";
-import type { LinkKind, Model } from "./model";
+import type { Model } from "./model";
 import type { Check, Finding, Run } from "./types";
 import { WhatIfLine } from "./what-if";
 
-const LINK_COLORS: Record<LinkKind, string> = { value: "#34d399", decides: "#fbbf24", impact: "#f472b6" };
-const LINK_DASH: Record<LinkKind, string | undefined> = { value: undefined, decides: "7 5", impact: "2 5" };
-
 /**
- * The content lineage of the selected field on one screen: where its content goes (summary), the fields it flows
- * into step by step (diagram), how it reaches the field the user clicks (details), and the checks behind the result.
+ * The content lineage of the selected field on one screen: the fields it flows into step by step (interactive graph), how it
+ * reaches the field the user clicks (details), and the checks behind the result.
  */
 export function LineageView({ model, run, selected, onSelect }: { model: Model; run: Run; selected: string; onSelect: (column: string) => void }) {
   const details = useRef<HTMLElement | null>(null);
@@ -28,281 +26,10 @@ export function LineageView({ model, run, selected, onSelect }: { model: Model; 
   }, [onSelect]);
   return (
     <div className="space-y-4">
-      <Summary model={model} />
-      <Diagram model={model} selected={selected} onSelect={select} />
+      <FlowGraph key={run.id} model={model} layoutKey={run.id} selected={selected} onSelect={select} />
       <Details ref={details} model={model} column={selected} onSelect={select} />
       <Quality model={model} run={run} onSelect={select} />
     </div>
-  );
-}
-
-/* ---------------------------------------------------------------------------------------------------------------- */
-/* Summary                                                                                                          */
-/* ---------------------------------------------------------------------------------------------------------------- */
-
-function Summary({ model }: { model: Model }) {
-  const t = useTranslations("contentLineageAgent.lineage");
-  const scope = model.result.scope;
-  const impact = model.result.impact;
-  const ends = scope.ends.map((column) => model.flowBy.get(column)).filter((flow) => flow !== undefined);
-  const reachedAtEnd = Math.max(0, ...ends.map((flow) => flow.records.reached));
-  const steps = Math.max(1, ...model.downstream.map((column) => model.level(column)));
-  return (
-    <section data-tour="content-summary" className={cn(PANEL, "relative overflow-hidden p-5")}>
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top_left,rgba(245,196,0,0.08),transparent_55%)]" />
-      <div className="relative">
-        <p className={EYEBROW}>{t("eyebrow")}</p>
-        <h3 className="mt-1 flex flex-wrap items-baseline gap-x-2.5 gap-y-1 text-[19px] font-semibold text-white">
-          <Crosshair className="h-5 w-5 self-center text-[#f5c400]" />
-          {model.termName(model.field)}
-          <span className="font-mono text-[11.5px] font-normal text-[#687386]">{model.field}</span>
-        </h3>
-        {model.texts.summary && <p className="mt-2 max-w-4xl text-[13px] leading-relaxed text-[#e5e9f0]">{model.texts.summary}</p>}
-      </div>
-      <div className="relative mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Stat label={t("stats.next")} value={scope.next.length} tone="gold" detail={scope.next.map((column) => model.termName(column)).join(", ") || "–"} />
-        <Stat label={t("stats.downstream")} value={model.downstream.length} detail={t("stats.downstreamHint", { steps })} />
-        <Stat label={t("stats.ends")} value={scope.ends.length} detail={scope.ends.map((column) => model.termName(column)).join(", ") || "–"} />
-        <Stat label={t("stats.reached")} value={`${reachedAtEnd} / ${scope.records}`} tone={reachedAtEnd ? "good" : "default"} detail={t("stats.reachedHint", { field: model.termName(model.field) })} />
-      </div>
-      <p className="relative mt-3 flex flex-wrap items-start gap-2 text-[12px] leading-relaxed text-[#aab3c2]">
-        <FlaskConical className="mt-0.5 h-3.5 w-3.5 shrink-0 text-pink-300" />
-        <span>
-          {impact.enabled
-            ? t("confirmed", { runs: impact.tested, field: model.termName(model.field), confirmed: impact.confirmed, fields: model.downstream.length })
-            : t("confirmedOff")}
-          {impact.unexpected.length > 0 && <span className="ml-1 text-pink-200">{t("foundByRerun", { fields: impact.unexpected.map((column) => model.termName(column)).join(", ") })}</span>}
-        </span>
-      </p>
-    </section>
-  );
-}
-
-/* ---------------------------------------------------------------------------------------------------------------- */
-/* Diagram: the selected field on the left, every step of the calculation to the right                             */
-/* ---------------------------------------------------------------------------------------------------------------- */
-
-type Path = { from: string; to: string; kind: LinkKind; d: string };
-
-function Diagram({ model, selected, onSelect }: { model: Model; selected: string; onSelect: (column: string) => void }) {
-  const t = useTranslations("contentLineageAgent.lineage");
-  const canvas = useRef<HTMLDivElement | null>(null);
-  const cards = useRef(new Map<string, HTMLElement>());
-  const [paths, setPaths] = useState<Path[]>([]);
-  const [size, setSize] = useState({ w: 0, h: 0 });
-  const steps = useMemo(() => model.steps(), [model]);
-  const ancestors = useMemo(() => model.ancestors(selected), [model, selected]);
-  const descendants = useMemo(() => model.descendants(selected), [model, selected]);
-  const isStart = selected === model.field;
-
-  // The links are drawn between the cards as laid out by the browser, and redrawn whenever the layout changes.
-  const measure = useCallback(() => {
-    const root = canvas.current;
-    if (!root) return;
-    const origin = root.getBoundingClientRect();
-    const box = (column: string) => {
-      const rect = cards.current.get(column)?.getBoundingClientRect();
-      return rect ? { left: rect.left - origin.left, right: rect.right - origin.left, top: rect.top - origin.top, bottom: rect.bottom - origin.top } : null;
-    };
-    // Every step's column: where it lies and its cards, which a link that skips the step must not pass behind.
-    const columns = new Map<number, { left: number; right: number; boxes: { top: number; bottom: number }[] }>();
-    let natural = 0;
-    for (const column of cards.current.keys()) {
-      const rect = box(column);
-      if (!rect) continue;
-      const level = model.level(column);
-      const entry = columns.get(level) ?? { left: rect.left, right: rect.right, boxes: [] };
-      entry.left = Math.min(entry.left, rect.left);
-      entry.right = Math.max(entry.right, rect.right);
-      entry.boxes.push(rect);
-      columns.set(level, entry);
-      natural = Math.max(natural, rect.bottom + 6);
-    }
-    const free = (y: number, levels: number[]) => levels.every((level) => columns.get(level)!.boxes.every((rect) => y < rect.top - 10 || y > rect.bottom + 10));
-    let height = natural;
-    let lanes = 0;
-    const next: Path[] = [];
-    for (const link of model.links) {
-      const from = box(link.from);
-      const to = box(link.to);
-      if (!from || !to) continue;
-      const sx = from.right;
-      const sy = (from.top + from.bottom) / 2;
-      const tx = to.left;
-      const ty = (to.top + to.bottom) / 2;
-      const skipped: number[] = [];
-      for (let level = model.level(link.from) + 1; level < model.level(link.to); level += 1) if (columns.has(level)) skipped.push(level);
-      if (!skipped.length) {
-        const bend = Math.max(24, (tx - sx) / 2);
-        next.push({ ...link, d: `M ${sx} ${sy} C ${sx + bend} ${sy}, ${tx - bend} ${ty}, ${tx - 3} ${ty}` });
-        continue;
-      }
-      // A link that skips a step runs through the free space of the steps in between: at the height of its source or
-      // its target where no card is in the way, otherwise below every card of those steps.
-      const lane = free(sy, skipped) ? sy : free(ty, skipped) ? ty : Math.max(...skipped.flatMap((level) => columns.get(level)!.boxes.map((rect) => rect.bottom))) + 18 + 10 * lanes++;
-      height = Math.max(height, lane + 12);
-      const enter = columns.get(skipped[0])!.left;
-      const leave = columns.get(skipped[skipped.length - 1])!.right;
-      const into = (sx + enter) / 2;
-      const out = (leave + tx) / 2;
-      next.push({ ...link, d: `M ${sx} ${sy} C ${into} ${sy}, ${into} ${lane}, ${enter} ${lane} L ${leave} ${lane} C ${out} ${lane}, ${out} ${ty}, ${tx - 3} ${ty}` });
-    }
-    setPaths(next);
-    setSize((current) => (current.w === root.scrollWidth && current.h === height ? current : { w: root.scrollWidth, h: height }));
-  }, [model]);
-
-  useLayoutEffect(() => {
-    measure();
-    const root = canvas.current;
-    if (!root || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(() => measure());
-    observer.observe(root);
-    for (const element of cards.current.values()) observer.observe(element);
-    return () => observer.disconnect();
-  }, [measure]);
-
-  const state = (column: string): "self" | "path" | "onward" | "dim" => {
-    if (column === selected) return "self";
-    if (isStart) return "onward";
-    if (ancestors.has(column)) return "path";
-    if (descendants.has(column)) return "onward";
-    return "dim";
-  };
-  const linkState = (path: Path): "path" | "onward" | "dim" => {
-    if (!isStart && ancestors.has(path.from) && (path.to === selected || ancestors.has(path.to))) return "path";
-    if ((path.from === selected || descendants.has(path.from)) && descendants.has(path.to)) return "onward";
-    return "dim";
-  };
-  const ordered = [...paths].sort((a, b) => ["dim", "onward", "path"].indexOf(linkState(a)) - ["dim", "onward", "path"].indexOf(linkState(b)));
-
-  return (
-    <section data-tour="content-lineage" className={cn(PANEL, "min-w-0 p-4")}>
-      <div className="flex flex-wrap items-start justify-between gap-3 px-1">
-        <div className="min-w-0">
-          <p className="text-[14px] font-semibold text-white">{t("diagramTitle", { field: model.termName(model.field) })}</p>
-          <p className="mt-0.5 flex items-center gap-1.5 text-[11.5px] text-[#8c96a8]"><MousePointerClick className="h-3.5 w-3.5 text-[#f5c400]" />{t("diagramHint", { field: model.termName(model.field) })}</p>
-        </div>
-        <Legend />
-      </div>
-      <div className="mt-4 overflow-x-auto pb-2">
-        <div ref={canvas} className="relative flex w-full items-start gap-10 px-1 py-1" style={{ minHeight: size.h || undefined }}>
-          <svg className="pointer-events-none absolute left-0 top-0" width={size.w} height={size.h} aria-hidden="true">
-            <defs>
-              {(["value", "decides", "impact"] as const).map((kind) => (
-                <marker key={kind} id={`content-arrow-${kind}`} viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
-                  <path d="M0,0 L8,4 L0,8 z" fill={LINK_COLORS[kind]} />
-                </marker>
-              ))}
-            </defs>
-            {ordered.map((path) => {
-              const shown = linkState(path);
-              return (
-                <path
-                  key={`${path.from}>${path.to}`}
-                  data-from={path.from}
-                  data-to={path.to}
-                  d={path.d}
-                  fill="none"
-                  stroke={LINK_COLORS[path.kind]}
-                  strokeWidth={shown === "path" ? 2.6 : shown === "onward" ? 1.9 : 1.4}
-                  strokeOpacity={shown === "dim" ? 0.22 : shown === "onward" && !isStart ? 0.75 : 1}
-                  strokeDasharray={LINK_DASH[path.kind]}
-                  strokeLinecap="round"
-                  markerEnd={`url(#content-arrow-${path.kind})`}
-                  className="transition-[stroke-opacity,stroke-width] duration-300"
-                />
-              );
-            })}
-          </svg>
-          {steps.map(({ level, columns }) => (
-            <div key={level} className="relative z-10 flex min-w-[150px] max-w-[230px] flex-1 basis-0 flex-col gap-2.5">
-              <p className={cn("px-1 text-[10px] font-semibold uppercase tracking-[0.16em]", level === 0 ? "text-[#f5c400]" : level === 1 ? "text-emerald-300" : "text-sky-300")}>
-                {level === 0 ? t("column.start") : level === 1 ? t("column.next") : t("column.step", { level })}
-              </p>
-              {columns.map((column) => (
-                <FieldCard
-                  key={column}
-                  model={model}
-                  column={column}
-                  state={state(column)}
-                  onClick={() => onSelect(column)}
-                  register={(element) => {
-                    if (element) cards.current.set(column, element);
-                    else cards.current.delete(column);
-                  }}
-                />
-              ))}
-            </div>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function Legend() {
-  const t = useTranslations("contentLineageAgent.lineage.legend");
-  return (
-    <div className="flex flex-wrap items-center gap-x-3.5 gap-y-1 text-[10.5px] text-[#9aa4b4]">
-      {(["value", "decides", "impact"] as const).map((kind) => (
-        <span key={kind} className="flex items-center gap-1.5">
-          <svg width="22" height="6" aria-hidden="true"><line x1="1" y1="3" x2="21" y2="3" stroke={LINK_COLORS[kind]} strokeWidth="2" strokeDasharray={LINK_DASH[kind]} strokeLinecap="round" /></svg>
-          {t(kind)}
-        </span>
-      ))}
-      <span className="flex items-center gap-1.5"><Flag className="h-3 w-3 text-[#f5c400]" />{t("end")}</span>
-    </div>
-  );
-}
-
-function FieldCard({ model, column, state, onClick, register }: {
-  model: Model;
-  column: string;
-  state: "self" | "path" | "onward" | "dim";
-  onClick: () => void;
-  register: (element: HTMLElement | null) => void;
-}) {
-  const t = useTranslations("contentLineageAgent.lineage");
-  const start = column === model.field;
-  const flow = model.flowBy.get(column);
-  const values = model.result.scope.categorical ? model.result.scope.values.length : 0;
-  return (
-    <button
-      ref={register}
-      type="button"
-      onClick={onClick}
-      aria-pressed={state === "self"}
-      data-tour={start ? "content-lineage-start" : flow?.direct ? "content-lineage-next" : undefined}
-      data-field={column}
-      className={cn(
-        "group relative w-full rounded-lg border bg-[#0f141b] px-3 py-2.5 text-left transition-all duration-300",
-        state === "self"
-          ? "border-[#f5c400] shadow-[0_0_0_1px_rgba(245,196,0,0.35),0_10px_28px_rgba(245,196,0,0.12)]"
-          : state === "path"
-            ? "border-[#f5c400]/45"
-            : start
-              ? "border-[#f5c400]/40 hover:border-[#f5c400]/70"
-              : "border-[#2a323d] hover:border-[#4a5464]",
-        state === "dim" && "opacity-45 hover:opacity-90",
-        flow?.evidence === "impact" && state !== "self" && "border-dashed border-pink-400/50",
-      )}
-    >
-      <span className={cn("absolute bottom-2 left-0 top-2 w-[3px] rounded-r", start ? "bg-[#f5c400]" : flow?.direct ? "bg-emerald-400" : "bg-sky-400")} />
-      <span className="flex items-start gap-1.5">
-        <span className="min-w-0 flex-1 text-[12.5px] font-semibold leading-snug text-white [overflow-wrap:anywhere]">{model.termName(column)}</span>
-        {flow?.end && <Flag className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#f5c400]" />}
-        {flow?.evidence === "impact" && <FlaskConical className="mt-0.5 h-3.5 w-3.5 shrink-0 text-pink-300" />}
-      </span>
-      <span className="mt-0.5 block truncate font-mono text-[10px] text-[#687386]">{column}</span>
-      {flow ? (
-        <span className="mt-2 flex items-center gap-2">
-          <ReachBar records={flow.records} height={4} className="flex-1" />
-          <span className="shrink-0 text-[10px] tabular-nums text-[#8c96a8]">{t("card.records", { reached: flow.records.reached, total: flow.records.total })}</span>
-        </span>
-      ) : values > 0 ? (
-        <span className="mt-1.5 block text-[10.5px] text-[#8c96a8]">{t("card.values", { count: values })}</span>
-      ) : null}
-    </button>
   );
 }
 

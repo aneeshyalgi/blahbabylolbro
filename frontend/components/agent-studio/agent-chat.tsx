@@ -35,6 +35,8 @@ type AgentChatProps = {
   contextLoading: boolean;
   loadContextOptions: () => void;
   onRunFinished?: () => void;
+  /** Whether a run is in progress (the studio asks before a tab switch would stop it). */
+  onRunningChange?: (running: boolean) => void;
 };
 
 export function AgentChat({
@@ -46,12 +48,14 @@ export function AgentChat({
   contextLoading,
   loadContextOptions,
   onRunFinished,
+  onRunningChange,
 }: AgentChatProps) {
   const { toast } = useToast();
   const { t, plural, locale, relativeTime, toolLabel } = useStudioText();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [historyFailed, setHistoryFailed] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(true);
   const [loadingConversation, setLoadingConversation] = useState(false);
   const [input, setInput] = useState("");
@@ -71,8 +75,9 @@ export function AgentChat({
     try {
       const payload = await requestJson<{ conversations: ConversationSummary[] }>(API_ENDPOINTS.agentConversations(agentId));
       setConversations(payload.conversations);
+      setHistoryFailed(false);
     } catch {
-      setConversations([]);
+      setHistoryFailed(true);
     }
   }, [persistent, agentId]);
 
@@ -90,6 +95,13 @@ export function AgentChat({
   }, [agentId, testMode, resetChat, refreshConversations]);
 
   useEffect(() => () => abortRef.current?.abort(), []);
+
+  const runningCallback = useRef(onRunningChange);
+  runningCallback.current = onRunningChange;
+  useEffect(() => {
+    runningCallback.current?.(running);
+  }, [running]);
+  useEffect(() => () => runningCallback.current?.(false), []);
 
   useLayoutEffect(() => {
     const element = scrollRef.current;
@@ -268,7 +280,14 @@ export function AgentChat({
             </button>
           </div>
           <div className="mt-2 min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2 pb-3">
-            {conversations.length === 0 ? (
+            {historyFailed && conversations.length === 0 ? (
+              <div className="px-2 py-4 text-xs text-rose-300">
+                <p>{t("chat.historyFailed")}</p>
+                <button type="button" onClick={() => void refreshConversations()} className="mt-1.5 font-medium text-[#e5e9ef] underline-offset-2 hover:underline">
+                  {t("chat.retry")}
+                </button>
+              </div>
+            ) : conversations.length === 0 ? (
               <p className="px-2 py-4 text-xs text-[#687386]">{t("chat.emptyHistory")}</p>
             ) : (
               conversations.map((conversation) => (
@@ -288,7 +307,9 @@ export function AgentChat({
                   <button
                     type="button"
                     onClick={() => void deleteConversation(conversation.id)}
-                    className="mt-0.5 text-[#687386] opacity-0 transition-opacity hover:text-red-400 group-hover:opacity-100"
+                    // While a run is going it is saved at its end, so a deletion now would not stick.
+                    disabled={running}
+                    className="mt-0.5 text-[#687386] opacity-0 transition-opacity hover:text-red-400 focus-visible:opacity-100 group-hover:opacity-100 disabled:pointer-events-none disabled:opacity-0"
                     aria-label={t("chat.deleteConversation")}
                   >
                     <Trash2 className="h-3.5 w-3.5" />
@@ -403,7 +424,7 @@ export function AgentChat({
                   />
                 </span>
                 <div className="flex items-center gap-2">
-                  <span className="text-[10.5px] text-[#687386]">{t("chat.sendHint")}</span>
+                  <span className="hidden text-[10.5px] text-[#687386] 2xl:inline">{t("chat.sendHint")}</span>
                   <VoiceInputButton
                     disabled={running}
                     onTranscript={(text) => {

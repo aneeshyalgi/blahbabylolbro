@@ -1,12 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { ArrowRight, Database, Download, FunctionSquare, Maximize2, Minimize2, Minus, Plus, RotateCcw, ScanSearch, Search, Sigma, Table2 } from "lucide-react";
+import { ArrowRight, Database, FunctionSquare, Sigma, Table2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { recallInTab, rememberInTab } from "@/lib/tab-memory";
 import { ROLE_STYLES, TransformationBadge, type Verification } from "./atoms";
 import { downloadText } from "./download";
 import { lineageToDrawIo } from "./drawio";
+import {
+  CANVAS, CanvasActions, EdgeSample, GraphLegend, GraphSearch, TOOLBAR, Toggle, ZoomControls, canvasBackground, edgeLayer, graphFrame, layerStyle,
+  useCanvasView, useMovedNodes, useNodeDrag,
+} from "./graph-canvas";
 import { NODE_HEIGHT, NODE_WIDTH, graphBounds, layoutGraph, lineageOf, lookupId, routeEdges, type GraphEdge, type GraphNode } from "./graph-layout";
 import type { Model } from "./model";
 import type { Focus } from "./types";
@@ -19,31 +24,8 @@ const VERIFICATION_COLORS: Record<Verification, string> = {
   passthrough: "#475569",
 };
 
-type Transform = { x: number; y: number; k: number };
-type Positions = Record<string, { x: number; y: number }>;
-
-/** Room around the nodes for edge curves and loops (the edge layer must cover them to stay hoverable). */
-const EDGE_MARGIN = 160;
-
-function readPositions(key: string | null): Positions {
-  if (!key) return {};
-  try {
-    const parsed = JSON.parse(localStorage.getItem(key) ?? "{}");
-    return parsed && typeof parsed === "object" ? (parsed as Positions) : {};
-  } catch {
-    return {};
-  }
-}
-
-function writePositions(key: string | null, positions: Positions) {
-  if (!key) return;
-  try {
-    if (Object.keys(positions).length) localStorage.setItem(key, JSON.stringify(positions));
-    else localStorage.removeItem(key);
-  } catch {
-    // Storage unavailable: the arrangement lasts for this visit only.
-  }
-}
+/** "Names only" in the toolbar: on by default; the choice holds while the app stays open. */
+const NAMES_ONLY = "technical-lineage-agent.graph.names-only";
 
 export function GraphView({ model, selected, onSelect, layoutKey }: {
   model: Model;
@@ -56,23 +38,19 @@ export function GraphView({ model, selected, onSelect, layoutKey }: {
   const t = useTranslations("lineageAgent.graph");
   const tRoles = useTranslations("lineageAgent.roles");
   const tOps = useTranslations("lineageAgent.operations");
-  const [showLookups, setShowLookups] = useState(true);
-  const [showIndirect, setShowIndirect] = useState(true);
   const [showIsolated, setShowIsolated] = useState(false);
-  const [colorMode, setColorMode] = useState<"role" | "verification">("role");
+  // Names only: each node shows just its name; off, also its kind, role, operations and runtime check.
+  const [namesOnly, setNamesOnly] = useState(() => recallInTab<boolean>(NAMES_ONLY) ?? true);
+  const toggleNamesOnly = () => {
+    const next = !namesOnly;
+    setNamesOnly(next);
+    rememberInTab(NAMES_ONLY, next);
+  };
   const [query, setQuery] = useState("");
-  const [fullscreen, setFullscreen] = useState(false);
   const [hoverNode, setHoverNode] = useState<string | null>(null);
   const [hoverEdge, setHoverEdge] = useState<{ edge: GraphEdge; x: number; y: number } | null>(null);
-  const [transform, setTransform] = useState<Transform>({ x: 0, y: 0, k: 1 });
-  const viewport = useRef<HTMLDivElement | null>(null);
-  const drag = useRef<{ x: number; y: number; tx: number; ty: number; moved: boolean } | null>(null);
   // Nodes the user moved: their positions replace the automatic layout; the edges are routed to wherever they are.
-  const storageKey = layoutKey ? `dataflow_lineage_graph_positions:${layoutKey}` : null;
-  const [positions, setPositions] = useState<Positions>(() => readPositions(storageKey));
-  const [draggingNode, setDraggingNode] = useState<string | null>(null);
-  const nodeDrag = useRef<{ id: string; pointerX: number; pointerY: number; x: number; y: number; moved: boolean } | null>(null);
-  const suppressClick = useRef(false);
+  const moved = useMovedNodes(layoutKey ? `dataflow_lineage_graph_positions:${layoutKey}` : null);
   const internal = useRef(false);
   const select = (focus: Focus | null) => {
     internal.current = true;
@@ -81,102 +59,30 @@ export function GraphView({ model, selected, onSelect, layoutKey }: {
   const selectedId = selected ? (selected.kind === "lookup" ? lookupId(selected.name) : selected.name) : null;
 
   const layout = useMemo(
-    () => layoutGraph(model.analysis, { showLookups, showIndirect, showIsolated }),
-    [model.analysis, showLookups, showIndirect, showIsolated],
+    () => layoutGraph(model.analysis, { showIsolated }),
+    [model.analysis, showIsolated],
   );
   const nodes = useMemo(
-    () => layout.nodes.map((node) => (positions[node.id] ? { ...node, ...positions[node.id] } : node)),
-    [layout.nodes, positions],
+    () => layout.nodes.map((node) => (moved.positions[node.id] ? { ...node, ...moved.positions[node.id] } : node)),
+    [layout.nodes, moved.positions],
   );
   const edges = useMemo(() => routeEdges(nodes, layout.edges), [nodes, layout.edges]);
   const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
   const bounds = useMemo(() => graphBounds(nodes), [nodes]);
-  const boundsRef = useRef(bounds);
-  boundsRef.current = bounds;
-  const moved = Object.keys(positions).length > 0;
-
-  // Fits the current arrangement; it runs on layout changes and resizes, never while nodes are being moved.
-  const fit = useCallback(() => {
-    const element = viewport.current;
-    if (!element) return;
-    const { width, height } = element.getBoundingClientRect();
-    if (!width || !height) return;
-    const box = boundsRef.current;
-    const k = Math.min(1.15, Math.max(0.2, Math.min((width - 24) / box.width, (height - 24) / box.height)));
-    setTransform({ k, x: (width - box.width * k) / 2 - box.x * k, y: (height - box.height * k) / 2 - box.y * k });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layout]);
-
-  // The arrangement is saved once a move has ended (and cleared by Reset layout).
-  useEffect(() => {
-    if (!draggingNode) writePositions(storageKey, positions);
-  }, [draggingNode, positions, storageKey]);
+  const view = useCanvasView(bounds, layout, () => select(null));
+  const drag = useNodeDrag(view.transform.k, moved, () => setHoverEdge(null));
+  const { transform, fit } = view;
+  const draggingNode = moved.dragging;
 
   const resetLayout = () => {
-    setPositions({});
+    moved.setPositions({});
     window.requestAnimationFrame(() => fit());
   };
 
-  useEffect(() => {
-    fit();
-  }, [fit, fullscreen]);
-
-  useEffect(() => {
-    const element = viewport.current;
-    if (!element) return;
-    const observer = new ResizeObserver(() => fit());
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [fit]);
-
-  // Wheel zoom around the cursor (a native listener: React's wheel listener is passive).
-  useEffect(() => {
-    const element = viewport.current;
-    if (!element) return;
-    const onWheel = (event: WheelEvent) => {
-      event.preventDefault();
-      const rect = element.getBoundingClientRect();
-      const mx = event.clientX - rect.left;
-      const my = event.clientY - rect.top;
-      setTransform((current) => {
-        const k = Math.min(2.5, Math.max(0.15, current.k * Math.exp(-event.deltaY * 0.0015)));
-        return { k, x: mx - ((mx - current.x) * k) / current.k, y: my - ((my - current.y) * k) / current.k };
-      });
-    };
-    element.addEventListener("wheel", onWheel, { passive: false });
-    return () => element.removeEventListener("wheel", onWheel);
-  }, []);
-
-  useEffect(() => {
-    if (!fullscreen) return;
-    const onKey = (event: KeyboardEvent) => event.key === "Escape" && setFullscreen(false);
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [fullscreen]);
-
-  const zoom = (factor: number) => {
-    const element = viewport.current;
-    if (!element) return;
-    const { width, height } = element.getBoundingClientRect();
-    setTransform((current) => {
-      const k = Math.min(2.5, Math.max(0.15, current.k * factor));
-      return { k, x: width / 2 - ((width / 2 - current.x) * k) / current.k, y: height / 2 - ((height / 2 - current.y) * k) / current.k };
-    });
+  const focusNode = (id: string) => {
+    const node = nodeById.get(id);
+    if (node) view.focus(node.x, node.y, NODE_WIDTH, NODE_HEIGHT);
   };
-
-  const focusNode = useCallback(
-    (id: string) => {
-      const node = nodeById.get(id);
-      const element = viewport.current;
-      if (!node || !element) return;
-      const { width, height } = element.getBoundingClientRect();
-      setTransform((current) => {
-        const k = Math.max(current.k, 0.8);
-        return { k, x: width / 2 - (node.x + NODE_WIDTH / 2) * k, y: height / 2 - (node.y + NODE_HEIGHT / 2) * k };
-      });
-    },
-    [nodeById],
-  );
 
   // A column selected elsewhere (the details, a finding) is brought into view; back to all columns shows the whole graph.
   useEffect(() => {
@@ -219,60 +125,7 @@ export function GraphView({ model, selected, onSelect, layoutKey }: {
     return "dim";
   };
 
-  const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if ((event.target as HTMLElement).closest("[data-node]")) return;
-    drag.current = { x: event.clientX, y: event.clientY, tx: transform.x, ty: transform.y, moved: false };
-    (event.currentTarget as HTMLDivElement).setPointerCapture(event.pointerId);
-  };
-  const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const current = drag.current;
-    if (!current) return;
-    const dx = event.clientX - current.x;
-    const dy = event.clientY - current.y;
-    if (Math.abs(dx) + Math.abs(dy) > 3) current.moved = true;
-    setTransform((value) => ({ ...value, x: current.tx + dx, y: current.ty + dy }));
-  };
-  const onPointerUp = () => {
-    const current = drag.current;
-    drag.current = null;
-    if (current && !current.moved) select(null);
-  };
-
-  // Moving a node: a press that travels more than a few pixels drags it; a press that stays put is a click.
-  const onNodePointerDown = (event: ReactPointerEvent<HTMLDivElement>, node: GraphNode) => {
-    if (event.button !== 0) return;
-    event.stopPropagation();
-    suppressClick.current = false;
-    nodeDrag.current = { id: node.id, pointerX: event.clientX, pointerY: event.clientY, x: node.x, y: node.y, moved: false };
-    event.currentTarget.setPointerCapture(event.pointerId);
-  };
-  const onNodePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const current = nodeDrag.current;
-    if (!current) return;
-    const travelled = Math.abs(event.clientX - current.pointerX) + Math.abs(event.clientY - current.pointerY);
-    if (!current.moved && travelled < 4) return;
-    if (!current.moved) {
-      current.moved = true;
-      setDraggingNode(current.id);
-      setHoverEdge(null);
-    }
-    const x = Math.round(current.x + (event.clientX - current.pointerX) / transform.k);
-    const y = Math.round(current.y + (event.clientY - current.pointerY) / transform.k);
-    setPositions((value) => ({ ...value, [current.id]: { x, y } }));
-  };
-  const onNodePointerUp = () => {
-    const current = nodeDrag.current;
-    nodeDrag.current = null;
-    if (!current?.moved) return;
-    suppressClick.current = true;
-    setDraggingNode(null);
-  };
-  const moveNode = (node: GraphNode, dx: number, dy: number) => setPositions((value) => ({ ...value, [node.id]: { x: node.x + dx, y: node.y + dy } }));
-
-  const nodeColor = (node: GraphNode) => {
-    if (node.kind === "lookup") return "#a78bfa";
-    return colorMode === "role" ? ROLE_STYLES[node.column!.role].bar : VERIFICATION_COLORS[model.verification(node.id)];
-  };
+  const nodeColor = (node: GraphNode) => (node.kind === "lookup" ? "#a78bfa" : ROLE_STYLES[node.column!.role].bar);
 
   const exportDrawio = () => {
     const xml = lineageToDrawIo({ ...layout, nodes, edges }, t("drawioTitle"), (role) => tRoles(role), (size) => t("lookupNode", { count: size }));
@@ -280,80 +133,36 @@ export function GraphView({ model, selected, onSelect, layoutKey }: {
   };
 
   return (
-    <div
-      data-tour="lineage-graph"
-      className={cn(
-        "flex overflow-hidden rounded-lg border border-[#252a33] bg-[#090c11]",
-        fullscreen ? "fixed inset-3 z-50 shadow-[0_30px_120px_rgba(0,0,0,0.75)]" : "relative h-[560px]",
-      )}
-    >
+    <div data-tour="lineage-graph" className={graphFrame(view.fullscreen)}>
       <div className="relative flex min-w-0 flex-1 flex-col">
-        {/* Toolbar */}
-        <div className="flex flex-wrap items-center gap-2 border-b border-[#1f252e] bg-[#0b0f15] px-3 py-2">
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#5d6878]" />
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  const first = nodes.find((node) => matches.has(node.id));
-                  if (first) {
-                    select(first.kind === "column" ? { kind: "column", name: first.id } : { kind: "lookup", name: first.label });
-                    focusNode(first.id);
-                  }
-                }
-              }}
-              placeholder={t("search")}
-              className="h-8 w-48 rounded-md border border-[#252a33] bg-[#0f141b] pl-8 pr-2 text-[12px] text-white outline-none placeholder:text-[#5d6878] focus:border-[#f5c400]/50"
-            />
-          </div>
-          <Toggle active={showLookups} onClick={() => setShowLookups((value) => !value)} label={t("lookups")} />
-          <Toggle active={showIndirect} onClick={() => setShowIndirect((value) => !value)} label={t("indirect")} />
+        <div className={TOOLBAR}>
+          <GraphSearch
+            value={query}
+            onChange={setQuery}
+            onEnter={() => {
+              const first = nodes.find((node) => matches.has(node.id));
+              if (first) {
+                select(first.kind === "column" ? { kind: "column", name: first.id } : { kind: "lookup", name: first.label });
+                focusNode(first.id);
+              }
+            }}
+            placeholder={t("search")}
+          />
+          <Toggle active={namesOnly} onClick={toggleNamesOnly} label={t("namesOnly")} />
           <Toggle active={showIsolated} onClick={() => setShowIsolated((value) => !value)} label={t("unconnected", { count: layout.hidden })} />
-          <div className="ml-1 flex overflow-hidden rounded-md border border-[#252a33]">
-            {(["role", "verification"] as const).map((mode) => (
-              <button
-                key={mode}
-                type="button"
-                onClick={() => setColorMode(mode)}
-                className={cn("px-2.5 py-1.5 text-[11.5px]", colorMode === mode ? "bg-[#f5c400]/15 text-[#f5c400]" : "text-[#8c96a8] hover:text-white")}
-              >
-                {t(`color.${mode}`)}
-              </button>
-            ))}
-          </div>
-          <div className="ml-auto flex items-center gap-1">
-            <IconButton label={t("resetLayout")} onClick={resetLayout} disabled={!moved}><RotateCcw className="h-3.5 w-3.5" /></IconButton>
-            <IconButton label={t("drawio")} onClick={exportDrawio}><Download className="h-3.5 w-3.5" /></IconButton>
-            <IconButton label={fullscreen ? t("exitFullscreen") : t("fullscreen")} onClick={() => setFullscreen((value) => !value)}>
-              {fullscreen ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
-            </IconButton>
-          </div>
+          <CanvasActions
+            moved={moved.moved}
+            onReset={resetLayout}
+            onDownload={exportDrawio}
+            fullscreen={view.fullscreen}
+            onFullscreen={() => view.setFullscreen((value) => !value)}
+            labels={{ resetLayout: t("resetLayout"), drawio: t("drawio"), fullscreen: t("fullscreen"), exitFullscreen: t("exitFullscreen") }}
+          />
         </div>
 
-        {/* Canvas */}
-        <div
-          ref={viewport}
-          className="relative flex-1 cursor-grab touch-none select-none overflow-hidden active:cursor-grabbing"
-          style={{
-            backgroundImage: "radial-gradient(circle, rgba(148,163,184,0.10) 1px, transparent 1px)",
-            backgroundSize: `${22 * transform.k}px ${22 * transform.k}px`,
-            backgroundPosition: `${transform.x}px ${transform.y}px`,
-          }}
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-          onPointerLeave={() => setHoverEdge(null)}
-        >
-          <div className="absolute left-0 top-0 origin-top-left" style={{ transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.k})` }}>
-            <svg
-              width={bounds.width + 2 * EDGE_MARGIN}
-              height={bounds.height + 2 * EDGE_MARGIN}
-              viewBox={`${bounds.x - EDGE_MARGIN} ${bounds.y - EDGE_MARGIN} ${bounds.width + 2 * EDGE_MARGIN} ${bounds.height + 2 * EDGE_MARGIN}`}
-              className="absolute overflow-visible"
-              style={{ left: bounds.x - EDGE_MARGIN, top: bounds.y - EDGE_MARGIN }}
-            >
+        <div ref={view.viewport} className={CANVAS} style={canvasBackground(transform)} {...view.panHandlers} onPointerLeave={() => setHoverEdge(null)}>
+          <div className="absolute left-0 top-0 origin-top-left" style={layerStyle(transform)}>
+            <svg {...edgeLayer(bounds)}>
               <defs>
                 {[["normal", "#5b6676"], ["up", "#f5c400"], ["down", "#38bdf8"], ["dim", "#2a313b"], ["lookup", "#a78bfa"], ["indirect", "#d9a441"]].map(([id, color]) => (
                   <marker key={id} id={`lineage-arrow-${id}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -386,12 +195,12 @@ export function GraphView({ model, selected, onSelect, layoutKey }: {
                       style={{ pointerEvents: "stroke", cursor: "help" }}
                       onPointerEnter={(event) => {
                         if (draggingNode) return;
-                        const rect = viewport.current?.getBoundingClientRect();
+                        const rect = view.viewport.current?.getBoundingClientRect();
                         setHoverEdge({ edge, x: event.clientX - (rect?.left ?? 0), y: event.clientY - (rect?.top ?? 0) });
                       }}
                       onPointerMove={(event) => {
                         if (draggingNode) return;
-                        const rect = viewport.current?.getBoundingClientRect();
+                        const rect = view.viewport.current?.getBoundingClientRect();
                         setHoverEdge({ edge, x: event.clientX - (rect?.left ?? 0), y: event.clientY - (rect?.top ?? 0) });
                       }}
                       onPointerLeave={() => setHoverEdge(null)}
@@ -415,27 +224,15 @@ export function GraphView({ model, selected, onSelect, layoutKey }: {
                   role="button"
                   tabIndex={0}
                   aria-roledescription={t("movableNode")}
-                  onPointerDown={(event) => onNodePointerDown(event, node)}
-                  onPointerMove={onNodePointerMove}
-                  onPointerUp={onNodePointerUp}
-                  onPointerCancel={onNodePointerUp}
+                  {...drag.handlers(node)}
                   onClick={() => {
-                    // The click that ends a drag does not select.
-                    if (suppressClick.current) {
-                      suppressClick.current = false;
-                      return;
-                    }
+                    if (!drag.takeClick()) return;
                     if (selectedId === node.id) select(null);
                     else select(node.kind === "column" ? { kind: "column", name: node.id } : { kind: "lookup", name: node.label });
                   }}
                   onKeyDown={(event) => {
                     if (event.key === "Enter") select(node.kind === "column" ? { kind: "column", name: node.id } : { kind: "lookup", name: node.label });
-                    const step = event.shiftKey ? 40 : 10;
-                    const delta = ({ ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] } as Record<string, [number, number]>)[event.key];
-                    if (delta) {
-                      event.preventDefault();
-                      moveNode(node, delta[0], delta[1]);
-                    }
+                    drag.nudge(event, node);
                   }}
                   onPointerEnter={() => setHoverNode(node.id)}
                   onPointerLeave={() => setHoverNode(null)}
@@ -456,29 +253,39 @@ export function GraphView({ model, selected, onSelect, layoutKey }: {
                   style={{ left: node.x, top: node.y, width: NODE_WIDTH, height: NODE_HEIGHT, zIndex: dragging ? 5 : undefined }}
                 >
                   <span className="absolute inset-y-0 left-0 w-[3px]" style={{ background: color }} />
-                  <div className="flex items-center gap-2 px-3 pt-2.5">
-                    <NodeIcon node={node} color={color} />
-                    <span className="min-w-0 flex-1 truncate font-mono text-[12.5px] font-medium text-white" title={node.label}>
-                      {node.label}
-                    </span>
-                    {node.kind === "column" && <MiniVerification status={model.verification(node.id)} />}
-                  </div>
-                  <div className="mt-1.5 flex items-center gap-1 overflow-hidden px-3">
-                    {node.kind === "lookup" ? (
-                      <span className="text-[10px] uppercase tracking-wide text-violet-300/90">{t("lookupNode", { count: node.lookup?.size ?? 0 })}</span>
-                    ) : (
-                      <>
-                        <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide" style={{ color: ROLE_STYLES[column!.role].bar }}>
-                          {tRoles(column!.role)}
+                  {namesOnly ? (
+                    <div data-names-only className="flex h-full items-center px-3.5">
+                      <span className="line-clamp-2 min-w-0 flex-1 font-mono text-[13px] font-medium leading-snug text-white [overflow-wrap:anywhere]" title={node.label}>
+                        {node.label}
+                      </span>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="flex items-center gap-2 px-3 pt-2.5">
+                        <NodeIcon node={node} color={color} />
+                        <span className="min-w-0 flex-1 truncate font-mono text-[12.5px] font-medium text-white" title={node.label}>
+                          {node.label}
                         </span>
-                        {column!.operations.filter((operation) => operation !== "cast" || column!.role === "cast").slice(0, 2).map((operation) => (
-                          <span key={operation} className="truncate rounded bg-[#1a212c] px-1 text-[10px] text-[#9aa4b4]">
-                            {tOps.has(operation) ? tOps(operation) : operation}
-                          </span>
-                        ))}
-                      </>
-                    )}
-                  </div>
+                        {node.kind === "column" && <MiniVerification status={model.verification(node.id)} />}
+                      </div>
+                      <div className="mt-1.5 flex items-center gap-1 overflow-hidden px-3">
+                        {node.kind === "lookup" ? (
+                          <span className="text-[10px] uppercase tracking-wide text-violet-300/90">{t("lookupNode", { count: node.lookup?.size ?? 0 })}</span>
+                        ) : (
+                          <>
+                            <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide" style={{ color: ROLE_STYLES[column!.role].bar }}>
+                              {tRoles(column!.role)}
+                            </span>
+                            {column!.operations.filter((operation) => operation !== "cast" || column!.role === "cast").slice(0, 2).map((operation) => (
+                              <span key={operation} className="truncate rounded bg-[#1a212c] px-1 text-[10px] text-[#9aa4b4]">
+                                {tOps.has(operation) ? tOps(operation) : operation}
+                              </span>
+                            ))}
+                          </>
+                        )}
+                      </div>
+                    </>
+                  )}
                 </div>
               );
             })}
@@ -497,34 +304,20 @@ export function GraphView({ model, selected, onSelect, layoutKey }: {
             </div>
           )}
 
-          {/* Zoom controls */}
-          <div className="absolute bottom-3 right-3 flex flex-col items-center gap-1 rounded-md border border-[#1f252e] bg-[#0b0f15]/90 p-1 backdrop-blur" onPointerDown={(event) => event.stopPropagation()}>
-            <IconButton label={t("zoomIn")} onClick={() => zoom(1.25)}><Plus className="h-3.5 w-3.5" /></IconButton>
-            <span className="py-0.5 text-center text-[10px] tabular-nums text-[#8c96a8]">{Math.round(transform.k * 100)}%</span>
-            <IconButton label={t("zoomOut")} onClick={() => zoom(1 / 1.25)}><Minus className="h-3.5 w-3.5" /></IconButton>
-            <IconButton label={t("fit")} onClick={fit}><ScanSearch className="h-3.5 w-3.5" /></IconButton>
-          </div>
+          <ZoomControls k={transform.k} onZoom={view.zoom} onFit={fit} labels={{ zoomIn: t("zoomIn"), zoomOut: t("zoomOut"), fit: t("fit") }} />
 
-          {/* Legend */}
-          <div className="pointer-events-none absolute bottom-3 left-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 rounded-md border border-[#1f252e] bg-[#0b0f15]/90 px-3 py-2 text-[10.5px] text-[#9aa4b4] backdrop-blur">
-            {colorMode === "role"
-              ? (["passthrough", "cast", "enriched", "overwritten", "created"] as const).map((role) => (
-                  <span key={role} className="flex items-center gap-1.5">
-                    <span className="h-2.5 w-[3px] rounded" style={{ background: ROLE_STYLES[role].bar }} />
-                    {tRoles(role)}
-                  </span>
-                ))
-              : (["verified", "partial", "discrepancy", "passthrough"] as const).map((status) => (
-                  <span key={status} className="flex items-center gap-1.5">
-                    <span className="h-2.5 w-[3px] rounded" style={{ background: VERIFICATION_COLORS[status] }} />
-                    {t(`legend.${status}`)}
-                  </span>
-                ))}
+          <GraphLegend>
+            {(["passthrough", "cast", "enriched", "overwritten", "created"] as const).map((role) => (
+              <span key={role} className="flex items-center gap-1.5">
+                <span className="h-2.5 w-[3px] rounded" style={{ background: ROLE_STYLES[role].bar }} />
+                {tRoles(role)}
+              </span>
+            ))}
             <span className="h-3 w-px bg-[#2a313c]" />
             <EdgeSample label={t("legend.direct")} />
             <EdgeSample label={t("legend.indirect")} dashed="6 4" color="#b98b33" />
             <EdgeSample label={t("legend.lookup")} dashed="2 4" color="#8b74d6" />
-          </div>
+          </GraphLegend>
         </div>
       </div>
     </div>
@@ -547,40 +340,6 @@ function MiniVerification({ status }: { status: Verification }) {
   return (
     <span title={t(status)} className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full border" style={{ borderColor: `${color}66`, background: `${color}1a` }}>
       <span className="h-1.5 w-1.5 rounded-full" style={{ background: color }} />
-    </span>
-  );
-}
-
-function Toggle({ active, onClick, label }: { active: boolean; onClick: () => void; label: string }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-[11.5px] transition-colors",
-        active ? "border-[#f5c400]/35 bg-[#f5c400]/10 text-[#f5c400]" : "border-[#252a33] text-[#8c96a8] hover:text-white",
-      )}
-      aria-pressed={active}
-    >
-      <span className={cn("h-2 w-2 rounded-sm border", active ? "border-[#f5c400] bg-[#f5c400]" : "border-[#5d6878]")} />
-      {label}
-    </button>
-  );
-}
-
-function IconButton({ label, onClick, disabled, children }: { label: string; onClick: () => void; disabled?: boolean; children: React.ReactNode }) {
-  return (
-    <button type="button" title={label} aria-label={label} onClick={onClick} disabled={disabled} className="flex h-8 w-8 items-center justify-center rounded-md border border-[#252a33] text-[#aab3c2] transition-colors hover:border-[#f5c400]/40 hover:text-[#f5c400] disabled:pointer-events-none disabled:opacity-35">
-      {children}
-    </button>
-  );
-}
-
-function EdgeSample({ label, dashed, color = "#6b7280" }: { label: string; dashed?: string; color?: string }) {
-  return (
-    <span className="flex items-center gap-1.5">
-      <svg width="22" height="6"><line x1="0" y1="3" x2="22" y2="3" stroke={color} strokeWidth="1.6" strokeDasharray={dashed} /></svg>
-      {label}
     </span>
   );
 }

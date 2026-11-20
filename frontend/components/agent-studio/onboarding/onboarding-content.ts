@@ -243,8 +243,8 @@ const EN: OnboardingCopy = {
       {
         key: "advanced",
         title: "Advanced settings",
-        text: "Max tool rounds (1–12) limits how many rounds of tool calls are allowed before the agent must answer. Temperature (0–1) controls wording: low values are precise and repeatable, high values more varied.",
-        example: "Max tool rounds: 10\nTemperature: 0.10 (precise)",
+        text: "Max tool rounds (1–12) limits how many rounds of tool calls are allowed before the agent must answer. More rounds let it dig deeper; fewer keep answers quick.",
+        example: "Max tool rounds: 10",
       },
     ],
   },
@@ -677,8 +677,8 @@ const DE: OnboardingCopy = {
       {
         key: "advanced",
         title: "Erweiterte Einstellungen",
-        text: "Max. Tool-Runden (1–12) begrenzt, wie viele Runden von Tool-Aufrufen erlaubt sind, bevor der Agent antworten muss. Die Temperatur (0–1) steuert die Formulierung: niedrige Werte sind präzise und wiederholbar, hohe Werte abwechslungsreicher.",
-        example: "Max. Tool-Runden: 10\nTemperatur: 0,10 (präzise)",
+        text: "Max. Tool-Runden (1–12) begrenzt, wie viele Runden von Tool-Aufrufen erlaubt sind, bevor der Agent antworten muss. Mehr Runden erlauben gründlichere Analysen, weniger halten Antworten kurz.",
+        example: "Max. Tool-Runden: 10",
       },
     ],
   },

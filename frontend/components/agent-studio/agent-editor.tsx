@@ -42,7 +42,8 @@ function ListEditor({ values, onChange, placeholder, max }: { values: string[]; 
   return (
     <div className="space-y-1.5">
       {values.map((value, index) => (
-        <div key={`${index}-${value}`} className="group flex items-start gap-2">
+        // Keyed by position: a key that contains the text would recreate the box (and drop focus) on every keystroke.
+        <div key={index} className="group flex items-start gap-2">
           <Textarea
             value={value}
             onChange={(event) => onChange(values.map((item, itemIndex) => (itemIndex === index ? event.target.value : item)))}
@@ -95,6 +96,7 @@ function SourceFilesPicker({
   onChange,
   files,
   loading,
+  failed,
   onReload,
   accent,
 }: {
@@ -106,12 +108,14 @@ function SourceFilesPicker({
   onChange: (ids: string[]) => void;
   files: SourceFile[];
   loading: boolean;
+  /** The list could not be loaded: nothing is marked as deleted then. */
+  failed: boolean;
   onReload: () => void;
   accent: string;
 }) {
   const { t, plural, formatDateTime } = useStudioText();
   const known = new Set(files.map((file) => file.id));
-  const missing = loading ? [] : selected.filter((id) => !known.has(id));
+  const missing = loading || failed ? [] : selected.filter((id) => !known.has(id));
   const allFiles = selected.length === 0;
   const isChecked = (id: string) => allFiles || selected.includes(id);
   const checkedIds = allFiles ? files.map((file) => file.id) : selected.filter((id) => known.has(id));
@@ -145,9 +149,15 @@ function SourceFilesPicker({
         </div>
       }
     >
+      {failed && !loading ? (
+        <p role="alert" className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-rose-400/30 bg-rose-400/[0.06] px-3 py-2 text-xs text-rose-200">
+          {t("editor.sourcesFailed")}
+          <button type="button" onClick={onReload} className="font-medium text-white underline-offset-2 hover:underline">{t("chat.retry")}</button>
+        </p>
+      ) : null}
       {loading && !files.length ? (
         <p className="flex items-center gap-2 text-xs text-[#8c96a8]"><Loader2 className="h-3.5 w-3.5 animate-spin" /> {t("common.loading")}</p>
-      ) : !files.length && !missing.length ? (
+      ) : failed && !files.length ? null : !files.length && !missing.length ? (
         <p className="rounded-lg border border-dashed border-[#303845] px-3 py-3 text-xs leading-5 text-[#8c96a8]">{emptyText}</p>
       ) : (
         <div className="space-y-1.5">
@@ -186,7 +196,7 @@ function SourceFilesPicker({
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-xs font-semibold text-[#e5e9ef]">{file.filename}</span>
                   <span className="block text-[11px] text-[#687386]">
-                    {pdf ? t("editor.sourcesPages", { count: file.page_count ?? 0 }) : t("editor.sourcesSheets", { count: file.sheets?.length ?? 0 })}
+                    {pdf ? plural("editor.sourcesPages", file.page_count ?? 0) : plural("editor.sourcesSheets", file.sheets?.length ?? 0)}
                     {" · "}
                     {formatDateTime(file.upload_date)}
                   </span>
@@ -218,9 +228,11 @@ export function AgentEditor({
   onUndoRefine,
   releaseNoteFiles,
   releaseNoteFilesLoading,
+  releaseNoteFilesFailed = false,
   onReloadReleaseNoteFiles,
   regulationFiles,
   regulationFilesLoading,
+  regulationFilesFailed = false,
   onReloadRegulationFiles,
 }: {
   definition: AgentDefinition;
@@ -232,9 +244,11 @@ export function AgentEditor({
   onUndoRefine: () => void;
   releaseNoteFiles: SourceFile[];
   releaseNoteFilesLoading: boolean;
+  releaseNoteFilesFailed?: boolean;
   onReloadReleaseNoteFiles: () => void;
   regulationFiles: SourceFile[];
   regulationFilesLoading: boolean;
+  regulationFilesFailed?: boolean;
   onReloadRegulationFiles: () => void;
 }) {
   const { t, toolLabel, toolDescription, category: categoryLabel } = useStudioText();
@@ -434,6 +448,7 @@ export function AgentEditor({
           onChange={(ids) => set("release_note_sources", ids)}
           files={releaseNoteFiles}
           loading={releaseNoteFilesLoading}
+          failed={releaseNoteFilesFailed}
           onReload={onReloadReleaseNoteFiles}
           accent={accent}
         />
@@ -449,6 +464,7 @@ export function AgentEditor({
           onChange={(ids) => set("regulation_sources", ids)}
           files={regulationFiles}
           loading={regulationFilesLoading}
+          failed={regulationFilesFailed}
           onReload={onReloadRegulationFiles}
           accent={accent}
         />
@@ -473,8 +489,8 @@ export function AgentEditor({
       </Section>
 
       <Section title={t("editor.advanced")}>
-        <div className="grid gap-5 sm:grid-cols-2">
-          <label className="space-y-2">
+        <div className="max-w-sm">
+          <label className="block space-y-2">
             <span className="flex justify-between text-xs text-[#aeb8c7]">
               <span>{t("editor.maxSteps")}</span>
               <span className="tabular-nums text-white">{definition.max_steps}</span>
@@ -490,23 +506,6 @@ export function AgentEditor({
               style={{ accentColor: accent }}
             />
             <span className="block text-[10.5px] text-[#687386]">{t("editor.maxStepsHint")}</span>
-          </label>
-          <label className="space-y-2">
-            <span className="flex justify-between text-xs text-[#aeb8c7]">
-              <span>{t("editor.temperature")}</span>
-              <span className="tabular-nums text-white">{definition.temperature.toFixed(2)}</span>
-            </span>
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.05}
-              value={definition.temperature}
-              onChange={(event) => set("temperature", Number(event.target.value))}
-              className="w-full"
-              style={{ accentColor: accent }}
-            />
-            <span className="flex justify-between text-[10.5px] text-[#687386]"><span>{t("editor.precise")}</span><span>{t("editor.creative")}</span></span>
           </label>
         </div>
       </Section>

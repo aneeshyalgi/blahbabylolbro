@@ -1,22 +1,26 @@
 "use client";
 
-import { Fragment, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import {
-  AlertTriangle, ArrowRight, BookOpenCheck, Boxes, ChevronRight, Code2, Crosshair, Database, Flag, FlaskConical, Languages, Layers, Loader2, Microscope, Rocket, Search, Sparkles, Star, Workflow,
+  AlertTriangle, ArrowRight, Boxes, Check, Code2, Crosshair, Database, Flag, FlaskConical, Loader2, Rocket, Search, Sparkles, Star, type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { EYEBROW, PANEL, ROLE_COLORS, formatDateTime } from "./atoms";
 import type { CatalogueField, Origin, Preview, Sources } from "./types";
 
-const METHOD = [
-  { id: "trace", icon: Microscope },
-  { id: "follow", icon: Workflow },
-  { id: "describe", icon: BookOpenCheck },
-  { id: "translate", icon: Languages },
-] as const;
-
 const ORIGINS: Origin[] = ["source", "derived", "intermediate"];
+
+/** A setup step is done, the one to do now, or waiting for the steps before it. */
+type StepState = "done" | "current" | "waiting";
+type Tone = "start" | "next" | "downstream";
+
+/**
+ * The three setup steps sit side by side (stacked on narrow screens, where steps 2 and 3 are 500 px high), each with a
+ * fixed height: choosing an execution or a field fills the panels but never moves the Follow button below them. On
+ * wide screens the panels share their header row (subgrid), so the three headers line up whatever their text.
+ */
+const STEP_PANEL = "flex min-h-0 flex-col overflow-hidden xl:row-span-2 xl:grid xl:grid-cols-[minmax(0,1fr)] xl:grid-rows-subgrid";
 
 export function SetupPanel({
   sources, loading, selected, onSelect, preview, previewLoading, field, onField, starting, onStart,
@@ -50,110 +54,94 @@ export function SetupPanel({
     const needle = fieldQuery.trim().toLowerCase();
     return (preview?.fields ?? []).filter((item) => !needle || item.column.toLowerCase().includes(needle));
   }, [preview, fieldQuery]);
+  const steps: Record<"execution" | "field" | "forward", StepState> = {
+    execution: selected ? "done" : "current",
+    field: chosen ? "done" : selected ? "current" : "waiting",
+    forward: chosen ? "current" : "waiting",
+  };
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
-        <section data-tour="content-executions" className={cn(PANEL, "flex flex-col")}>
-          <div className="flex flex-wrap items-center gap-3 border-b border-[#1f252e] px-4 py-3">
-            <StepNumber value={1} />
-            <div className="min-w-0 flex-1">
-              <p className="text-[13.5px] font-semibold text-white">{t("executionsTitle")}</p>
-              <p className="text-[11.5px] text-[#8c96a8]">{t("executionsHint")}</p>
-            </div>
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#5d6878]" />
-              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("search")} className="h-8 w-48 rounded-md border border-[#252a33] bg-[#0f141b] pl-8 pr-2 text-[12px] text-white outline-none placeholder:text-[#5d6878] focus:border-[#f5c400]/50" />
-            </div>
-          </div>
-          <div className="max-h-[520px] min-h-[260px] flex-1 overflow-y-auto p-2">
-            {loading && (
-              <div className="flex items-center gap-2 px-3 py-6 text-[12.5px] text-[#8c96a8]"><Loader2 className="h-4 w-4 animate-spin" /> {t("loading")}</div>
-            )}
-            {!loading && executions === 0 && (
-              <div className="flex flex-col items-center px-6 py-12 text-center">
-                <Boxes className="h-9 w-9 text-[#3f4957]" />
-                <p className="mt-3 text-[13px] font-semibold text-white">{t("emptyTitle")}</p>
-                <p className="mt-1 max-w-sm text-[12px] leading-relaxed text-[#8c96a8]">{t("emptyBody")}</p>
-              </div>
-            )}
-            {!loading && clusters.map((cluster) => (
-              <div key={cluster.id} className="mb-2 overflow-hidden rounded-md border border-[#1f252e]">
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 bg-[#0f141b] px-3 py-2">
-                  <span className="text-[13px] font-semibold text-white">{cluster.name}</span>
-                  {cluster.is_reference && <span className="inline-flex items-center gap-1 rounded-full border border-[#f5c400]/30 px-1.5 text-[10px] text-[#f5c400]"><Star className="h-2.5 w-2.5" />{t("reference")}</span>}
-                  {cluster.reporting_date && <span className="text-[11px] text-[#687386]">{t("reportingDate", { date: cluster.reporting_date })}</span>}
-                  <span className="ml-auto flex items-center gap-3 text-[11px] text-[#8c96a8]">
-                    <span className="flex items-center gap-1"><Database className="h-3 w-3" />{cluster.dataset_name ?? "–"}</span>
-                    <span className="flex items-center gap-1 font-mono"><Code2 className="h-3 w-3" />{cluster.code_filename ?? "–"}</span>
-                  </span>
+      <div className="grid gap-4 xl:h-[560px] xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,0.92fr)] xl:grid-rows-[auto_minmax(0,1fr)] xl:gap-y-0">
+        <section data-tour="content-executions" className={cn(PANEL, STEP_PANEL, steps.execution === "current" && "border-[#f5c400]/30")}>
+          <PanelHeader step={1} state={steps.execution} title={t("executionsTitle")} hint={t("executionsHint")} />
+          <div className="flex min-h-0 flex-1 flex-col">
+            <SearchBox value={query} onChange={setQuery} placeholder={t("search")} />
+            <div className="max-h-[440px] min-h-[220px] flex-1 space-y-2 overflow-y-auto p-3 xl:max-h-none xl:min-h-0">
+              {loading && (
+                <div className="flex items-center gap-2 px-1 py-4 text-[12.5px] text-[#8c96a8]"><Loader2 className="h-4 w-4 animate-spin" /> {t("loading")}</div>
+              )}
+              {!loading && executions === 0 && (
+                <div className="flex flex-col items-center px-4 py-10 text-center">
+                  <Boxes className="h-9 w-9 text-[#3f4957]" />
+                  <p className="mt-3 text-[13px] font-semibold text-white">{t("emptyTitle")}</p>
+                  <p className="mt-1 max-w-sm text-[12px] leading-relaxed text-[#8c96a8]">{t("emptyBody")}</p>
                 </div>
-                {cluster.executions.length === 0 && <p className="px-3 py-2.5 text-[11.5px] text-[#5d6878]">{t("noExecutions")}</p>}
-                {cluster.executions.map((execution) => {
-                  const active = execution.execution_id === selected;
-                  return (
-                    <button
-                      key={execution.execution_id}
-                      type="button"
-                      onClick={() => onSelect(execution.execution_id)}
-                      aria-pressed={active}
-                      className={cn("flex w-full items-center gap-3 border-t border-[#1a2029] px-3 py-2.5 text-left transition-colors", active ? "bg-[#f5c400]/[0.08]" : "hover:bg-white/[0.02]")}
-                    >
-                      <span className={cn("flex h-4 w-4 shrink-0 items-center justify-center rounded-full border", active ? "border-[#f5c400]" : "border-[#3f4957]")}>
-                        {active && <span className="h-2 w-2 rounded-full bg-[#f5c400]" />}
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className={cn("block text-[12.5px]", active ? "text-[#f5c400]" : "text-[#e5e9f0]")}>{t("executedAt", { date: formatDateTime(execution.executed_date, locale) })}</span>
-                        <span className="mt-0.5 block font-mono text-[10.5px] text-[#5d6878]">{execution.execution_id.slice(0, 8)}</span>
-                      </span>
-                      <span className="flex shrink-0 gap-2 text-[11px] text-[#8c96a8]">
-                        <span className="rounded border border-[#252a33] px-1.5 py-[1px] tabular-nums">{t("records", { count: execution.rows ?? 0 })}</span>
-                        <span className="rounded border border-[#252a33] px-1.5 py-[1px] tabular-nums">{t("columns", { count: execution.columns })}</span>
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            ))}
+              )}
+              {!loading && clusters.map((cluster) => (
+                <div key={cluster.id} className="overflow-hidden rounded-md border border-[#1f252e]">
+                  <div className="bg-[#0f141b] px-3 py-2">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span className="truncate text-[13px] font-semibold text-white">{cluster.name}</span>
+                      {cluster.is_reference && <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-[#f5c400]/30 px-1.5 text-[10px] text-[#f5c400]"><Star className="h-2.5 w-2.5" />{t("reference")}</span>}
+                      {cluster.reporting_date && <span className="ml-auto shrink-0 text-[11px] text-[#687386]">{t("reportingDate", { date: cluster.reporting_date })}</span>}
+                    </div>
+                    <div className="mt-1 flex min-w-0 items-center gap-3 text-[11px] text-[#8c96a8]">
+                      <span className="flex min-w-0 items-center gap-1" title={cluster.dataset_name ?? undefined}><Database className="h-3 w-3 shrink-0" /><span className="truncate">{cluster.dataset_name ?? "–"}</span></span>
+                      <span className="flex min-w-0 items-center gap-1 font-mono" title={cluster.code_filename ?? undefined}><Code2 className="h-3 w-3 shrink-0" /><span className="truncate">{cluster.code_filename ?? "–"}</span></span>
+                    </div>
+                  </div>
+                  {cluster.executions.length === 0 && <p className="border-t border-[#1a2029] px-3 py-2.5 text-[11.5px] text-[#5d6878]">{t("noExecutions")}</p>}
+                  {cluster.executions.map((execution) => {
+                    const active = execution.execution_id === selected;
+                    return (
+                      <button
+                        key={execution.execution_id}
+                        type="button"
+                        onClick={() => onSelect(execution.execution_id)}
+                        aria-pressed={active}
+                        className={cn("flex w-full items-start gap-3 border-t border-[#1a2029] px-3 py-2.5 text-left transition-colors", active ? "bg-[#f5c400]/[0.08]" : "hover:bg-white/[0.02]")}
+                      >
+                        <span className={cn("mt-px flex h-4 w-4 shrink-0 items-center justify-center rounded-full border", active ? "border-[#f5c400]" : "border-[#3f4957]")}>
+                          {active && <span className="h-2 w-2 rounded-full bg-[#f5c400]" />}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className={cn("block truncate text-[12.5px]", active ? "text-[#f5c400]" : "text-[#e5e9f0]")}>{t("executedAt", { date: formatDateTime(execution.executed_date, locale) })}</span>
+                          <span className="mt-1 flex flex-wrap items-center gap-1.5 text-[10.5px] text-[#8c96a8]">
+                            <span className="font-mono text-[#5d6878]">{execution.execution_id.slice(0, 8)}</span>
+                            <span className="rounded border border-[#252a33] px-1.5 tabular-nums">{t("records", { count: execution.rows ?? 0 })}</span>
+                            <span className="rounded border border-[#252a33] px-1.5 tabular-nums">{t("columns", { count: execution.columns })}</span>
+                          </span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
           </div>
         </section>
 
-        <div className="flex flex-col gap-4">
-          <section data-tour="content-fields" className={cn(PANEL, "flex flex-col")}>
-            <div className="flex flex-wrap items-center gap-3 border-b border-[#1f252e] px-4 py-3">
-              <StepNumber value={2} />
-              <div className="min-w-0 flex-1">
-                <p className="text-[13.5px] font-semibold text-white">{t("fieldsTitle")}</p>
-                <p className="text-[11.5px] text-[#8c96a8]">{t("fieldsHint")}</p>
-              </div>
-              {preview && (
-                <div className="relative">
-                  <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#5d6878]" />
-                  <input value={fieldQuery} onChange={(event) => setFieldQuery(event.target.value)} placeholder={t("fieldSearch")} className="h-8 w-40 rounded-md border border-[#252a33] bg-[#0f141b] pl-8 pr-2 text-[12px] text-white outline-none placeholder:text-[#5d6878] focus:border-[#f5c400]/50" />
-                </div>
-              )}
-            </div>
-            {!selected && (
-              <div className="flex flex-col items-center justify-center px-6 py-10 text-center">
-                <Crosshair className="h-8 w-8 text-[#3f4957]" />
-                <p className="mt-3 text-[12.5px] text-[#8c96a8]">{t("fieldsEmpty")}</p>
-              </div>
-            )}
+        <section data-tour="content-fields" className={cn(PANEL, STEP_PANEL, "h-[500px] xl:h-auto", steps.field === "current" && "border-[#f5c400]/30")}>
+          <PanelHeader step={2} state={steps.field} title={t("fieldsTitle")} hint={t("fieldsHint")} />
+          <div className="flex min-h-0 flex-1 flex-col">
+            <SearchBox value={fieldQuery} onChange={setFieldQuery} placeholder={t("fieldSearch")} disabled={!preview || followable.length === 0} />
+            {!selected && <EmptyState icon={Crosshair} text={t("fieldsEmpty")} />}
             {selected && previewLoading && !preview && (
               <div className="flex items-center gap-2 px-4 py-6 text-[12.5px] text-[#8c96a8]"><Loader2 className="h-4 w-4 animate-spin" /> {t("loadingFields")}</div>
             )}
             {selected && preview && (
-              <div className="p-3">
-                <p className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1 pb-2 text-[11.5px] text-[#8c96a8]">
+              <div className="flex min-h-0 flex-1 flex-col px-3 pb-3 pt-2.5">
+                <p className="flex flex-wrap items-center gap-x-3 gap-y-0.5 px-1 pb-2 text-[11.5px] text-[#8c96a8]">
                   <span className="font-mono text-[#c2cad5]">{preview.code.filename}</span>
                   <span>{t("lines", { count: preview.code.line_count })}</span>
                   <span>{t("records", { count: preview.rows })}</span>
                   <span>{t("fieldsCount", { count: preview.fields.length, followable: followable.length })}</span>
                 </p>
                 {followable.length === 0 ? (
-                  <p className="flex items-center gap-2 rounded-md border border-amber-400/30 bg-amber-400/[0.06] px-3 py-2 text-[12px] text-amber-200"><AlertTriangle className="h-4 w-4" />{t("noFollowable")}</p>
+                  <p className="flex items-center gap-2 rounded-md border border-amber-400/30 bg-amber-400/[0.06] px-3 py-2 text-[12px] text-amber-200"><AlertTriangle className="h-4 w-4 shrink-0" />{t("noFollowable")}</p>
                 ) : (
-                  <div className="max-h-[440px] space-y-3 overflow-y-auto pr-1">
+                  <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
                     {ORIGINS.map((origin) => {
                       const group = visibleFields.filter((item) => item.origin === origin);
                       if (!group.length) return null;
@@ -170,41 +158,11 @@ export function SetupPanel({
                 )}
               </div>
             )}
-          </section>
-
-        </div>
-      </div>
-
-      {chosen && preview && <ForwardPreview item={chosen} preview={preview} />}
-
-      <section data-tour="content-method" className={cn(PANEL, "p-4")}>
-        <div className="flex flex-wrap items-center gap-3">
-          <Layers className="h-5 w-5 text-[#f5c400]" />
-          <div className="min-w-0 flex-1">
-            <p className="text-[13.5px] font-semibold text-white">{t("methodTitle")}</p>
-            <p className="text-[11.5px] text-[#8c96a8]">{t("methodHint")}</p>
           </div>
-        </div>
-        <div className="mt-4 grid gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
-          {METHOD.map((step, index) => {
-            const Icon = step.icon;
-            return (
-              <div key={step.id} className="relative rounded-md border border-[#1f252e] bg-[#0d1218] p-3">
-                <div className="flex items-center gap-2">
-                  <span className="flex h-7 w-7 items-center justify-center rounded-md border border-[#f5c400]/30 bg-[#f5c400]/10"><Icon className="h-3.5 w-3.5 text-[#f5c400]" /></span>
-                  <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#687386]">{index + 1}</span>
-                </div>
-                <p className="mt-2 text-[12.5px] font-semibold text-white">{t(`method.${step.id}.title`)}</p>
-                <p className="mt-1 text-[11.5px] leading-relaxed text-[#8c96a8]">{t(`method.${step.id}.body`)}</p>
-              </div>
-            );
-          })}
-        </div>
-        <div className="mt-4 grid gap-2 rounded-md border border-[#1f252e] bg-[#0d1218] p-3 text-[12px] leading-relaxed text-[#aab3c2] md:grid-cols-2">
-          <p><span className={cn(EYEBROW, "mr-2 text-sky-300")}>{t("versusTechnicalLabel")}</span>{t("versusTechnical")}</p>
-          <p><span className={cn(EYEBROW, "mr-2 text-[#f5c400]")}>{t("versusContentLabel")}</span>{t("versusContent")}</p>
-        </div>
-      </section>
+        </section>
+
+        <ForwardPanel item={chosen} state={steps.forward} />
+      </div>
 
       <section data-tour="content-run-bar" className="flex flex-wrap items-center gap-4 rounded-lg border border-[#f5c400]/25 bg-[linear-gradient(110deg,rgba(245,196,0,0.08),rgba(11,15,21,1)_45%)] px-5 py-4">
         <Sparkles className="h-5 w-5 shrink-0 text-[#f5c400]" />
@@ -235,6 +193,95 @@ export function SetupPanel({
           {chosen ? t("startField", { field: chosen.column }) : t("start")}
         </button>
       </section>
+    </div>
+  );
+}
+
+/** Step 3: what the analysis will follow — the selected field, its next fields and every further step down to the end of
+ *  the calculation, as a timeline. It is the same computation as the analysis, before it is started; the quick re-run
+ *  of the preview works in the background (a field only it finds is marked). */
+function ForwardPanel({ item, state }: { item: CatalogueField | null; state: StepState }) {
+  const t = useTranslations("contentLineageAgent.setup");
+  const tLegend = useTranslations("contentLineageAgent.lineage.legend");
+  const rows = useMemo(() => {
+    if (!item) return [];
+    const levels = new Map<number, CatalogueField["fields"]>();
+    for (const entry of item.fields) levels.set(entry.level, [...(levels.get(entry.level) ?? []), entry]);
+    return [
+      { key: "start", label: t("selectedColumn"), tone: "start" as Tone, entries: [{ column: item.column, end: false, impact: false }] },
+      ...[...levels.entries()].sort(([a], [b]) => a - b).map(([level, entries]) => ({
+        key: `level-${level}`,
+        label: level === 1 ? t("nextColumn") : t("stepColumn", { level }),
+        tone: (level === 1 ? "next" : "downstream") as Tone,
+        entries: entries.map((entry) => ({ column: entry.column, end: entry.end, impact: entry.evidence === "impact" })),
+      })),
+    ];
+  }, [item, t]);
+  const statements = item ? new Set(item.edges.flatMap((edge) => edge.lines)).size : 0;
+  const tested = item ? item.fields.filter((entry) => entry.evidence === "impact") : [];
+  const ends = item ? item.fields.some((entry) => entry.end) : false;
+
+  return (
+    <section data-tour="content-forward-preview" className={cn(PANEL, STEP_PANEL, "h-[500px] xl:h-auto", state === "current" && "border-[#f5c400]/30")}>
+      <PanelHeader step={3} state={state} title={t("forwardTitle")} hint={t("forwardHint")} />
+      {item ? (
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 pt-3">
+          <p className="text-[11.5px] leading-relaxed text-[#aab3c2]">{t("previewHint", { fields: item.fields.length, statements })}</p>
+          <ol className="mt-4">
+            {rows.map((row, index) => {
+              const color = ROLE_COLORS[row.tone];
+              const next = rows[index + 1];
+              return (
+                <li key={row.key} className={cn("relative pl-7", next && "pb-3.5")}>
+                  {next && <span aria-hidden="true" className="absolute bottom-0 left-[8px] top-[17px] w-px" style={{ background: `linear-gradient(${color}88, ${ROLE_COLORS[next.tone]}88)` }} />}
+                  <span aria-hidden="true" className="absolute left-0 top-0 flex h-[17px] w-[17px] items-center justify-center rounded-full border" style={{ borderColor: `${color}99`, background: `${color}1f` }}>
+                    <span className="h-[7px] w-[7px] rounded-full" style={{ background: color }} />
+                  </span>
+                  <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase leading-[17px] tracking-[0.14em]" style={{ color }}>
+                    {row.label}
+                    {row.entries.length > 1 && <span className="rounded-full bg-[#1a212c] px-1.5 text-[9.5px] leading-4 tracking-normal text-[#aab3c2]">{row.entries.length}</span>}
+                  </p>
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    {row.entries.map((entry) => <PreviewChip key={entry.column} column={entry.column} tone={row.tone} end={entry.end} impact={entry.impact} />)}
+                  </div>
+                </li>
+              );
+            })}
+          </ol>
+          {(ends || tested.length > 0) && (
+            <p className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 pl-7 text-[10.5px] text-[#687386]">
+              {ends && <span className="flex items-center gap-1"><Flag className="h-3 w-3 text-[#f5c400]" />{tLegend("end")}</span>}
+              {tested.length > 0 && <span className="flex items-center gap-1"><FlaskConical className="h-3 w-3 text-pink-300" />{tLegend("impact")}</span>}
+            </p>
+          )}
+          {item.selection.length > 0 && (
+            <p className="mt-4 rounded-md border border-[#1f252e] bg-[#0d1218] px-3 py-2.5 text-[11px] leading-relaxed text-[#aab3c2]">
+              {t("previewSelection", { lines: item.selection.map((entry) => entry.line).join(", ") })}
+            </p>
+          )}
+        </div>
+      ) : (
+        <ForwardPlaceholder text={t("forwardEmpty")} />
+      )}
+    </section>
+  );
+}
+
+/** Before a field is chosen: a faint sketch of the timeline that will appear. */
+function ForwardPlaceholder({ text }: { text: string }) {
+  const tones: Tone[] = ["start", "next", "downstream"];
+  return (
+    <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-6 py-8 text-center">
+      <ol aria-hidden="true" className="w-40 opacity-70">
+        {tones.map((tone, index) => (
+          <li key={tone} className={cn("relative flex items-center gap-3", index < tones.length - 1 && "pb-4")}>
+            {index < tones.length - 1 && <span className="absolute bottom-0 left-[7px] top-[15px] w-px bg-[#252a33]" />}
+            <span className="h-[15px] w-[15px] shrink-0 rounded-full border" style={{ borderColor: `${ROLE_COLORS[tone]}55`, background: `${ROLE_COLORS[tone]}14` }} />
+            <span className="h-2 rounded-full bg-[#1c232d]" style={{ width: `${[55, 80, 45][index]}%` }} />
+          </li>
+        ))}
+      </ol>
+      <p className="mt-5 max-w-[250px] text-[12px] leading-relaxed text-[#8c96a8]">{text}</p>
     </div>
   );
 }
@@ -276,61 +323,9 @@ function FieldRow({ item, active, onClick }: { item: CatalogueField; active: boo
   );
 }
 
-/** What the analysis will follow: the selected field's next fields and every field further downstream, step by step —
- *  the same computation as the analysis, before it is started. */
-function ForwardPreview({ item, preview }: { item: CatalogueField; preview: Preview }) {
-  const t = useTranslations("contentLineageAgent.setup");
-  const steps = useMemo(() => {
-    const groups = new Map<number, CatalogueField["fields"]>();
-    for (const entry of item.fields) groups.set(entry.level, [...(groups.get(entry.level) ?? []), entry]);
-    return [...groups.entries()].sort(([a], [b]) => a - b);
-  }, [item]);
-  const statements = new Set(item.edges.flatMap((edge) => edge.lines)).size;
-  const tested = item.fields.filter((entry) => entry.evidence === "impact");
+function PreviewChip({ column, tone, end, impact }: { column: string; tone: Tone; end?: boolean; impact?: boolean }) {
   return (
-    <section data-tour="content-forward-preview" className={cn(PANEL, "p-4")}>
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className={EYEBROW}>{t("previewEyebrow")}</p>
-          <p className="mt-1 text-[14px] font-semibold text-white">{t("previewTitle", { field: item.column })}</p>
-          <p className="mt-0.5 text-[11.5px] text-[#8c96a8]">{t("previewHint", { fields: item.fields.length, statements })}</p>
-        </div>
-        <p className="flex max-w-md items-start gap-1.5 text-[11.5px] leading-relaxed text-[#8c96a8]">
-          <FlaskConical className="mt-0.5 h-3.5 w-3.5 shrink-0 text-pink-300" />
-          {preview.probe.enabled ? t("probe", { rows: preview.probe.rows, confirmed: item.confirmed.length, fields: item.fields.length - tested.length }) : t("probeOff")}
-        </p>
-      </div>
-      <div className="mt-4 flex items-stretch gap-2 overflow-x-auto pb-1">
-        <PreviewColumn title={t("selectedColumn")} tone="start">
-          <PreviewChip column={item.column} tone="start" />
-        </PreviewColumn>
-        {steps.map(([level, entries]) => (
-          <Fragment key={level}>
-            <ChevronRight className="mt-9 h-4 w-4 shrink-0 text-[#3f4957]" />
-            <PreviewColumn title={level === 1 ? t("nextColumn") : t("stepColumn", { level })} tone={level === 1 ? "next" : "downstream"}>
-              {entries.map((entry) => <PreviewChip key={entry.column} column={entry.column} tone={level === 1 ? "next" : "downstream"} end={entry.end} impact={entry.evidence === "impact"} />)}
-            </PreviewColumn>
-          </Fragment>
-        ))}
-      </div>
-      {tested.length > 0 && <p className="mt-3 text-[11.5px] text-pink-200">{t("previewImpact", { fields: tested.map((entry) => entry.column).join(", ") })}</p>}
-      {item.selection.length > 0 && <p className="mt-2 text-[11.5px] text-[#aab3c2]">{t("previewSelection", { lines: item.selection.map((entry) => entry.line).join(", ") })}</p>}
-    </section>
-  );
-}
-
-function PreviewColumn({ title, tone, children }: { title: string; tone: "start" | "next" | "downstream"; children: React.ReactNode }) {
-  return (
-    <div className="flex min-w-[170px] flex-col gap-1.5 rounded-md border border-[#1f252e] bg-[#0d1218] p-2.5">
-      <p className="text-[10px] font-semibold uppercase tracking-[0.14em]" style={{ color: ROLE_COLORS[tone] }}>{title}</p>
-      {children}
-    </div>
-  );
-}
-
-function PreviewChip({ column, tone, end, impact }: { column: string; tone: "start" | "next" | "downstream"; end?: boolean; impact?: boolean }) {
-  return (
-    <span className={cn("flex items-center gap-1.5 rounded border bg-[#121821] px-2 py-1 font-mono text-[11.5px] text-[#e5e9f0]", tone === "start" ? "border-[#f5c400]/40 text-[#f5c400]" : impact ? "border-dashed border-pink-400/45" : "border-[#2c3440]")}>
+    <span className={cn("flex max-w-full items-center gap-1.5 rounded border bg-[#121821] px-2 py-1 font-mono text-[11.5px] text-[#e5e9f0]", tone === "start" ? "border-[#f5c400]/40 text-[#f5c400]" : impact ? "border-dashed border-pink-400/45" : "border-[#2c3440]")}>
       <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: ROLE_COLORS[tone] }} />
       <span className="truncate">{column}</span>
       {end && <Flag className="ml-auto h-3 w-3 shrink-0 text-[#f5c400]" />}
@@ -339,6 +334,54 @@ function PreviewChip({ column, tone, end, impact }: { column: string; tone: "sta
   );
 }
 
-function StepNumber({ value }: { value: number }) {
-  return <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-[#f5c400]/40 bg-[#f5c400]/10 text-[12px] font-bold text-[#f5c400]">{value}</span>;
+function PanelHeader({ step, state, title, hint }: { step: number; state: StepState; title: string; hint: string }) {
+  return (
+    <div className="flex items-start gap-3 border-b border-[#1f252e] px-4 py-3">
+      <StepNumber value={step} state={state} />
+      <div className="min-w-0 flex-1">
+        <p className={cn("text-[13.5px] font-semibold", state === "waiting" ? "text-[#aab3c2]" : "text-white")}>{title}</p>
+        <p className="mt-0.5 text-[11.5px] leading-snug text-[#8c96a8]">{hint}</p>
+      </div>
+    </div>
+  );
+}
+
+function StepNumber({ value, state }: { value: number; state: StepState }) {
+  return (
+    <span
+      className={cn(
+        "flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-[12px] font-bold transition-colors",
+        state === "done" ? "border-[#f5c400] bg-[#f5c400] text-[#0b0f15]" : state === "current" ? "border-[#f5c400]/50 bg-[#f5c400]/10 text-[#f5c400]" : "border-[#2c3440] text-[#5d6878]",
+      )}
+    >
+      {state === "done" ? <Check className="h-3.5 w-3.5" strokeWidth={3} /> : value}
+    </span>
+  );
+}
+
+function SearchBox({ value, onChange, placeholder, disabled }: { value: string; onChange: (value: string) => void; placeholder: string; disabled?: boolean }) {
+  return (
+    <div className="px-3 pt-3">
+      <label className="relative block">
+        <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#5d6878]" />
+        <input
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder={placeholder}
+          aria-label={placeholder}
+          disabled={disabled}
+          className="h-8 w-full rounded-md border border-[#252a33] bg-[#0f141b] pl-8 pr-2 text-[12px] text-white outline-none placeholder:text-[#5d6878] focus:border-[#f5c400]/50 disabled:cursor-not-allowed disabled:opacity-50"
+        />
+      </label>
+    </div>
+  );
+}
+
+function EmptyState({ icon: Icon, text }: { icon: LucideIcon; text: string }) {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-6 py-10 text-center">
+      <Icon className="h-8 w-8 text-[#3f4957]" />
+      <p className="mt-3 max-w-[260px] text-[12.5px] leading-relaxed text-[#8c96a8]">{text}</p>
+    </div>
+  );
 }

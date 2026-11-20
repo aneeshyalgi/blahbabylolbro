@@ -74,7 +74,7 @@ RULE_BATCH = 8
 WORKERS = 3
 MAX_ACTIVE_RUNS = 2
 TRANSLATE_BATCH = 40
-DEFAULT_OPENAI_MODEL = "gpt-4.1"  # CONTENT_LINEAGE_AGENT_MODEL overrides it
+DEFAULT_OPENAI_MODEL = "gpt-6.1-sol"  # CONTENT_LINEAGE_AGENT_MODEL overrides it
 LANGUAGE_NAMES = {"en": "English", "de": "German"}
 TEXT_LANGUAGES = ("en", "de")
 _ID = re.compile(r"^[0-9a-f-]{8,64}$")
@@ -2423,7 +2423,7 @@ def _run_job(job: _Job) -> None:
 
         llm = _LLM(job)
         job.set_model(llm.model)
-        job.log("info", "model", f"Model: {llm.model} · temperature 0 · JSON-schema output", model=llm.model)
+        job.log("info", "model", f"Model: {llm.model} · JSON-schema output", model=llm.model)
         described = _describe(job, llm, context, terms)
         job.check()
         usage = _usage(job, llm, context, content, described["texts"])

@@ -18,13 +18,10 @@ export type TourStepId =
   | "executions"
   | "fields"
   | "forwardPreview"
-  | "method"
   | "runBar"
   | "progress"
   | "stages"
   | "console"
-  | "meta"
-  | "summary"
   | "lineage"
   | "lineageField"
   | "details"
@@ -48,13 +45,10 @@ export const TOUR_STEPS: TourStepDef[] = [
   { id: "executions", target: "content-executions", stage: "setup", action: "selectExecution" },
   { id: "fields", target: "content-fields", stage: "setup", action: "selectField" },
   { id: "forwardPreview", target: "content-forward-preview", stage: "setup" },
-  { id: "method", target: "content-method", stage: "setup" },
   { id: "runBar", target: "content-run-bar", stage: "setup", action: "startRun" },
   { id: "progress", target: "content-progress", stage: "progress" },
   { id: "stages", target: "content-stages", stage: "progress" },
   { id: "console", target: "content-console", stage: "progress", action: "awaitResults" },
-  { id: "meta", target: "content-meta", stage: "results" },
-  { id: "summary", target: "content-summary", stage: "results" },
   { id: "lineage", target: "content-lineage", stage: "results" },
   { id: "lineageField", target: "content-lineage", stage: "results", action: "selectFlowField" },
   { id: "details", target: "content-details", stage: "results" },
@@ -150,7 +144,8 @@ export type ContentOnboardingCopy = {
     title: string;
     intro: string;
     hint: string;
-    columns: { start: string; next: string; step: string };
+    /** The step written on each field card, as in the real graph. */
+    stepLabels: { start: string; next: string; step: string };
     legend: Record<"value" | "decides" | "end", string>;
     howLabel: string;
     viaLabel: string;
@@ -344,7 +339,7 @@ const EN: ContentOnboardingCopy = {
     title: "One screen: the field on the left, everything it reaches to the right",
     intro: "The result shows the selected field, its next fields and every further step up to the end of the calculation. Click a field to see how the selected field reaches it – the path to it lights up.",
     hint: "Click a field.",
-    columns: { start: "Selected field", next: "Next fields", step: "Step {level}" },
+    stepLabels: { start: "Selected field", next: "Next field", step: "Step {level}" },
     legend: { value: "carries the value", decides: "decides the case or parameter", end: "end of the calculation" },
     howLabel: "How the product type reaches it",
     viaLabel: "Arrives via",
@@ -362,8 +357,7 @@ const EN: ContentOnboardingCopy = {
     ],
     links: VIEW_LINKS,
     parts: [
-      { title: "Summary", text: "Where the content goes in a few sentences, with the number of next, downstream and end fields." },
-      { title: "Lineage", text: "Each column is a step of the calculation; the arrows show which field feeds which." },
+      { title: "Lineage", text: "One column per step of the calculation; the arrows show which field feeds which. “Names only” shows or hides each field’s step and the records it reaches. Move fields, zoom, or download it for draw.io." },
       { title: "Details", text: "For the field you click: how the selected field reaches it, the records it affects, value by value, and an example." },
       { title: "Checks and notes", text: "Ten controls and any data issues, one click away at the bottom." },
     ],
@@ -371,7 +365,7 @@ const EN: ContentOnboardingCopy = {
   controls: {
     eyebrow: "Controls",
     title: "Ten controls make the result reliable",
-    intro: "Every analysis runs the same deterministic checks. You find them, with their figures, under Checks and notes at the bottom of the result and in the Excel export.",
+    intro: "Every analysis runs the same deterministic checks. You find them, with their figures, under Checks and notes at the bottom of the result.",
     rules: [
       { title: "Replay reproduces", text: "The replayed calculation equals the stored execution, value by value." },
       { title: "Nothing missed", text: "Re-running the calculation finds no field that changes with the field but is missing from the result." },
@@ -384,7 +378,7 @@ const EN: ContentOnboardingCopy = {
       { title: "End fields complete", text: "Every record carries a value in every end field." },
       { title: "Texts translated", text: "Every AI text is available in English and German." },
     ],
-    note: "Where the content goes is a fact – established from the code and confirmed by re-running it; the AI names and explains it. Where a check fails, the agent shows it – under Checks and notes and in the export – and never smooths it over.",
+    note: "Where the content goes is a fact – established from the code and confirmed by re-running it; the AI names and explains it. Where a check fails, the agent shows it under Checks and notes and never smooths it over.",
   },
   ready: {
     eyebrow: "Ready",
@@ -408,7 +402,7 @@ const EN: ContentOnboardingCopy = {
       chapter: "Setup",
       title: "Work in English or German",
       body: [
-        "This switch sets the language of the whole tab: labels, business terms, explanations, the log and the Excel export.",
+        "This switch sets the language of the whole tab: labels, business terms, explanations, the log and the draw.io download.",
         "Each analysis is written in both languages, so you can switch at any time – also while you read a result.",
       ],
     },
@@ -431,10 +425,8 @@ const EN: ContentOnboardingCopy = {
       title: "What comes next – before you start",
       body: [
         "The fields the analysis will follow, step by step to the end of the calculation. It is the same computation the analysis runs, so the result will show exactly these fields.",
-        "A quick check on the first records has already re-run the calculation with other values of the field; a field only this check finds is marked.",
       ],
     },
-    method: { chapter: "Setup", title: "The method in four stages", body: ["Trace and follow establish the facts – where the content goes, confirmed by re-running the calculation; describe puts them into business language; translate makes everything available in English and German."] },
     runBar: {
       chapter: "Setup",
       title: "Start the analysis",
@@ -449,21 +441,20 @@ const EN: ContentOnboardingCopy = {
       body: ["Every step in plain language: the fields the content flows into, the re-run that confirms them, the business terms and rules described, the translation."],
       action: "Wait for the analysis to finish – the tour continues by itself as soon as the result is ready.",
     },
-    meta: { chapter: "Result", title: "The analysis at a glance", body: ["The field you followed and how many fields it reaches, then cluster, execution, code, dataset, runtime and model. Export to Excel gives you the workbook in the language you are using."] },
-    summary: { chapter: "Result", title: "Where the content goes", body: ["A short summary in business language, then the numbers: the next fields, how many fields downstream in how many steps, the end fields, and how many records reach the end. The line below says whether re-running the calculation confirmed it."] },
     lineage: {
       chapter: "Result",
       title: "The lineage, step by step",
       body: [
-        "The selected field on the left; each column to the right is one step of the calculation, up to the end fields, marked with a flag.",
-        "Solid green arrows carry the value, dashed amber arrows decide a case or parameter – a condition or a table key. The bar on each field shows how many records the selected field reaches there.",
+        "The selected field on the left; each column to the right is one step of the calculation, up to the end fields. The graph shows the names; switch off “Names only” in the toolbar and every field also names its step and column, and a flag marks the end fields – also after you move them.",
+        "Solid green arrows carry the value, dashed amber arrows decide a case or parameter – a condition or a table key. With “Names only” off, the bar on each field shows how many records the selected field reaches there.",
+        "Drag the background to pan, drag a field to move it, scroll to zoom; the toolbar finds a field, resets the layout, downloads the graph for draw.io and opens it full screen.",
       ],
     },
     lineageField: {
       chapter: "Result",
       title: "Click a next field",
       body: ["Clicking a field shows how the selected field reaches it; the path from the selected field lights up."],
-      action: "Click one of the next fields – the column right after the selected field.",
+      action: "Click one of the next fields – marked “Next field”, right after the selected field.",
     },
     details: {
       chapter: "Result",
@@ -474,7 +465,7 @@ const EN: ContentOnboardingCopy = {
       ],
     },
     quality: { chapter: "Result", title: "Checks and notes", body: ["Ten controls and any points to note – for example source values that are not numbers. Click the bar to open them; the agent log is there too. A failed control is never hidden."] },
-    newRun: { chapter: "Done", title: "Your turn", body: ["Follow another field of any executed calculation. Earlier analyses – including the one from this tour – stay in the Analyses menu."] },
+    newRun: { chapter: "Done", title: "Your turn", body: ["Follow another field of any executed calculation. Earlier analyses – including the one from this tour – stay in the Analyses menu, and the bin next to this button deletes the one on screen."] },
   },
   complete: {
     title: "You're ready to follow any field",
@@ -654,7 +645,7 @@ const DE: ContentOnboardingCopy = {
     title: "Ein Bildschirm: das Feld links, alles, was es erreicht, rechts",
     intro: "Das Ergebnis zeigt das ausgewählte Feld, seine nächsten Felder und jeden weiteren Schritt bis zum Ende der Berechnung. Klicken Sie ein Feld an, um zu sehen, wie das ausgewählte Feld es erreicht – der Weg dorthin leuchtet auf.",
     hint: "Klicken Sie ein Feld an.",
-    columns: { start: "Ausgewähltes Feld", next: "Nächste Felder", step: "Schritt {level}" },
+    stepLabels: { start: "Ausgewähltes Feld", next: "Nächstes Feld", step: "Schritt {level}" },
     legend: { value: "übernimmt den Wert", decides: "entscheidet Fall oder Parameter", end: "Ende der Berechnung" },
     howLabel: "Wie der Produkttyp es erreicht",
     viaLabel: "Kommt an über",
@@ -672,8 +663,7 @@ const DE: ContentOnboardingCopy = {
     ],
     links: VIEW_LINKS,
     parts: [
-      { title: "Zusammenfassung", text: "Wohin der Inhalt fließt, in wenigen Sätzen, mit der Zahl der nächsten, nachgelagerten und Endfelder." },
-      { title: "Herkunft", text: "Jede Spalte ist ein Schritt der Berechnung; die Pfeile zeigen, welches Feld welches speist." },
+      { title: "Herkunft", text: "Eine Spalte pro Schritt der Berechnung; die Pfeile zeigen, welches Feld welches speist. „Nur Namen“ blendet den Schritt jedes Felds und die erreichten Datensätze ein oder aus. Felder verschieben, zoomen oder für draw.io herunterladen." },
       { title: "Details", text: "Für das angeklickte Feld: wie das ausgewählte Feld es erreicht, die betroffenen Datensätze, Wert für Wert, und ein Beispiel." },
       { title: "Prüfungen und Hinweise", text: "Zehn Kontrollen und etwaige Datenprobleme, einen Klick entfernt ganz unten." },
     ],
@@ -681,7 +671,7 @@ const DE: ContentOnboardingCopy = {
   controls: {
     eyebrow: "Kontrollen",
     title: "Zehn Kontrollen machen das Ergebnis verlässlich",
-    intro: "Jede Analyse durchläuft dieselben deterministischen Prüfungen. Sie finden sie mit ihren Kennzahlen unter Prüfungen und Hinweise ganz unten im Ergebnis und im Excel-Export.",
+    intro: "Jede Analyse durchläuft dieselben deterministischen Prüfungen. Sie finden sie mit ihren Kennzahlen unter Prüfungen und Hinweise ganz unten im Ergebnis.",
     rules: [
       { title: "Wiederholung reproduziert", text: "Die wiederholte Berechnung entspricht der gespeicherten Ausführung, Wert für Wert." },
       { title: "Nichts übersehen", text: "Das erneute Ausführen findet kein Feld, das sich mit dem Feld ändert, aber im Ergebnis fehlt." },
@@ -694,7 +684,7 @@ const DE: ContentOnboardingCopy = {
       { title: "Endfelder vollständig", text: "Jeder Datensatz hat in jedem Endfeld einen Wert." },
       { title: "Texte übersetzt", text: "Jeder KI-Text ist auf Deutsch und Englisch verfügbar." },
     ],
-    note: "Wohin der Inhalt fließt, ist ein Fakt – festgestellt aus dem Code und bestätigt durch erneutes Ausführen; die KI benennt und erklärt ihn. Wo eine Prüfung scheitert, zeigt der Agent es – unter Prüfungen und Hinweise und im Export – und beschönigt nichts.",
+    note: "Wohin der Inhalt fließt, ist ein Fakt – festgestellt aus dem Code und bestätigt durch erneutes Ausführen; die KI benennt und erklärt ihn. Wo eine Prüfung scheitert, zeigt der Agent es unter Prüfungen und Hinweise und beschönigt nichts.",
   },
   ready: {
     eyebrow: "Bereit",
@@ -718,7 +708,7 @@ const DE: ContentOnboardingCopy = {
       chapter: "Einrichtung",
       title: "Auf Deutsch oder Englisch arbeiten",
       body: [
-        "Dieser Schalter legt die Sprache des ganzen Tabs fest: Beschriftungen, Fachbegriffe, Erklärungen, das Protokoll und den Excel-Export.",
+        "Dieser Schalter legt die Sprache des ganzen Tabs fest: Beschriftungen, Fachbegriffe, Erklärungen, das Protokoll und den draw.io-Download.",
         "Jede Analyse wird in beiden Sprachen verfasst, Sie können also jederzeit wechseln – auch während Sie ein Ergebnis lesen.",
       ],
     },
@@ -741,10 +731,8 @@ const DE: ContentOnboardingCopy = {
       title: "Was als Nächstes kommt – vor dem Start",
       body: [
         "Die Felder, die die Analyse verfolgen wird, Schritt für Schritt bis zum Ende der Berechnung. Es ist dieselbe Berechnung, die die Analyse ausführt; das Ergebnis zeigt also genau diese Felder.",
-        "Eine schnelle Prüfung auf den ersten Datensätzen hat die Berechnung bereits mit anderen Werten des Feldes erneut ausgeführt; ein Feld, das nur diese Prüfung findet, ist markiert.",
       ],
     },
-    method: { chapter: "Einrichtung", title: "Die Methode in vier Stufen", body: ["Nachverfolgen und Verfolgen stellen die Fakten fest – wohin der Inhalt fließt, bestätigt durch erneutes Ausführen der Berechnung; Beschreiben fasst sie in fachliche Sprache; Übersetzen macht alles auf Deutsch und Englisch verfügbar."] },
     runBar: {
       chapter: "Einrichtung",
       title: "Die Analyse starten",
@@ -759,21 +747,20 @@ const DE: ContentOnboardingCopy = {
       body: ["Jeder Schritt in Klartext: die Felder, in die der Inhalt fließt, das erneute Ausführen, das sie bestätigt, die beschriebenen Fachbegriffe und Regeln, die Übersetzung."],
       action: "Warten Sie, bis die Analyse fertig ist – die Tour geht von selbst weiter, sobald das Ergebnis vorliegt.",
     },
-    meta: { chapter: "Ergebnis", title: "Die Analyse auf einen Blick", body: ["Das verfolgte Feld und wie viele Felder es erreicht, dann Cluster, Ausführung, Code, Datensatz, Laufzeit und Modell. Nach Excel exportieren liefert die Arbeitsmappe in der Sprache, die Sie gerade verwenden."] },
-    summary: { chapter: "Ergebnis", title: "Wohin der Inhalt fließt", body: ["Eine kurze Zusammenfassung in fachlicher Sprache, dann die Zahlen: die nächsten Felder, wie viele Felder in wie vielen Schritten nachgelagert sind, die Endfelder und wie viele Datensätze das Ende erreichen. Die Zeile darunter sagt, ob das erneute Ausführen der Berechnung es bestätigt hat."] },
     lineage: {
       chapter: "Ergebnis",
       title: "Die Herkunft, Schritt für Schritt",
       body: [
-        "Links das ausgewählte Feld; jede Spalte rechts davon ist ein Schritt der Berechnung, bis zu den Endfeldern, die eine Fahne markiert.",
-        "Durchgezogene grüne Pfeile übernehmen den Wert, gestrichelte bernsteinfarbene entscheiden einen Fall oder Parameter – eine Bedingung oder einen Tabellenschlüssel. Der Balken auf jedem Feld zeigt, wie viele Datensätze das ausgewählte Feld dort erreicht.",
+        "Links das ausgewählte Feld; jede Spalte rechts davon ist ein Schritt der Berechnung, bis zu den Endfeldern. Der Graph zeigt die Namen; schalten Sie „Nur Namen“ in der Werkzeugleiste aus, nennt jedes Feld auch seinen Schritt und seine Spalte, und eine Fahne markiert die Endfelder – auch nachdem Sie sie verschoben haben.",
+        "Durchgezogene grüne Pfeile übernehmen den Wert, gestrichelte bernsteinfarbene entscheiden einen Fall oder Parameter – eine Bedingung oder einen Tabellenschlüssel. Ist „Nur Namen“ aus, zeigt der Balken auf jedem Feld, wie viele Datensätze das ausgewählte Feld dort erreicht.",
+        "Hintergrund ziehen verschiebt die Ansicht, ein Feld ziehen versetzt es, Scrollen zoomt; die Werkzeugleiste findet ein Feld, setzt das Layout zurück, lädt den Graphen für draw.io herunter und öffnet ihn im Vollbild.",
       ],
     },
     lineageField: {
       chapter: "Ergebnis",
       title: "Ein nächstes Feld anklicken",
       body: ["Ein Klick auf ein Feld zeigt, wie das ausgewählte Feld es erreicht; der Weg vom ausgewählten Feld dorthin leuchtet auf."],
-      action: "Klicken Sie eines der nächsten Felder an – die Spalte direkt nach dem ausgewählten Feld.",
+      action: "Klicken Sie eines der nächsten Felder an – markiert mit „Nächstes Feld“, direkt nach dem ausgewählten Feld.",
     },
     details: {
       chapter: "Ergebnis",
@@ -784,7 +771,7 @@ const DE: ContentOnboardingCopy = {
       ],
     },
     quality: { chapter: "Ergebnis", title: "Prüfungen und Hinweise", body: ["Zehn Kontrollen und etwaige Hinweise – zum Beispiel Quellwerte, die keine Zahlen sind. Klicken Sie auf die Leiste, um sie zu öffnen; dort ist auch das Agenten-Protokoll. Eine gescheiterte Kontrolle wird nie verborgen."] },
-    newRun: { chapter: "Fertig", title: "Ihr Schritt", body: ["Verfolgen Sie ein weiteres Feld einer beliebigen ausgeführten Berechnung. Frühere Analysen – auch die aus dieser Tour – bleiben im Menü Analysen."] },
+    newRun: { chapter: "Fertig", title: "Ihr Schritt", body: ["Verfolgen Sie ein weiteres Feld einer beliebigen ausgeführten Berechnung. Frühere Analysen – auch die aus dieser Tour – bleiben im Menü Analysen, und der Papierkorb neben dieser Schaltfläche löscht die angezeigte."] },
   },
   complete: {
     title: "Sie sind bereit, jedes Feld zu verfolgen",

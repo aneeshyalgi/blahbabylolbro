@@ -1,6 +1,5 @@
 "use client";
 
-import type { ReactNode } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { FlaskConical } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -94,20 +93,6 @@ function ShareBar({ parts, className, height = 6 }: { parts: { value: number; co
       {total > 0 && parts.map((part, index) => (
         part.value > 0 ? <span key={index} title={part.label} style={{ width: `${(100 * part.value) / total}%`, background: part.color }} className="h-full" /> : null
       ))}
-    </div>
-  );
-}
-
-export function Stat({ label, value, detail, tone = "default", icon }: { label: string; value: ReactNode; detail?: ReactNode; tone?: "default" | "good" | "warn" | "bad" | "gold"; icon?: ReactNode }) {
-  const tones = { default: "text-white", good: "text-emerald-300", warn: "text-amber-300", bad: "text-rose-300", gold: "text-[#f5c400]" };
-  return (
-    <div className="rounded-lg border border-[#252a33] bg-[#0b0f15] px-4 py-3">
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-[10.5px] font-semibold uppercase tracking-[0.16em] text-[#687386]">{label}</p>
-        {icon}
-      </div>
-      <p className={cn("mt-1.5 text-[22px] font-semibold leading-none tabular-nums tracking-tight", tones[tone])}>{value}</p>
-      {detail && <p className="mt-1.5 text-[11.5px] leading-snug text-[#8c96a8]">{detail}</p>}
     </div>
   );
 }

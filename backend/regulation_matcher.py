@@ -54,7 +54,7 @@ RANK_K = 10
 MAX_LINKS = 5
 NOTE_TEXT_LIMIT = 4000
 QUOTE_REPAIR_SIMILARITY = runtime.QUOTE_REPAIR_SIMILARITY
-DEFAULT_OPENAI_MODEL = "gpt-4.1"  # strongest generally available model; REGULATION_MATCHER_MODEL overrides it
+DEFAULT_OPENAI_MODEL = "gpt-6.1-sol"  # REGULATION_MATCHER_MODEL overrides it; with Azure the configured deployment
 LANGUAGE_NAMES = {"en": "English", "de": "German", "es": "Spanish"}
 # Every run's texts are available in these languages: the AI-written texts through a translation step, the
 # deterministic log lines and verification messages through the templates below.
@@ -247,13 +247,13 @@ def _log_texts(code: str, p: Dict[str, Any]) -> Tuple[str, str]:
         )
     if code == "model":
         return (
-            f"Model: {p['model']} · temperature 0 · JSON-schema output · {p['workers']} notes in parallel",
-            f"Modell: {p['model']} · Temperatur 0 · JSON-Schema-Ausgabe · {p['workers']} Notes parallel",
+            f"Analysis starts · JSON-schema output · {p['workers']} release notes in parallel",
+            f"Analyse startet · JSON-Schema-Ausgabe · {p['workers']} Release Notes parallel",
         )
     if code == "model_fallback":
         return (
-            f"Model {p['model']} is not available; continuing with {p['fallback']}.",
-            f"Modell {p['model']} ist nicht verfügbar; weiter mit {p['fallback']}.",
+            "The preferred language model is not available; the run continues with the configured one.",
+            "Das bevorzugte Sprachmodell ist nicht verfügbar; der Lauf geht mit dem konfigurierten weiter.",
         )
     if code == "interpreted":
         terms = ", ".join(p["terms"])
@@ -485,7 +485,10 @@ def _regulation_sources(regulation_ids: List[str]) -> List[Dict[str, Any]]:
 # --------------------------------------------------------------------------------------------------
 
 class _LLM:
-    """JSON-schema chat calls with retries, a model fallback and usage accounting."""
+    """JSON-schema chat calls with retries, a model fallback and usage accounting.
+
+    Reasoning models (gpt-6.1-sol) accept only their default temperature: the fixed temperature 0 is dropped for the
+    rest of the run after the first refusal. Calls run in parallel, so each call judges by what it sent itself."""
 
     def __init__(self, job: "_Job"):
         client, configured = runtime._llm_client()
@@ -497,11 +500,12 @@ class _LLM:
         self.job = job
         self.strict = True
         self.seed: Optional[int] = 20240611
+        self.temperature: Optional[float] = 0
         self.lock = threading.Lock()
 
     def json(self, messages: List[Dict[str, str]], name: str, schema: Dict[str, Any]) -> Dict[str, Any]:
         last: Optional[Exception] = None
-        for attempt in range(4):
+        for attempt in range(5):
             if self.job.cancel.is_set():
                 raise _Cancelled()
             response_format: Dict[str, Any] = (
@@ -509,9 +513,11 @@ class _LLM:
                 if self.strict else {"type": "json_object"}
             )
             options: Dict[str, Any] = {"seed": self.seed} if self.seed is not None else {}
+            if self.temperature is not None:
+                options["temperature"] = self.temperature
             try:
                 response = self.client.chat.completions.create(
-                    model=self.model, messages=messages, temperature=0, response_format=response_format, **options,
+                    model=self.model, messages=messages, response_format=response_format, **options,
                 )
             except Exception as exc:  # provider errors: fall back, degrade or retry
                 last = exc
@@ -522,8 +528,13 @@ class _LLM:
                             self.job.say("warn", "model_fallback", model=self.model, fallback=self.fallback)
                             self.model, self.fallback = self.fallback, None
                             self.job.set_model(self.model)
+                            # The configured model may accept the fixed temperature again.
+                            self.temperature = 0
                     continue
-                if status == 400 and self.seed is not None and "seed" in str(exc):
+                if status == 400 and "temperature" in options and "temperature" in str(exc):
+                    self.temperature = None
+                    continue
+                if status == 400 and "seed" in options and "seed" in str(exc):
                     self.seed = None
                     continue
                 if status == 400 and self.strict and ("response_format" in str(exc) or "json_schema" in str(exc)):
@@ -779,7 +790,10 @@ def _decision_messages(note: Dict[str, Any], interpretation: Dict[str, Any], can
         "return no links and explain why in no_link_reason.\n"
         "7. regulation_quote: copy VERBATIM, character for character, the shortest complete sentence or list item of the "
         "candidate text that establishes the link (at most about 400 characters). Do not correct, translate or shorten "
-        "words; only use '…' to skip text inside the same candidate.\n"
+        "words; only use '…' to skip text inside the same candidate. The provision is cited at the point the quote ends "
+        "in: when the lead-in of a list sets the rule the release note changes (e.g. 'the following percentage of the "
+        "item's nominal value'), quote the lead-in alone; add a point of the list only when that point is what the "
+        "release note changes.\n"
         "8. release_note_quote: copy VERBATIM the words of the release note that show the change, in the original "
         "language, including typos and double spaces.\n"
         f"9. rationale: 2 to 4 sentences in {name}: what changes in the bank's data or calculation, which regulatory "
@@ -1155,13 +1169,26 @@ def _point_of(candidate: Dict[str, Any], quote: str) -> Optional[str]:
     return found
 
 
+def _note_concepts(note: Dict[str, Any], interpretation: Optional[Dict[str, Any]]) -> Tuple[Set[Any], Set[Any]]:
+    """The regulatory concepts a release note is about: those its own words name, and those its interpretation states
+    as the affected quantity ('accrued interests added in the mapping' -> 'accrued interest for determining loan
+    exposure values'). Retrieval searches with both; verification accepts a provision that deals with either."""
+    own = rt.concepts(note["full_text"])
+    interpretation = interpretation or {}
+    stated = [str(item.get("term") or "") for item in interpretation.get("concepts") or [] if isinstance(item, dict)]
+    stated.append(str(interpretation.get("summary_en") or ""))
+    return own, rt.concepts(" ".join(stated)) - own
+
+
 def _verify(
     decision: Dict[str, Any], candidates: List[Dict[str, Any]], note: Dict[str, Any], sources: List[Dict[str, Any]], final: bool,
+    interpretation: Optional[Dict[str, Any]] = None,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[str]]:
     """Accepted links, rejected links and problems (feedback for a correction round)."""
     by_id = {candidate["id"]: candidate for candidate in candidates}
     source_by_id = {source["id"]: source for source in sources}
-    note_concepts = rt.concepts(note["full_text"])
+    own_concepts, derived_concepts = _note_concepts(note, interpretation)
+    note_concepts = own_concepts | derived_concepts
     accepted: List[Dict[str, Any]] = []
     rejected: List[Dict[str, Any]] = []
     problems: List[Dict[str, Any]] = []
@@ -1249,7 +1276,10 @@ def _verify(
             failed.append(_problem("mandate", label))
         checks.append({"id": "substantive", "status": "fail" if mandate else "pass", "params": {}})
 
-        shared = sorted(rt.concept_name(position) for position in note_concepts & rt.concepts(target["text"]))
+        provision_concepts = rt.concepts(target["text"])
+        shared = sorted(rt.concept_name(position) for position in note_concepts & provision_concepts)
+        # A concept the note names itself is stronger evidence than one only its interpretation derived.
+        named = bool(own_concepts & provision_concepts)
         if note_concepts:
             wanted = sorted(rt.concept_name(p) for p in note_concepts)
             if not shared:
@@ -1274,7 +1304,7 @@ def _verify(
         evidence = (
             0.4 * (1.0 if status == "verified" else 0.85 if status == "corrected" else 0.0)
             + 0.15 * (1.0 if note_status == "verified" else 0.85 if note_status == "corrected" else 0.0)
-            + 0.25 * (1.0 if shared else 0.55 if not note_concepts else 0.25)
+            + 0.25 * (1.0 if named else 0.8 if shared else 0.55 if not note_concepts else 0.25)
             + 0.2 * max(0.2, 1.0 - (retrieval["rank"] - 1) * 0.08)
         )
         confidence = round(0.6 * model_confidence + 40 * evidence)
@@ -1689,6 +1719,17 @@ def _read_run(run_id: str) -> Dict[str, Any]:
     return state
 
 
+def _note_status(accepted: List[Dict[str, Any]], escalated: bool, inconclusive: bool) -> str:
+    """linked; review when the four-eyes reviewer disagrees with every link or the best link is weak, and when no link
+    was found although the evidence pointed somewhere (candidates deal with the note's own concepts, or proposed links
+    failed verification) – the model's judgement varies run to run in such cases, so a person decides; else no_link."""
+    if not accepted:
+        return "review" if inconclusive else "no_link"
+    if escalated or max(link["confidence"] for link in accepted) < 60:
+        return "review"
+    return "linked"
+
+
 def _process_note(job: _Job, llm: _LLM, note: Dict[str, Any], sources: List[Dict[str, Any]], language: str) -> None:
     key = note["key"]
     label = note["jira_id"] or f"{note['sheet']} #{note['ordinal']}"
@@ -1719,7 +1760,7 @@ def _process_note(job: _Job, llm: _LLM, note: Dict[str, Any], sources: List[Dict
         messages = _decision_messages(note, interpretation, candidates, language)
         decision = llm.json(messages, "link_decision", DECISION_SCHEMA)
         job.note(key, phase="verifying")
-        accepted, rejected, problems = _verify(decision, candidates, note, sources, final=False)
+        accepted, rejected, problems = _verify(decision, candidates, note, sources, final=False, interpretation=interpretation)
         problems += _reference_gaps(accepted, decision, candidates, note, sources)
         challenge = _no_link_challenge(note, candidates) if not decision.get("links") else None
         feedback: List[Dict[str, Any]] = []
@@ -1736,7 +1777,7 @@ def _process_note(job: _Job, llm: _LLM, note: Dict[str, Any], sources: List[Dict
             job.note(key, phase="adjudicating")
             decision = llm.json(messages, "link_decision", DECISION_SCHEMA)
             job.note(key, phase="verifying")
-        accepted, rejected, problems = _verify(decision, candidates, note, sources, final=True)
+        accepted, rejected, problems = _verify(decision, candidates, note, sources, final=True, interpretation=interpretation)
         failed_links = sum(1 for item in rejected if item["source"] == "verification")
         if failed_links:
             job.say("warn", "verification_rejected", label, count=failed_links)
@@ -1764,12 +1805,7 @@ def _process_note(job: _Job, llm: _LLM, note: Dict[str, Any], sources: List[Dict
             }
             for candidate in candidates
         ]
-        if not accepted:
-            status = "no_link"
-        elif escalated or max(link["confidence"] for link in accepted) < 60:
-            status = "review"
-        else:
-            status = "linked"
+        status = _note_status(accepted, escalated, inconclusive=challenge is not None or failed_links > 0)
         job.say("success" if accepted else "info", "result", label, links=[
             {"reference": link["reference"], "link_type": link["link_type"]} for link in accepted
         ])
@@ -1873,7 +1909,9 @@ def _assemble(job: _Job) -> None:
             "rejected": sum(len(note.get("rejected") or []) for note in notes),
             "corrections": sum(1 for note in notes if note.get("corrections")),
         }
-        summary["coverage"] = round(100 * (summary["linked"] + summary["review"]) / summary["notes"]) if summary["notes"] else 0
+        # Coverage: the share of release notes with at least one link (a note to review may have none).
+        covered = sum(1 for note in notes if note.get("link_count"))
+        summary["coverage"] = round(100 * covered / summary["notes"]) if summary["notes"] else 0
         job.state["provisions"] = ordered
         job.state["summary"] = summary
 
@@ -1945,7 +1983,8 @@ def list_sources():
             "filename": context.get("filename"),
             "kind": context.get("kind") or "excel",
             "notes": len(notes),
-            "jira_ids": [note["jira_id"] for note in notes if note["jira_id"]][:12],
+            # Unique: two notes of a file can share a Jira ID (RWA Release Notes 1.xlsm has RWA-112752 twice).
+            "jira_ids": list(dict.fromkeys(note["jira_id"] for note in notes if note["jira_id"]))[:12],
         })
     workbooks = {str(item.get("id")): item for item in runtime._platform("list_release_note_workbooks")()}
     for entry in files:
@@ -1966,10 +2005,7 @@ def list_sources():
             "language": document.get("language"),
             "upload_date": document.get("upload_date"),
         })
-    model = os.environ.get("REGULATION_MATCHER_MODEL", "").strip() or (
-        DEFAULT_OPENAI_MODEL if os.environ.get("OPENAI_API_KEY") else os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME", "")
-    )
-    return {"release_note_files": files, "regulations": regulations, "model": model}
+    return {"release_note_files": files, "regulations": regulations}
 
 
 @router.post("/runs")
@@ -2253,8 +2289,6 @@ def export_run(run_id: str, language: str = "en"):
         (names["started"], state.get("created_at")),
         (names["finished"], state.get("finished_at")),
         (names["duration"], round((state.get("duration_ms") or 0) / 1000, 1)),
-        (names["model"], state.get("model")),
-        (names["calls"], (state.get("usage") or {}).get("llm_calls")),
         (names["language"], text["languages"].get(language, language)),
         (names["run_language"], text["languages"].get(run_language, run_language)),
         (names["files"], ", ".join(item["filename"] for item in state.get("release_note_files", []))),
@@ -2340,7 +2374,9 @@ def export_run(run_id: str, language: str = "en"):
 
     log_sheet = workbook.create_sheet(text["sheets"][4])
     header(log_sheet, 1, list(text["log"]), [10, 10, 16, 120])
-    for offset, entry in enumerate(state.get("log", []), start=2):
+    # The language model is an internal of the run: runs stored before it was left out of the log name it here.
+    entries = [entry for entry in state.get("log", []) if entry.get("code") not in ("model", "model_fallback")]
+    for offset, entry in enumerate(entries, start=2):
         message = (entry.get("i18n") or {}).get(language) or entry.get("message")
         for column, value in enumerate([entry.get("t"), entry.get("level"), entry.get("note"), message], start=1):
             log_sheet.cell(row=offset, column=column, value=value).alignment = wrap

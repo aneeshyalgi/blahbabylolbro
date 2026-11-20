@@ -2,9 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
-import { ArrowRight, BadgeCheck, Crosshair, FileSpreadsheet, GraduationCap, History, Plus, Trash2, TriangleAlert, Waypoints } from "lucide-react";
+import { GraduationCap, History, Plus, Trash2, TriangleAlert, Waypoints } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { API_ENDPOINTS } from "@/lib/api-config";
+import { recallInTab, rememberInTab } from "@/lib/tab-memory";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { SectionLanguageProvider, SectionLanguageSwitch } from "@/components/section-language";
@@ -14,16 +15,19 @@ import {
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { downloadFrom } from "@/components/lineage-agent/download";
-import { formatDateTime, formatDuration } from "./atoms";
+import { formatDateTime } from "./atoms";
 import { LineageView } from "./lineage-view";
 import { Model, isForwardResult } from "./model";
-import { CONTENT_ONBOARDING_STORAGE_KEY, ContentOnboarding, type ContentTourController } from "./onboarding/content-onboarding";
+import { ContentOnboarding, type ContentTourController } from "./onboarding/content-onboarding";
 import { RunProgress } from "./run-progress";
 import { SetupPanel } from "./setup-panel";
 import type { Preview, Run, RunListItem, Sources } from "./types";
 
 const POLL_MS = 1000;
+
+/** The analysis on screen when the user switched to another tab; it is open again when they come back (a reload starts fresh). */
+type OpenRun = { runId: string; view: "setup" | "run"; selected: string | null };
+const OPEN_RUN = "content-lineage-agent.open-run";
 
 async function readJson(response: Response) {
   return response.json().catch(() => ({}));
@@ -65,15 +69,16 @@ function ContentLineageAgentTab() {
   // The field whose details are shown next to the lineage (none: the followed field itself).
   const [selected, setSelected] = useState<string | null>(null);
   const [tourOpen, setTourOpen] = useState(false);
-  // While the hands-on tour is open, the analysis it starts is followed by the tour; its progress view stays on
-  // screen while the tour explains it, also after the analysis has finished.
+  // The onboarding opens only from the Guided tour button. While its hands-on tour is open, the analysis it starts is
+  // followed by the tour; its progress view stays on screen while the tour explains it, also after it has finished.
   const [tourMode, setTourMode] = useState(false);
   const [tourRunId, setTourRunId] = useState<string | null>(null);
   const [holdProgress, setHoldProgress] = useState(false);
-  const tourAutoStarted = useRef(false);
   // "Do it for me" on the field step before the execution's fields have arrived: select one once they are there.
   const pendingField = useRef(false);
   const initialised = useRef(false);
+  // Set once the analysis open at the last visit is back (or there was none); from then on, what is open is remembered.
+  const restored = useRef(false);
   const messages = useRef({ t, toast });
   messages.current = { t, toast };
 
@@ -120,17 +125,33 @@ function ContentLineageAgentTab() {
     initialised.current = true;
     void loadSources();
     void loadRuns().then(async (list) => {
-      // The tab opens on a fresh setup; finished runs stay in the Analyses menu. A run still in progress is shown again.
+      // Back from another tab: the analysis that was open is open again, as it was left. Otherwise the tab opens on a
+      // fresh setup; finished runs stay in the Analyses menu, and a run still in progress is shown again.
+      const left = recallInTab<OpenRun>(OPEN_RUN);
+      const again = left ? list.find((item) => item.id === left.runId) : undefined;
       const active = list.find((item) => item.status === "running");
-      if (active) {
-        try {
+      try {
+        if (left && again) {
+          await openRun(again.id, again.status === "running");
+          setView(left.view);
+          setSelected(left.selected);
+        } else if (active) {
           await openRun(active.id, true);
-        } catch {
-          setView("setup");
         }
+      } catch {
+        setView("setup");
+      } finally {
+        if (left && !again) rememberInTab(OPEN_RUN, null);
+        restored.current = true;
       }
     });
   }, [loadRuns, loadSources, openRun]);
+
+  // What is open now is what the tab shows again after a visit to another tab.
+  useEffect(() => {
+    if (!restored.current) return;
+    rememberInTab<OpenRun>(OPEN_RUN, run ? { runId: run.id, view, selected } : null);
+  }, [run, view, selected]);
 
   // The fields of the selected execution and what each of them flows into.
   useEffect(() => {
@@ -253,15 +274,6 @@ function ContentLineageAgentTab() {
     }
   };
 
-  const exportRun = async () => {
-    if (!run) return;
-    try {
-      await downloadFrom(API_ENDPOINTS.contentLineageAgentExport(run.id, locale), "content-lineage.xlsx");
-    } catch (error) {
-      toast({ title: t("errors.export"), description: error instanceof Error ? error.message : undefined, variant: "destructive" });
-    }
-  };
-
   // AI texts in the tab's language (the agent writes every analysis in English and German).
   const model = useMemo(() => (isForwardResult(run?.result) ? new Model(run!.result!, locale) : null), [run?.result, locale]);
   const legacy = Boolean(run?.status === "completed" && run.result && !isForwardResult(run.result));
@@ -273,19 +285,6 @@ function ContentLineageAgentTab() {
     setTourRunId(null);
     setHoldProgress(false);
   }, []);
-
-  // First visit: open the onboarding once the sources are known, unless an analysis is on screen.
-  useEffect(() => {
-    if (tourAutoStarted.current || loadingSources) return;
-    tourAutoStarted.current = true;
-    let seen = false;
-    try {
-      seen = localStorage.getItem(CONTENT_ONBOARDING_STORAGE_KEY) === "done";
-    } catch {
-      seen = false;
-    }
-    if (!seen && view === "setup") setTourOpen(true);
-  }, [loadingSources, view]);
 
   const tourRun: ContentTourController["tourRun"] = !tourRunId
     ? "idle"
@@ -408,10 +407,15 @@ function ContentLineageAgentTab() {
               </DropdownMenuContent>
             </DropdownMenu>
             {view === "run" && run && run.status !== "running" && (
-              <Button data-tour="content-new" size="sm" onClick={newRun} className="gap-2 bg-[#f5c400] font-semibold text-[#0b0f15] hover:bg-[#ffd21f]">
-                <Plus className="h-4 w-4" />
-                {t("newRun")}
-              </Button>
+              <>
+                <Button data-tour="content-new" size="sm" onClick={newRun} className="gap-2 bg-[#f5c400] font-semibold text-[#0b0f15] hover:bg-[#ffd21f]">
+                  <Plus className="h-4 w-4" />
+                  {t("newRun")}
+                </Button>
+                <Button variant="ghost" size="icon" onClick={() => setDeleteOpen(true)} className="h-8 w-8 text-[#687386] hover:bg-rose-400/10 hover:text-rose-300" aria-label={t("deleteRun")} title={t("deleteRun")}>
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </>
             )}
             {view === "setup" && run && (
               <Button variant="outline" size="sm" onClick={() => setView("run")} className="border-[#2c3440] bg-transparent text-[#c9d1dd]">
@@ -462,31 +466,7 @@ function ContentLineageAgentTab() {
       )}
 
       {showResults && run && model && (
-        <>
-          <section data-tour="content-meta" className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#252a33] bg-[#0b0f15] px-5 py-3">
-            <div className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-1 text-xs text-[#8c96a8]">
-              <span className="flex items-center gap-1.5 font-medium text-emerald-300"><BadgeCheck className="h-4 w-4" />{t(`status.${run.status}`)}</span>
-              <span className="flex items-center gap-1.5 font-semibold text-[#f5c400]"><Crosshair className="h-4 w-4" />{model.termName(model.field)}<ArrowRight className="h-3.5 w-3.5 text-[#8c96a8]" /><span className="font-normal text-[#c9d1dd]">{t("meta.fields", { count: model.downstream.length })}</span></span>
-              <span className="font-medium text-white">{run.source.cluster_name}</span>
-              <span>{t("meta.execution", { date: formatDateTime(run.source.executed_date, locale) })}</span>
-              <span className="font-mono text-[#c2cad5]">{run.source.code_filename}</span>
-              <span>{run.source.dataset_name}</span>
-              <span>{t("meta.duration", { value: formatDuration(run.duration_ms, locale) })}</span>
-              {run.model && <span className="rounded border border-[#252a33] bg-[#11161e] px-1.5 py-px font-mono text-[10px] text-[#aab3c2]">{run.model}</span>}
-            </div>
-            <div className="flex items-center gap-2">
-              <Button data-tour="content-export" size="sm" variant="outline" onClick={() => void exportRun()} title={t("export.excelHint")} className="h-8 gap-1.5 border-emerald-400/30 bg-emerald-400/10 text-xs font-medium text-emerald-200 hover:bg-emerald-400/20">
-                <FileSpreadsheet className="h-3.5 w-3.5" />
-                {t("export.excel")}
-              </Button>
-              <Button variant="ghost" size="icon" onClick={() => setDeleteOpen(true)} className="h-8 w-8 text-[#687386] hover:bg-rose-400/10 hover:text-rose-300" aria-label={t("deleteRun")}>
-                <Trash2 className="h-4 w-4" />
-              </Button>
-            </div>
-          </section>
-
-          <LineageView model={model} run={run} selected={selected && model.carriers.has(selected) ? selected : model.field} onSelect={setSelected} />
-        </>
+        <LineageView model={model} run={run} selected={selected && model.carriers.has(selected) ? selected : model.field} onSelect={setSelected} />
       )}
 
       <ContentOnboarding

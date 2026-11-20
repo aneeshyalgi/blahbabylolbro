@@ -27,15 +27,17 @@ export const API_ENDPOINTS = {
   codeUpload: `${API_BASE_URL}/api/code/upload`,
   codeById: (id: string) => `${API_BASE_URL}/api/code/${id}`,
   codeDelete: (id: string) => `${API_BASE_URL}/api/code/${id}`,
-  generateCode: `${API_BASE_URL}/api/generate-code`,
-  generateColumnInstructions: `${API_BASE_URL}/api/generate-column-instructions`,
+  // Through Next route handlers: the language model answers slower than the /backend proxy waits.
+  generateCode: `/api/generate-code`,
+  generateColumnInstructions: `/api/generate-column-instructions`,
   // AI agents
   agents: `${API_BASE_URL}/api/agents`,
   agentById: (id: string) => `${API_BASE_URL}/api/agents/${id}`,
   agentTools: `${API_BASE_URL}/api/agents/tools`,
   agentTemplates: `${API_BASE_URL}/api/agents/templates`,
   agentContextOptions: `${API_BASE_URL}/api/agents/context-options`,
-  generateAgent: `${API_BASE_URL}/api/agents/generate`,
+  // Through a Next route handler: designing an agent can take longer than the /backend proxy waits.
+  generateAgent: `/api/agents/generate`,
   agentTranscribe: `${API_BASE_URL}/api/agents/transcribe`,
   agentConversations: (agentId: string) => `${API_BASE_URL}/api/agents/${agentId}/conversations`,
   agentConversation: (conversationId: string) => `${API_BASE_URL}/api/agents/conversations/${conversationId}`,
@@ -57,6 +59,10 @@ export const API_ENDPOINTS = {
   clusterExecutionDelete: (id: string) => `${API_BASE_URL}/api/clusters/executions/${id}`,
   clustersCompare: `${API_BASE_URL}/api/clusters/compare`,
   rootCauseAnalyze: `/api/rootcause/analyze`,
+  rootCauseFields: (executionA: string, executionB: string) =>
+    `${API_BASE_URL}/api/rootcause/fields?execution_id_a=${encodeURIComponent(executionA)}&execution_id_b=${encodeURIComponent(executionB)}`,
+  rootCauseReleaseNoteSummary: (releaseNoteId: string) => `${API_BASE_URL}/api/rootcause/release-notes/${encodeURIComponent(releaseNoteId)}`,
+  rootCauseReview: `/api/rootcause/review`,
   rootCauseAgentsAnalyze: `/api/rootcause/agents/analyze`,
   
   // Lineage
@@ -91,8 +97,6 @@ export const API_ENDPOINTS = {
   lineageAgentRun: (id: string) => `${API_BASE_URL}/api/lineage-agent/runs/${id}`,
   lineageAgentRunProgress: (id: string) => `${API_BASE_URL}/api/lineage-agent/runs/${id}?lite=true`,
   lineageAgentCancel: (id: string) => `${API_BASE_URL}/api/lineage-agent/runs/${id}/cancel`,
-  lineageAgentExport: (id: string, format: "xlsx" | "openlineage", language: string) =>
-    `${API_BASE_URL}/api/lineage-agent/runs/${id}/export?format=${format}&language=${encodeURIComponent(language)}`,
 
   // Content lineage AI agent
   contentLineageAgentSources: `${API_BASE_URL}/api/content-lineage-agent/sources`,
@@ -101,8 +105,6 @@ export const API_ENDPOINTS = {
   contentLineageAgentRun: (id: string) => `${API_BASE_URL}/api/content-lineage-agent/runs/${id}`,
   contentLineageAgentRunProgress: (id: string) => `${API_BASE_URL}/api/content-lineage-agent/runs/${id}?lite=true`,
   contentLineageAgentCancel: (id: string) => `${API_BASE_URL}/api/content-lineage-agent/runs/${id}/cancel`,
-  contentLineageAgentExport: (id: string, language: string) =>
-    `${API_BASE_URL}/api/content-lineage-agent/runs/${id}/export?language=${encodeURIComponent(language)}`,
 
   // Release notes workbooks
   releaseNotes: `${API_BASE_URL}/api/release-notes`,

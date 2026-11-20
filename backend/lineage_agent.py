@@ -31,6 +31,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from fastapi import APIRouter, HTTPException
@@ -53,7 +54,7 @@ BATCH_SIZE = 8
 WORKERS = 3
 MAX_ACTIVE_RUNS = 2
 MAX_INVESTIGATION_STEPS = 8
-DEFAULT_OPENAI_MODEL = "gpt-4.1"  # LINEAGE_AGENT_MODEL overrides it
+DEFAULT_OPENAI_MODEL = "gpt-6.1-sol"  # LINEAGE_AGENT_MODEL overrides it
 LANGUAGE_NAMES = {"en": "English", "de": "German", "es": "Spanish"}
 _ID = re.compile(r"^[0-9a-f-]{8,64}$")
 
@@ -129,7 +130,8 @@ class _Job:
         self.started = time.monotonic()
         self.last_save = 0.0
 
-    def log(self, level: str, code: str, message: str, **params: Any) -> None:
+    def log(self, level: str, code: str, message: str, /, **params: Any) -> None:
+        # Positional-only: the parameters of an entry may themselves be named code, message or level.
         with self.lock:
             self.state["log"].append({
                 "t": round(time.monotonic() - self.started, 2), "level": level, "code": code, "params": params, "message": message,
@@ -225,7 +227,11 @@ def _read_run(run_id: str) -> Dict[str, Any]:
 # --------------------------------------------------------------------------------------------------
 
 class _LLM:
-    """JSON-schema chat calls (and a tool loop for the investigator) with retries, model fallback and usage counts."""
+    """JSON-schema chat calls (and a tool loop for the investigator) with retries, model fallback and usage counts.
+
+    Newer reasoning models (gpt-6.1-sol) refuse two things on chat completions: a fixed temperature, which is then
+    dropped for the rest of the run, and function tools, for which the tool loop moves to the Responses API.
+    """
 
     def __init__(self, job: _Job):
         client, configured = runtime._llm_client()
@@ -237,6 +243,9 @@ class _LLM:
         self.job = job
         self.strict = True
         self.seed: Optional[int] = 20241007
+        self.temperature: Optional[float] = 0
+        # The model offers function tools only on the Responses API (learnt from its first refusal).
+        self.responses_tools = False
         self.lock = threading.Lock()
 
     def _create(self, **options: Any) -> Any:
@@ -244,8 +253,10 @@ class _LLM:
         for attempt in range(4):
             self.job.check()
             extra: Dict[str, Any] = {"seed": self.seed} if self.seed is not None else {}
+            if self.temperature is not None:
+                extra["temperature"] = self.temperature
             try:
-                return self.client.chat.completions.create(model=self.model, temperature=0, **extra, **options)
+                return self.client.chat.completions.create(model=self.model, **extra, **options)
             except Exception as exc:  # provider errors: fall back, degrade or retry
                 last = exc
                 status = getattr(exc, "status_code", None)
@@ -256,10 +267,15 @@ class _LLM:
                             self.model, self.fallback = self.fallback, None
                             self.job.set_model(self.model)
                     continue
-                if status == 400 and self.seed is not None and "seed" in str(exc):
+                # A parameter the model refuses is dropped for the rest of the run. Calls run in parallel, so each call
+                # judges by what it sent itself: another call may already have dropped the parameter.
+                if status == 400 and "temperature" in extra and "temperature" in str(exc):
+                    self.temperature = None
+                    continue
+                if status == 400 and "seed" in extra and "seed" in str(exc):
                     self.seed = None
                     continue
-                if status == 400 and self.strict and ("response_format" in str(exc) or "json_schema" in str(exc)) and "response_format" in options:
+                if status == 400 and (options.get("response_format") or {}).get("type") == "json_schema" and ("response_format" in str(exc) or "json_schema" in str(exc)):
                     self.strict = False
                     options["response_format"] = {"type": "json_object"}
                     continue
@@ -286,11 +302,63 @@ class _LLM:
         raise RuntimeError(f"The language model did not return valid JSON: {last}")
 
     def tools(self, messages: List[Dict[str, Any]], tools: List[Dict[str, Any]], required: bool = False) -> Any:
-        response = self._create(messages=messages, tools=tools, tool_choice="required" if required else "auto")
+        if not self.responses_tools:
+            try:
+                response = self._create(messages=messages, tools=tools, tool_choice="required" if required else "auto")
+            except Exception as exc:
+                if getattr(exc, "status_code", None) != 400 or "/v1/responses" not in str(exc):
+                    raise
+                self.responses_tools = True
+            else:
+                usage = getattr(response, "usage", None)
+                message = response.choices[0].message
+                self.job.count_call(getattr(usage, "prompt_tokens", 0) or 0, getattr(usage, "completion_tokens", 0) or 0, len(message.tool_calls or []))
+                return message
+        return self._responses_tools(messages, tools, required)
+
+    def _responses_tools(self, messages: List[Dict[str, Any]], tools: List[Dict[str, Any]], required: bool) -> Any:
+        """One turn of the tool loop on the Responses API: the chat messages become input items, the answer becomes a
+        chat-style message again (content and tool_calls). Nothing is stored at the provider."""
+        items: List[Dict[str, Any]] = []
+        for message in messages:
+            role = message.get("role")
+            if role == "tool":
+                items.append({"type": "function_call_output", "call_id": message["tool_call_id"], "output": message.get("content") or ""})
+            elif role == "assistant" and message.get("tool_calls"):
+                if message.get("content"):
+                    items.append({"role": "assistant", "content": message["content"]})
+                for call in message["tool_calls"]:
+                    items.append({"type": "function_call", "call_id": call["id"], "name": call["function"]["name"], "arguments": call["function"]["arguments"] or "{}"})
+            else:
+                items.append({"role": role, "content": message.get("content") or ""})
+        definitions = [
+            {"type": "function", "name": tool["function"]["name"], "description": tool["function"].get("description", ""), "parameters": tool["function"]["parameters"], "strict": False}
+            for tool in tools
+        ]
+        last: Optional[Exception] = None
+        for attempt in range(4):
+            self.job.check()
+            try:
+                response = self.client.responses.create(
+                    model=self.model, input=items, tools=definitions, tool_choice="required" if required else "auto", store=False,
+                )
+                break
+            except Exception as exc:
+                last = exc
+                status = getattr(exc, "status_code", None)
+                if status in (408, 409, 429) or (status or 0) >= 500 or status is None:
+                    time.sleep(1.5 * (attempt + 1))
+                    continue
+                raise
+        else:
+            raise RuntimeError(f"The language model did not answer: {last}")
+        calls = [
+            SimpleNamespace(id=item.call_id, type="function", function=SimpleNamespace(name=item.name, arguments=item.arguments))
+            for item in response.output if getattr(item, "type", "") == "function_call"
+        ]
         usage = getattr(response, "usage", None)
-        message = response.choices[0].message
-        self.job.count_call(getattr(usage, "prompt_tokens", 0) or 0, getattr(usage, "completion_tokens", 0) or 0, len(message.tool_calls or []))
-        return message
+        self.job.count_call(getattr(usage, "input_tokens", 0) or 0, getattr(usage, "output_tokens", 0) or 0, len(calls))
+        return SimpleNamespace(content=getattr(response, "output_text", "") or "", tool_calls=calls or None)
 
 
 def _strings() -> Dict[str, Any]:
@@ -1523,7 +1591,7 @@ def _run_job(job: _Job) -> None:
         job.stage("document")
         llm = _LLM(job)
         job.set_model(llm.model)
-        job.log("info", "model", f"Model: {llm.model} · temperature 0 · JSON-schema output", model=llm.model)
+        job.log("info", "model", f"Model: {llm.model} · JSON-schema output", model=llm.model)
         targets = [item["name"] for item in context.analysis["columns"] if item["in_output"] and item["role"] != "passthrough"]
         batches = [targets[index:index + BATCH_SIZE] for index in range(0, len(targets), BATCH_SIZE)]
         job.progress(columns_total=len(targets), columns_documented=0)
@@ -1833,7 +1901,7 @@ _LABELS: Dict[str, Dict[str, Any]] = {
         "sheets": {"summary": "Summary", "lineage": "Lineage", "columns": "Columns", "transformations": "Transformations", "cells": "Cell provenance", "findings": "Findings", "checks": "Checks", "probes": "Probes", "code": "Code"},
         "meta": {
             "cluster": "Cluster", "execution": "Execution", "executed": "Executed", "dataset": "Dataset", "code": "Code file", "run": "Analysis",
-            "finished": "Analysis finished", "model": "Model", "outputs": "Output columns", "edges": "Column dependencies",
+            "finished": "Analysis finished", "outputs": "Output columns", "edges": "Column dependencies",
             "replay": "Replay reproduces the execution", "confirmed": "Static dependencies confirmed at runtime", "runtime_only": "Runtime-only dependencies",
             "findings": "Findings (critical / warning / info)", "purpose": "Purpose", "stages": "Processing stages", "language": "Language",
         },
@@ -1882,7 +1950,7 @@ _LABELS: Dict[str, Dict[str, Any]] = {
         "sheets": {"summary": "Überblick", "lineage": "Herkunft", "columns": "Spalten", "transformations": "Transformationen", "cells": "Zellherkunft", "findings": "Befunde", "checks": "Kontrollen", "probes": "Tests", "code": "Code"},
         "meta": {
             "cluster": "Cluster", "execution": "Ausführung", "executed": "Ausgeführt", "dataset": "Datensatz", "code": "Codedatei", "run": "Analyse",
-            "finished": "Analyse beendet", "model": "Modell", "outputs": "Ausgabespalten", "edges": "Spaltenabhängigkeiten",
+            "finished": "Analyse beendet", "outputs": "Ausgabespalten", "edges": "Spaltenabhängigkeiten",
             "replay": "Wiederholung reproduziert die Ausführung", "confirmed": "Statische Abhängigkeiten zur Laufzeit bestätigt", "runtime_only": "Nur zur Laufzeit beobachtete Abhängigkeiten",
             "findings": "Befunde (kritisch / Warnung / Hinweis)", "purpose": "Zweck", "stages": "Verarbeitungsstufen", "language": "Sprache",
         },
@@ -1931,7 +1999,7 @@ _LABELS: Dict[str, Dict[str, Any]] = {
         "sheets": {"summary": "Resumen", "lineage": "Linaje", "columns": "Columnas", "transformations": "Transformaciones", "cells": "Procedencia de celdas", "findings": "Hallazgos", "checks": "Controles", "probes": "Pruebas", "code": "Código"},
         "meta": {
             "cluster": "Clúster", "execution": "Ejecución", "executed": "Ejecutado", "dataset": "Conjunto de datos", "code": "Archivo de código", "run": "Análisis",
-            "finished": "Análisis terminado", "model": "Modelo", "outputs": "Columnas de salida", "edges": "Dependencias de columnas",
+            "finished": "Análisis terminado", "outputs": "Columnas de salida", "edges": "Dependencias de columnas",
             "replay": "La re-ejecución reproduce la ejecución", "confirmed": "Dependencias estáticas confirmadas en ejecución", "runtime_only": "Dependencias solo en ejecución",
             "findings": "Hallazgos (crítico / advertencia / nota)", "purpose": "Propósito", "stages": "Etapas de procesamiento", "language": "Idioma",
         },
@@ -2138,7 +2206,7 @@ def _excel(state: Dict[str, Any], language: str = "en") -> bytes:
     rows = [
         (meta["cluster"], source.get("cluster_name")), (meta["execution"], source.get("execution_id")), (meta["executed"], source.get("executed_date")),
         (meta["dataset"], source.get("dataset_name")), (meta["code"], source.get("code_filename")), (meta["run"], state["id"]),
-        (meta["finished"], state.get("finished_at")), (meta["model"], state.get("model")), (meta["language"], language.upper()),
+        (meta["finished"], state.get("finished_at")), (meta["language"], language.upper()),
         (meta["outputs"], summary.get("outputs")), (meta["edges"], summary.get("edges")),
         (meta["replay"], yes if summary.get("replay_ok") else no),
         (meta["confirmed"], f"{summary.get('confirmed')}/{summary.get('static_dependencies')}"),

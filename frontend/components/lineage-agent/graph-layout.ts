@@ -41,9 +41,7 @@ export interface GraphLayout {
 }
 
 export interface LayoutOptions {
-  showLookups: boolean;
   showIsolated: boolean;
-  showIndirect: boolean;
 }
 
 export const lookupId = (name: string) => `lookup:${name}`;
@@ -51,13 +49,8 @@ export const lookupId = (name: string) => `lookup:${name}`;
 /** Layered left-to-right layout of the column lineage (sources left, derived columns right). */
 export function layoutGraph(analysis: Analysis, options: LayoutOptions): GraphLayout {
   const columns = analysis.columns.filter((column) => column.in_output || column.downstream.length > 0);
-  const allEdges = analysis.edges.filter((edge) => {
-    if (edge.kind === "lookup") return options.showLookups;
-    if (!options.showIndirect && edge.transformations.every((item) => item.type === "INDIRECT")) return false;
-    return true;
-  });
   const connected = new Set<string>();
-  for (const edge of allEdges) {
+  for (const edge of analysis.edges) {
     connected.add(edge.from);
     connected.add(edge.to);
   }
@@ -79,17 +72,15 @@ export function layoutGraph(analysis: Analysis, options: LayoutOptions): GraphLa
     id: column.name, kind: "column", label: column.name, column, layer: column.depth, x: 0, y: 0,
   }));
   const nodeIds = new Set(nodes.map((node) => node.id));
-  if (options.showLookups) {
-    for (const lookup of analysis.lookups) {
-      const consumers = visibleColumns.filter((column) => column.lookups.includes(lookup.name));
-      if (!consumers.length) continue;
-      const layer = Math.max(0, Math.min(...consumers.map((column) => column.depth)) - 1);
-      nodes.push({ id: lookupId(lookup.name), kind: "lookup", label: lookup.name, lookup, layer, x: 0, y: 0 });
-      nodeIds.add(lookupId(lookup.name));
-      order.set(lookupId(lookup.name), (order.get(consumers[0].name) ?? 0) - 0.5);
-    }
+  for (const lookup of analysis.lookups) {
+    const consumers = visibleColumns.filter((column) => column.lookups.includes(lookup.name));
+    if (!consumers.length) continue;
+    const layer = Math.max(0, Math.min(...consumers.map((column) => column.depth)) - 1);
+    nodes.push({ id: lookupId(lookup.name), kind: "lookup", label: lookup.name, lookup, layer, x: 0, y: 0 });
+    nodeIds.add(lookupId(lookup.name));
+    order.set(lookupId(lookup.name), (order.get(consumers[0].name) ?? 0) - 0.5);
   }
-  const edges = allEdges.filter((edge) => nodeIds.has(edge.from) && nodeIds.has(edge.to) && edge.from !== edge.to);
+  const edges = analysis.edges.filter((edge) => nodeIds.has(edge.from) && nodeIds.has(edge.to) && edge.from !== edge.to);
 
   // Layers: columns keep their analysed depth; a node never sits left of a node it depends on (except historical reads).
   const layerOf = new Map(nodes.map((node) => [node.id, node.layer]));
@@ -171,22 +162,28 @@ export function layoutGraph(analysis: Analysis, options: LayoutOptions): GraphLa
   return { nodes, edges: graphEdges, width, height, hidden };
 }
 
+/** A placed node and a link between two nodes, as far as routing needs them (both lineage graphs use it). */
+type Placed = { id: string; x: number; y: number };
+type Link = { from: string; to: string };
+export type NodeSize = { width: number; height: number };
+const TECHNICAL_NODE: NodeSize = { width: NODE_WIDTH, height: NODE_HEIGHT };
+
 /** Edge curves for the current node positions (automatic layout or nodes moved by the user): the edges entering and
  *  leaving a node are spread over its side, ordered by the height of the node at the other end. */
-export function routeEdges(nodes: GraphNode[], edges: GraphEdge[]): GraphEdge[] {
+export function routeEdges<E extends Link>(nodes: Placed[], edges: E[], size: NodeSize = TECHNICAL_NODE): (E & { path: string; mid: { x: number; y: number } })[] {
   const byId = new Map(nodes.map((node) => [node.id, node]));
-  const outgoing = new Map<string, GraphEdge[]>();
-  const incoming = new Map<string, GraphEdge[]>();
+  const outgoing = new Map<string, E[]>();
+  const incoming = new Map<string, E[]>();
   for (const edge of edges) {
     (outgoing.get(edge.from) ?? outgoing.set(edge.from, []).get(edge.from)!).push(edge);
     (incoming.get(edge.to) ?? incoming.set(edge.to, []).get(edge.to)!).push(edge);
   }
-  const port = (list: GraphEdge[] | undefined, edge: GraphEdge, other: (item: GraphEdge) => string) => {
-    if (!list || list.length <= 1) return NODE_HEIGHT / 2;
+  const port = (list: E[] | undefined, edge: E, other: (item: E) => string) => {
+    if (!list || list.length <= 1) return size.height / 2;
     const sorted = [...list].sort((a, b) => (byId.get(other(a))?.y ?? 0) - (byId.get(other(b))?.y ?? 0));
     const at = sorted.indexOf(edge);
-    const span = NODE_HEIGHT * 0.56;
-    return NODE_HEIGHT * 0.22 + (span * at) / (sorted.length - 1);
+    const span = size.height * 0.56;
+    return size.height * 0.22 + (span * at) / (sorted.length - 1);
   };
   return edges.flatMap((edge) => {
     const source = byId.get(edge.from);
@@ -194,7 +191,7 @@ export function routeEdges(nodes: GraphNode[], edges: GraphEdge[]): GraphEdge[] 
     if (!source || !target) return [];
     const sy = source.y + port(outgoing.get(edge.from), edge, (item) => item.to);
     const ty = target.y + port(incoming.get(edge.to), edge, (item) => item.from);
-    const sx = source.x + NODE_WIDTH;
+    const sx = source.x + size.width;
     const tx = target.x;
     let path: string;
     let mid: { x: number; y: number };
@@ -204,7 +201,7 @@ export function routeEdges(nodes: GraphNode[], edges: GraphEdge[]): GraphEdge[] 
       mid = { x: (sx + tx) / 2, y: (sy + ty) / 2 };
     } else {
       // The target sits left of the source (a historical read, or a node moved there): loop below both nodes.
-      const below = Math.max(source.y, target.y) + NODE_HEIGHT + 36;
+      const below = Math.max(source.y, target.y) + size.height + 36;
       path = `M ${sx} ${sy} C ${sx + 90} ${sy}, ${sx + 90} ${below}, ${(sx + tx) / 2} ${below} S ${tx - 90} ${ty}, ${tx - 2} ${ty}`;
       mid = { x: (sx + tx) / 2, y: below };
     }
@@ -213,17 +210,17 @@ export function routeEdges(nodes: GraphNode[], edges: GraphEdge[]): GraphEdge[] 
 }
 
 /** Bounding box of the nodes, with room for edge curves and loops. */
-export function graphBounds(nodes: GraphNode[]): { x: number; y: number; width: number; height: number } {
+export function graphBounds(nodes: { x: number; y: number }[], size: NodeSize = TECHNICAL_NODE): { x: number; y: number; width: number; height: number } {
   if (!nodes.length) return { x: 0, y: 0, width: PADDING * 2, height: PADDING * 2 };
   const left = Math.min(...nodes.map((node) => node.x)) - PADDING;
   const top = Math.min(...nodes.map((node) => node.y)) - PADDING;
-  const right = Math.max(...nodes.map((node) => node.x + NODE_WIDTH)) + PADDING;
-  const bottom = Math.max(...nodes.map((node) => node.y + NODE_HEIGHT)) + PADDING + 48;
+  const right = Math.max(...nodes.map((node) => node.x + size.width)) + PADDING;
+  const bottom = Math.max(...nodes.map((node) => node.y + size.height)) + PADDING + 48;
   return { x: left, y: top, width: right - left, height: bottom - top };
 }
 
 /** Upstream and downstream closure of a node over the visible edges. */
-export function lineageOf(edges: GraphEdge[], id: string): { up: Set<string>; down: Set<string> } {
+export function lineageOf(edges: Link[], id: string): { up: Set<string>; down: Set<string> } {
   const up = new Set<string>();
   const down = new Set<string>();
   const walk = (start: string, forward: boolean, seen: Set<string>) => {

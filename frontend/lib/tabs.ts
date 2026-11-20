@@ -21,11 +21,11 @@ export const DEFAULT_TAB_ORDER = [
 export const TAB_LABELS: Record<string, string> = {
   code: "Code",
   "data-modal": "Data",
-  "technical-lineage": "Technical Lineage",
+  "technical-lineage": "Technical Lineage (Legacy)",
   "technical-lineage-agent": "Technical Lineage AI Agent",
   data: "Results",
   clustering: "Cluster",
-  "content-lineage": "Content Lineage",
+  "content-lineage": "Content Lineage (Legacy)",
   "content-lineage-agent": "Content Lineage AI Agents",
   "compare-clusters": "Compare",
   "root-cause": "Root Cause",

@@ -49,8 +49,6 @@ import {
   type TourStepDef,
 } from "./content-onboarding-content";
 
-export const CONTENT_ONBOARDING_STORAGE_KEY = "dataflow_content_lineage_onboarding_v2";
-
 /** What the tour needs from the content lineage tab: its state and the actions it may perform for the user. */
 export type ContentTourController = {
   stage: TourStage;
@@ -119,15 +117,6 @@ export function ContentOnboarding({
 
   if (!open || !mounted) return null;
 
-  const finish = () => {
-    try {
-      localStorage.setItem(CONTENT_ONBOARDING_STORAGE_KEY, "done");
-    } catch {
-      // Storage unavailable; the tour simply shows again next time.
-    }
-    onClose();
-  };
-
   return createPortal(
     <div ref={rootRef} className="ob-root" lang={language}>
       {phase === "deck" ? (
@@ -135,16 +124,16 @@ export function ContentOnboarding({
           copy={copy}
           language={language}
           setLanguage={setLanguage}
-          onSkip={finish}
+          onSkip={onClose}
           onStartTour={() => {
             onStartTour();
             setPhase("tour");
           }}
         />
       ) : phase === "tour" ? (
-        <SpotlightTour copy={copy} controller={controller} onDone={() => setPhase("complete")} onSkip={finish} />
+        <SpotlightTour copy={copy} controller={controller} onDone={() => setPhase("complete")} onSkip={onClose} />
       ) : (
-        <CompletionCard copy={copy} onFinish={finish} />
+        <CompletionCard copy={copy} onFinish={onClose} />
       )}
       <style>{ONBOARDING_CSS}</style>
       <style>{CONTENT_CSS}</style>
@@ -685,10 +674,12 @@ function ForwardScreen({ copy, language }: { copy: ContentOnboardingCopy; langua
   );
 }
 
-/* The miniature result: the selected field and the five fields it reaches, in the columns of the real view. */
+/* The miniature result: the selected field and the five fields it reaches, in the columns of the real view; each card
+   names its step, as in the real graph. */
 const VIEW_STEP = 138;
-const VIEW_CARD = { w: 128, h: 64 };
-const VIEW_TOP = 24;
+const VIEW_CARD = { w: 128, h: 78 };
+const VIEW_TOP = 4;
+const VIEW_STEP_CLASS = ["text-[#f5c400]", "text-emerald-400", "text-sky-400"];
 const VIEW_Y: Record<string, number> = { productType: 68, bst: 0, ab: 136, ccf: 0, ead: 68, rwa: 68 };
 const VIEW_COLORS = { value: "#34d399", decides: "#fbbf24" } as const;
 
@@ -726,11 +717,6 @@ function ViewScreen({ copy }: { copy: ContentOnboardingCopy }) {
       <div className="ob-rise mt-5 rounded-2xl border border-[#1f2630] bg-[#06090d] p-4" style={{ animationDelay: "120ms" }}>
         <div className="overflow-x-auto">
           <div className="relative mx-auto" style={{ width, height }}>
-            {levels.map((level) => (
-              <p key={level} className="absolute top-0 truncate text-[9px] font-semibold uppercase tracking-[0.08em]" style={{ left: 4 + level * VIEW_STEP, width: VIEW_CARD.w, color: level === 0 ? "#f5c400" : level === 1 ? "#34d399" : "#38bdf8" }}>
-                {level === 0 ? view.columns.start : level === 1 ? view.columns.next : format(view.columns.step, { level })}
-              </p>
-            ))}
             <svg className="pointer-events-none absolute inset-0" width={width} height={height} aria-hidden="true">
               {view.links.map((link) => {
                 const from = position(link.from);
@@ -777,6 +763,9 @@ function ViewScreen({ copy }: { copy: ContentOnboardingCopy }) {
                   <span className="flex items-start gap-1">
                     <span className="line-clamp-3 min-w-0 flex-1 text-[10.5px] font-semibold leading-[1.25] text-white">{item.name}</span>
                     {item.end ? <Flag className="mt-px h-3 w-3 shrink-0 text-[#f5c400]" /> : null}
+                  </span>
+                  <span className={cn("mt-1 truncate text-[8.5px] font-semibold uppercase leading-[1.2] tracking-wide", VIEW_STEP_CLASS[Math.min(item.level, 2)])}>
+                    {item.level === 0 ? view.stepLabels.start : item.level === 1 ? view.stepLabels.next : format(view.stepLabels.step, { level: item.level })}
                   </span>
                   <span className="mt-auto flex items-center gap-1.5">
                     {item.level > 0 ? <span className="h-1 flex-1 rounded-full bg-[#fbbf24]" /> : <span className="flex-1" />}
@@ -837,7 +826,7 @@ function ViewScreen({ copy }: { copy: ContentOnboardingCopy }) {
           </div>
         ) : null}
       </div>
-      <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="mt-3 grid gap-2 sm:grid-cols-3">
         {view.parts.map((part, partIndex) => (
           <div key={part.title} className="ob-rise rounded-xl border border-[#1f2630] bg-[#0b1017] px-3 py-2.5" style={{ animationDelay: `${300 + partIndex * 80}ms` }}>
             <p className="flex items-center gap-2 text-[12.5px] font-semibold text-white"><span className="flex h-5 w-5 items-center justify-center rounded-full border border-[#f5c400]/40 text-[10px] font-bold text-[#f5c400]">{partIndex + 1}</span>{part.title}</p>

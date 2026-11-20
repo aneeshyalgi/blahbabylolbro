@@ -2,33 +2,20 @@
 
 import { useMemo, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
-import {
-  AlertTriangle, Binary, Bot, Boxes, CheckCircle2, Code2, Database, FlaskConical, Loader2, PlayCircle, Rocket, Search, Sparkles, Star, UserCheck,
-} from "lucide-react";
+import { AlertTriangle, Boxes, CheckCircle2, Code2, Database, Loader2, Rocket, Search, Sparkles, Star } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CodeBlock, EYEBROW, PANEL, formatDateTime } from "./atoms";
 import type { Preview, Sources } from "./types";
 
-const METHOD = [
-  { id: "parse", icon: Binary },
-  { id: "replay", icon: PlayCircle },
-  { id: "probe", icon: FlaskConical },
-  { id: "document", icon: Bot },
-  { id: "review", icon: UserCheck },
-] as const;
-
-export function SetupPanel({ sources, loading, selected, onSelect, preview, previewLoading, probes, onProbes, starting, onStart }: {
+export function SetupPanel({ sources, loading, selected, onSelect, preview, previewLoading, starting, onStart }: {
   sources: Sources | null;
   loading: boolean;
   selected: string | null;
   onSelect: (executionId: string) => void;
   preview: Preview | null;
   previewLoading: boolean;
-  probes: boolean;
-  onProbes: (value: boolean) => void;
   starting: boolean;
   onStart: () => void;
-  /** Guided tour: Start replays a recorded analysis. */
 }) {
   const t = useTranslations("lineageAgent.setup");
   const locale = useLocale();
@@ -165,47 +152,6 @@ export function SetupPanel({ sources, loading, selected, onSelect, preview, prev
         </section>
       </div>
 
-      <section data-tour="lineage-method" className={cn(PANEL, "p-4")}>
-        <div className="flex flex-wrap items-center gap-3">
-          <StepNumber value={3} />
-          <div className="min-w-0 flex-1">
-            <p className="text-[13.5px] font-semibold text-white">{t("methodTitle")}</p>
-            <p className="text-[11.5px] text-[#8c96a8]">{t("methodHint")}</p>
-          </div>
-        </div>
-        <div className="mt-4 grid gap-2.5 md:grid-cols-5">
-          {METHOD.map((step, index) => {
-            const Icon = step.icon;
-            const off = step.id === "probe" && !probes;
-            return (
-              <div key={step.id} className={cn("relative rounded-md border border-[#1f252e] bg-[#0d1218] p-3", off && "opacity-50")}>
-                <div className="flex items-center gap-2">
-                  <span className="flex h-7 w-7 items-center justify-center rounded-md border border-[#f5c400]/30 bg-[#f5c400]/10"><Icon className="h-3.5 w-3.5 text-[#f5c400]" /></span>
-                  <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#687386]">{index + 1}</span>
-                </div>
-                <p className="mt-2 text-[12.5px] font-semibold text-white">{t(`method.${step.id}.title`)}</p>
-                <p className="mt-1 text-[11.5px] leading-relaxed text-[#8c96a8]">{t(`method.${step.id}.body`)}</p>
-              </div>
-            );
-          })}
-        </div>
-        <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-md border border-[#1f252e] bg-[#0d1218] px-3.5 py-3">
-          <button
-            type="button"
-            role="switch"
-            aria-checked={probes}
-            onClick={() => onProbes(!probes)}
-            className={cn("relative mt-0.5 h-5 w-9 shrink-0 rounded-full transition-colors", probes ? "bg-[#f5c400]" : "bg-[#2c3440]")}
-          >
-            <span className={cn("absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-[left]", probes ? "left-[18px]" : "left-0.5")} />
-          </button>
-          <span>
-            <span className="block text-[12.5px] font-semibold text-white">{t("probesTitle")}</span>
-            <span className="mt-0.5 block text-[11.5px] leading-relaxed text-[#8c96a8]">{t("probesBody")}</span>
-          </span>
-        </label>
-      </section>
-
       <section data-tour="lineage-run-bar" className="flex flex-wrap items-center gap-4 rounded-lg border border-[#f5c400]/25 bg-[linear-gradient(110deg,rgba(245,196,0,0.08),rgba(11,15,21,1)_45%)] px-5 py-4">
         <Sparkles className="h-5 w-5 shrink-0 text-[#f5c400]" />
         <div className="min-w-0 flex-1">
@@ -224,7 +170,6 @@ export function SetupPanel({ sources, loading, selected, onSelect, preview, prev
           )}
           {sources && !sources.llm_configured && <p className="mt-1 flex items-center gap-1.5 text-[11.5px] text-amber-300"><AlertTriangle className="h-3.5 w-3.5" /> {t("noLlm")}</p>}
         </div>
-        {sources?.model && <span className="rounded-full border border-[#2c3440] px-2.5 py-1 font-mono text-[11px] text-[#aab3c2]">{sources.model}</span>}
         <button
           type="button"
           onClick={onStart}

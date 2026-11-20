@@ -37,8 +37,6 @@ import {
   type TourStepDef,
 } from "./onboarding-content";
 
-export const ONBOARDING_STORAGE_KEY = "dataflow_agent_studio_onboarding_v1";
-
 /** What the tour needs from the studio: its current state and the actions it may perform for the user. */
 export type OnboardingController = {
   view: "home" | "draft" | "agent";
@@ -98,14 +96,7 @@ export function StudioOnboarding({
 
   if (!open || !mounted) return null;
 
-  const finish = () => {
-    try {
-      localStorage.setItem(ONBOARDING_STORAGE_KEY, "done");
-    } catch {
-      // Storage unavailable; the tour will simply show again next time.
-    }
-    onClose();
-  };
+  const finish = () => onClose();
 
   return createPortal(
     <div ref={rootRef} className="ob-root" lang={locale}>

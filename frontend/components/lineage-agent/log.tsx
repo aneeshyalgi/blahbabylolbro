@@ -28,6 +28,13 @@ export function useLogText() {
   };
 }
 
+/** Entries naming the AI model stay out of the tab. */
+const HIDDEN_CODES = new Set(["model", "model_fallback"]);
+
+function visibleLog(log: LogEntry[]): LogEntry[] {
+  return log.filter((entry) => !HIDDEN_CODES.has(entry.code));
+}
+
 const LEVEL_STYLES: Record<LogEntry["level"], string> = {
   info: "text-[#8c96a8]",
   success: "text-emerald-300",
@@ -45,7 +52,7 @@ export function AgentConsole({ log, live = false, className, tourId }: { log: Lo
   }, [log.length, live]);
   return (
     <div ref={box} data-tour={tourId} className={cn("overflow-y-auto rounded-md border border-[#1f252e] bg-[#06080c] p-3 font-mono text-[11.5px] leading-[1.65]", className)}>
-      {log.map((entry, index) => (
+      {visibleLog(log).map((entry, index) => (
         <div key={index} className={cn("flex gap-3", entry.code === "tool_call" && "pl-4")}>
           <span className="w-14 shrink-0 text-right tabular-nums text-[#3f4957]">{entry.t.toFixed(2)}s</span>
           <span className={cn("w-3 shrink-0", LEVEL_STYLES[entry.level])}>{entry.level === "success" ? "✓" : entry.level === "warn" ? "!" : entry.level === "error" ? "✗" : entry.code === "tool_call" ? "↳" : "›"}</span>

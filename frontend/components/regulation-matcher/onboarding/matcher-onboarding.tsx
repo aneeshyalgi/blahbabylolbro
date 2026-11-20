@@ -46,7 +46,6 @@ import {
   type AnatomyPart,
   type MatcherLocale,
   type MatcherOnboardingCopy,
-  type ResultsTab,
   type TourStage,
   type TourStepDef,
 } from "./matcher-onboarding-content";
@@ -67,8 +66,8 @@ export type MatcherTourController = {
   showSetup: () => void;
   /** Bring the progress view of the tour's run on screen; it stays there (also once finished) until a results step. */
   showProgress: () => void;
-  /** Bring the tour's finished run on screen on the given tab. */
-  showResults: (tab: ResultsTab) => void;
+  /** Bring the tour's finished run on screen. */
+  showResults: () => void;
   /** Select the smallest release-note file (the tour's run stays short). */
   selectFirstFile: () => void;
   selectFirstRegulation: () => void;
@@ -974,7 +973,7 @@ function SpotlightTour({
     const current = controllerRef.current;
     if (step.stage === "setup" && current.stage !== "setup") current.showSetup();
     if (step.stage === "progress") current.showProgress();
-    if (step.stage === "results") current.showResults(step.tab ?? "evidence");
+    if (step.stage === "results") current.showResults();
     const timers: number[] = [];
     if (step.expand) {
       timers.push(

@@ -26,6 +26,8 @@ type Workbook = {
   size: number;
   upload_date: string;
   sheets: string[];
+  /** Sheets to show; the backend limits special workbooks (e.g. RWA Release Notes 1.xlsm) to their release-notes sheet. */
+  visible_sheets?: number[];
   kind?: "excel" | "pdf";
   page_count?: number;
 };
@@ -33,20 +35,12 @@ type Workbook = {
 const isPdf = (workbook: Workbook | null) => workbook?.kind === "pdf";
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 
-const SPECIAL_RELEASE_NOTE_FILENAME = "iref release notes_1.xlsm";
-const SPECIAL_RELEASE_NOTE_VISIBLE_SHEET = "rwa release notes";
-
-const normalizeName = (value: string) => value.trim().toLowerCase();
-
-const isSpecialReleaseNotesWorkbook = (workbook: Workbook | null) => (
-  workbook ? normalizeName(workbook.filename) === SPECIAL_RELEASE_NOTE_FILENAME : false
-);
-
 const getVisibleSheets = (workbook: Workbook | null) => {
   if (!workbook) return [] as { name: string; sourceIndex: number }[];
+  const visible = workbook.visible_sheets ? new Set(workbook.visible_sheets) : null;
   return workbook.sheets
     .map((name, sourceIndex) => ({ name, sourceIndex }))
-    .filter((sheet) => !isSpecialReleaseNotesWorkbook(workbook) || normalizeName(sheet.name) === SPECIAL_RELEASE_NOTE_VISIBLE_SHEET);
+    .filter((sheet) => !visible || visible.has(sheet.sourceIndex));
 };
 
 export function PatchNotesTabContent() {

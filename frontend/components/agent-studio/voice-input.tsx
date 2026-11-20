@@ -65,6 +65,8 @@ function useVoiceInput({
   callbacks.current = { language, onTranscript, onError };
   const session = useRef<Session | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  // Set when the button leaves the screen; a microphone granted after that is released at once.
+  const disposed = useRef(false);
 
   useEffect(() => {
     setSupported(Boolean(navigator.mediaDevices?.getUserMedia) && typeof MediaRecorder !== "undefined");
@@ -120,6 +122,10 @@ function useVoiceInput({
           : name === "NotFoundError" || name === "OverconstrainedError" ? "noMic"
             : "failed";
       callbacks.current.onError(kind, error instanceof Error ? error.message : undefined);
+      return;
+    }
+    if (disposed.current) {
+      stream.getTracks().forEach((track) => track.stop());
       return;
     }
 
@@ -211,6 +217,7 @@ function useVoiceInput({
 
   // Leaving the screen discards the recording and any transcription in flight.
   useEffect(() => () => {
+    disposed.current = true;
     abortRef.current?.abort();
     const current = session.current;
     if (current) {

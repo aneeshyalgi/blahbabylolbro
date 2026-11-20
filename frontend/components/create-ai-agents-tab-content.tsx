@@ -15,6 +15,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { API_ENDPOINTS } from "@/lib/api-config";
+import { setLeaveGuard } from "@/lib/leave-guard";
 import { cn } from "@/lib/utils";
 import { AgentChat } from "@/components/agent-studio/agent-chat";
 import { AgentEditor } from "@/components/agent-studio/agent-editor";
@@ -22,11 +23,7 @@ import { AgentLibrary } from "@/components/agent-studio/agent-library";
 import { StudioHome } from "@/components/agent-studio/studio-home";
 import { definitionsEqual, requestJson } from "@/components/agent-studio/api";
 import { StudioLanguageProvider, useStudioText } from "@/components/agent-studio/i18n";
-import {
-  ONBOARDING_STORAGE_KEY,
-  StudioOnboarding,
-  type OnboardingController,
-} from "@/components/agent-studio/onboarding/studio-onboarding";
+import { StudioOnboarding, type OnboardingController } from "@/components/agent-studio/onboarding/studio-onboarding";
 import { TOUR_TEMPLATE_ID } from "@/components/agent-studio/onboarding/onboarding-content";
 import {
   EMPTY_DEFINITION,
@@ -79,14 +76,22 @@ function AgentStudio() {
   const [contextLoading, setContextLoading] = useState(false);
   const [releaseNoteFiles, setReleaseNoteFiles] = useState<SourceFile[]>([]);
   const [releaseNoteFilesLoading, setReleaseNoteFilesLoading] = useState(true);
+  const [releaseNoteFilesFailed, setReleaseNoteFilesFailed] = useState(false);
   const [regulationFiles, setRegulationFiles] = useState<SourceFile[]>([]);
   const [regulationFilesLoading, setRegulationFilesLoading] = useState(true);
+  const [regulationFilesFailed, setRegulationFilesFailed] = useState(false);
   // Changes whenever a different draft or agent is opened so the test bench starts a fresh conversation.
   const [editSession, setEditSession] = useState(0);
+  // Design, refine and save answer after a while; their results apply only to the draft or agent that was open when
+  // they were requested (any navigation starts a new session).
+  const sessionRef = useRef(0);
+  sessionRef.current = editSession;
+  // Conversations running in the saved agent's chat and in the test bench (leaving the tab would stop them).
+  const [runningChats, setRunningChats] = useState<{ chat: boolean; bench: boolean }>({ chat: false, bench: false });
   // Foundation selected on the studio home (null = blank canvas); kept here so the guided tour can follow it.
   const [homeTemplateId, setHomeTemplateId] = useState<string | null>(null);
+  // The onboarding opens only from the library's Guided tour button, never by itself (user, 2026-11-19).
   const [tourOpen, setTourOpen] = useState(false);
-  const tourAutoStarted = useRef(false);
   const contextRequest = useRef(0);
   const loadErrorTitle = useRef(t("studio.toast.loadAgentsFailed"));
   loadErrorTitle.current = t("studio.toast.loadAgentsFailed");
@@ -105,16 +110,23 @@ function AgentStudio() {
   const loadReleaseNoteFiles = useCallback(() => {
     setReleaseNoteFilesLoading(true);
     requestJson<{ workbooks: SourceFile[] }>(API_ENDPOINTS.releaseNotes)
-      .then((payload) => setReleaseNoteFiles(payload.workbooks))
-      .catch(() => setReleaseNoteFiles([]))
+      .then((payload) => {
+        setReleaseNoteFiles(payload.workbooks);
+        setReleaseNoteFilesFailed(false);
+      })
+      // A failed load keeps the last list: an empty one would mark an agent's chosen files as deleted.
+      .catch(() => setReleaseNoteFilesFailed(true))
       .finally(() => setReleaseNoteFilesLoading(false));
   }, []);
 
   const loadRegulationFiles = useCallback(() => {
     setRegulationFilesLoading(true);
     requestJson<{ documents: SourceFile[] }>(API_ENDPOINTS.regulationDocuments)
-      .then((payload) => setRegulationFiles(payload.documents.map((document) => ({ ...document, kind: "pdf" as const }))))
-      .catch(() => setRegulationFiles([]))
+      .then((payload) => {
+        setRegulationFiles(payload.documents.map((document) => ({ ...document, kind: "pdf" as const })));
+        setRegulationFilesFailed(false);
+      })
+      .catch(() => setRegulationFilesFailed(true))
       .finally(() => setRegulationFilesLoading(false));
   }, []);
 
@@ -139,30 +151,6 @@ function AgentStudio() {
     };
   }, [locale, templatesVersion]);
 
-  const viewKind = useRef(view.kind);
-  viewKind.current = view.kind;
-
-  // First visit: start the onboarding once templates are available (the tour opens one of them).
-  useEffect(() => {
-    if (tourAutoStarted.current || !templates.length) return;
-    let seen = false;
-    try {
-      seen = localStorage.getItem(ONBOARDING_STORAGE_KEY) === "done";
-    } catch {
-      seen = false;
-    }
-    if (seen) {
-      tourAutoStarted.current = true;
-      return;
-    }
-    const timer = window.setTimeout(() => {
-      tourAutoStarted.current = true;
-      // Never interrupt someone who already started working; they can open the tour from the library.
-      if (viewKind.current === "home") setTourOpen(true);
-    }, 450);
-    return () => window.clearTimeout(timer);
-  }, [templates.length]);
-
   const loadContextOptions = useCallback(() => {
     const requestId = ++contextRequest.current;
     setContextLoading(true);
@@ -183,10 +171,39 @@ function AgentStudio() {
     ? Boolean(working && (working.name.trim() || working.instructions.trim()))
     : view.kind === "agent" && Boolean(working) && !definitionsEqual(working, baseline);
 
+  const dirtyRef = useRef(false);
+  dirtyRef.current = isDirty;
+  const workingRef = useRef<AgentDefinition | null>(null);
+  workingRef.current = working;
+  const anyRunning = runningChats.chat || runningChats.bench;
+
+  // Read through a ref, so a result that arrives later (a designed agent) still asks before discarding edits.
   const guard = (action: () => void) => {
-    if (isDirty) setPendingAction(() => action);
+    if (dirtyRef.current) setPendingAction(() => action);
     else action();
   };
+
+  // Switching to another app tab, reloading or closing the page asks first while work would be lost.
+  useEffect(() => {
+    const message = isDirty
+      ? view.kind === "draft"
+        ? t("studio.leave.draft")
+        : t("studio.leave.edits", { name: working?.name.trim() || t("common.untitledAgent") })
+      : anyRunning
+        ? t("studio.leave.running")
+        : null;
+    setLeaveGuard(message ? { title: t("studio.leave.title"), message, stay: t("studio.leave.stay"), leave: t("studio.leave.leave") } : null);
+  }, [isDirty, anyRunning, view.kind, working?.name, t]);
+  useEffect(() => () => setLeaveGuard(null), []);
+  useEffect(() => {
+    if (!isDirty && !anyRunning) return;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [isDirty, anyRunning]);
 
   const openAgent = (agent: SavedAgent, tab: "chat" | "configure" = "chat") => {
     setView({ kind: "agent", id: agent.id, tab });
@@ -201,6 +218,7 @@ function AgentStudio() {
     setWorking(null);
     setBaseline(null);
     setPreviousDefinition(null);
+    setEditSession((current) => current + 1);
   };
 
   const startDraft = (definition: AgentDefinition, sourcePrompt: string) => {
@@ -220,8 +238,11 @@ function AgentStudio() {
         method: "POST",
         body: JSON.stringify({ prompt, language: locale, ...(template ? { base_definition: template.definition } : {}) }),
       });
-      startDraft(payload.definition, prompt);
-      toast({ title: t("studio.toast.designed"), description: t("studio.toast.designedDesc") });
+      // Meanwhile the user may have opened an agent and edited it: those edits are never discarded without asking.
+      guard(() => {
+        startDraft(payload.definition, prompt);
+        toast({ title: t("studio.toast.designed"), description: t("studio.toast.designedDesc") });
+      });
     } catch (error) {
       toast({ title: t("studio.toast.designFailed"), description: error instanceof Error ? error.message : undefined, variant: "destructive" });
     } finally {
@@ -231,13 +252,19 @@ function AgentStudio() {
 
   const refine = async (instruction: string): Promise<boolean> => {
     if (!working) return false;
+    const session = sessionRef.current;
     setRefining(true);
     try {
       const payload = await requestJson<{ definition: AgentDefinition }>(API_ENDPOINTS.generateAgent, {
         method: "POST",
         body: JSON.stringify({ prompt: instruction, base_definition: working, language: locale }),
       });
-      setPreviousDefinition(working);
+      if (session !== sessionRef.current) {
+        // Another agent or draft is open now; the rewrite belongs to the one that was open before.
+        toast({ title: t("studio.toast.refineDropped"), description: t("studio.toast.refineDroppedDesc") });
+        return false;
+      }
+      setPreviousDefinition(workingRef.current);
       setWorking(payload.definition);
       toast({ title: t("studio.toast.refined"), description: t("studio.toast.refinedDesc") });
       return true;
@@ -255,6 +282,7 @@ function AgentStudio() {
       toast({ title: t("studio.toast.nameRequired"), variant: "destructive" });
       return;
     }
+    const session = sessionRef.current;
     setSaving(true);
     try {
       if (view.kind === "agent") {
@@ -263,9 +291,11 @@ function AgentStudio() {
           body: JSON.stringify({ definition: working }),
         });
         setAgents((current) => current.map((agent) => (agent.id === updated.id ? updated : agent)));
-        setWorking(cloneDefinition(updated.definition));
-        setBaseline(cloneDefinition(updated.definition));
-        setPreviousDefinition(null);
+        if (session === sessionRef.current) {
+          setWorking(cloneDefinition(updated.definition));
+          setBaseline(cloneDefinition(updated.definition));
+          setPreviousDefinition(null);
+        }
         toast({ title: t("studio.toast.changesSaved"), description: updated.name });
       } else {
         const created = await requestJson<SavedAgent>(API_ENDPOINTS.agents, {
@@ -274,7 +304,7 @@ function AgentStudio() {
         });
         setAgents((current) => [created, ...current]);
         // During the guided tour, stay in the editor so the remaining steps can still point at it.
-        openAgent(created, tourOpen ? "configure" : "chat");
+        if (session === sessionRef.current) openAgent(created, tourOpen ? "configure" : "chat");
         toast({ title: t("studio.toast.saved"), description: t("studio.toast.savedDesc", { name: created.name }) });
       }
     } catch (error) {
@@ -379,8 +409,10 @@ function AgentStudio() {
 
   const workbench = showWorkbench && working ? (
     <div className="flex h-full min-h-0">
-      <div className="flex w-[46%] min-w-[440px] max-w-[640px] flex-col border-r border-[#1c222b] bg-[#0a0e14]">
+      <div className="flex w-[44%] min-w-[360px] max-w-[640px] flex-col border-r border-[#1c222b] bg-[#0a0e14] 2xl:w-[46%] 2xl:min-w-[440px]">
         <div data-tour="editor" className="min-h-0 flex-1 overflow-y-auto">
+          {/* Locked while AI rewrites the agent: the rewrite replaces the whole definition. */}
+          <fieldset disabled={refining} className="m-0 min-w-0 border-0 p-0">
           <AgentEditor
             definition={working}
             onChange={setWorking}
@@ -395,10 +427,13 @@ function AgentStudio() {
             releaseNoteFiles={releaseNoteFiles}
             releaseNoteFilesLoading={releaseNoteFilesLoading}
             onReloadReleaseNoteFiles={loadReleaseNoteFiles}
+            releaseNoteFilesFailed={releaseNoteFilesFailed}
             regulationFiles={regulationFiles}
             regulationFilesLoading={regulationFilesLoading}
+            regulationFilesFailed={regulationFilesFailed}
             onReloadRegulationFiles={loadRegulationFiles}
           />
+          </fieldset>
         </div>
         <div data-tour="save-bar" className="flex shrink-0 items-center justify-between gap-2 border-t border-[#1c222b] bg-[#080c12] px-5 py-3">
           <span className="text-xs text-[#8c96a8]">
@@ -420,8 +455,8 @@ function AgentStudio() {
       <div data-tour="test-bench" className="flex min-w-0 flex-1 flex-col bg-[#06090d]">
         <div className="flex shrink-0 items-center gap-2 border-b border-[#1c222b] px-5 py-2.5">
           <FlaskConical className="h-4 w-4 text-[#f5c400]" />
-          <span className="text-sm font-semibold text-white">{t("studio.testBench")}</span>
-          <span className="text-xs text-[#687386]">{t("studio.testBenchHint")}</span>
+          <span className="whitespace-nowrap text-sm font-semibold text-white">{t("studio.testBench")}</span>
+          <span className="hidden truncate text-xs text-[#687386] 2xl:inline">{t("studio.testBenchHint")}</span>
         </div>
         <div className="min-h-0 flex-1">
           <AgentChat
@@ -432,6 +467,7 @@ function AgentStudio() {
             contextOptions={contextOptions}
             contextLoading={contextLoading}
             loadContextOptions={loadContextOptions}
+            onRunningChange={(value) => setRunningChats((current) => (current.bench === value ? current : { ...current, bench: value }))}
           />
         </div>
       </div>
@@ -510,7 +546,7 @@ function AgentStudio() {
                       </button>
                     ))}
                   </div>
-                  <button type="button" onClick={() => void duplicate(selectedAgent)} className="rounded-md p-2 text-[#8c96a8] hover:bg-white/5 hover:text-white" title={t("studio.duplicate")} aria-label={t("studio.duplicate")}>
+                  <button type="button" onClick={() => guard(() => void duplicate(selectedAgent))} className="rounded-md p-2 text-[#8c96a8] hover:bg-white/5 hover:text-white" title={t("studio.duplicate")} aria-label={t("studio.duplicate")}>
                     <Copy className="h-4 w-4" />
                   </button>
                   <button type="button" onClick={() => setDeleteTarget(selectedAgent)} className="rounded-md p-2 text-[#8c96a8] hover:bg-red-500/10 hover:text-red-400" title={t("studio.delete")} aria-label={t("studio.delete")}>
@@ -521,10 +557,9 @@ function AgentStudio() {
             </header>
 
             <div className="min-h-0 flex-1">
-              {showWorkbench ? (
-                workbench
-              ) : selectedAgent ? (
-                <div className="h-full">
+              {view.kind === "agent" && selectedAgent ? (
+                // One chat per agent, kept mounted while Configure is open so a running conversation goes on.
+                <div className={cn("h-full", view.tab === "chat" ? "" : "hidden")}>
                   {isDirty ? (
                     <div className="border-b border-[#f5c400]/20 bg-[#f5c400]/5 px-5 py-1.5 text-xs text-[#f5d766]">
                       {t("studio.savedVersionNotice")}
@@ -532,6 +567,7 @@ function AgentStudio() {
                   ) : null}
                   <div className={cn(isDirty ? "h-[calc(100%-29px)]" : "h-full")}>
                     <AgentChat
+                      key={selectedAgent.id}
                       definition={selectedAgent.definition}
                       agent={selectedAgent}
                       tools={tools}
@@ -539,14 +575,18 @@ function AgentStudio() {
                       contextLoading={contextLoading}
                       loadContextOptions={loadContextOptions}
                       onRunFinished={() => void loadAgents()}
+                      onRunningChange={(value) => setRunningChats((current) => (current.chat === value ? current : { ...current, chat: value }))}
                     />
                   </div>
                 </div>
-              ) : (
+              ) : null}
+              {showWorkbench ? (
+                workbench
+              ) : view.kind === "agent" && !selectedAgent ? (
                 <div className="flex h-full items-center justify-center text-sm text-[#8c96a8]">
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" /> {t("studio.loadingAgent")}
                 </div>
-              )}
+              ) : null}
             </div>
           </>
         )}

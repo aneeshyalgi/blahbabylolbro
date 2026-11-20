@@ -9,7 +9,6 @@ export type DeckScreen = "language" | "welcome" | "challenge" | "pipeline" | "an
 export const DECK_SCREENS: DeckScreen[] = ["language", "welcome", "challenge", "pipeline", "anatomy", "grades", "controls", "ready"];
 
 export type TourStage = "setup" | "progress" | "results";
-export type ResultsTab = "evidence" | "matrix" | "provisions" | "audit";
 export type TourAction = "selectFile" | "selectRegulation" | "startRun" | "awaitResults";
 
 export type TourStepId =
@@ -17,14 +16,10 @@ export type TourStepId =
   | "language"
   | "releaseNotes"
   | "regulations"
-  | "method"
   | "runBar"
   | "progress"
-  | "stages"
-  | "liveLog"
-  | "meta"
-  | "kpis"
-  | "tabs"
+  | "summary"
+  | "impacted"
   | "noteList"
   | "noteCard"
   | "interpretation"
@@ -34,9 +29,6 @@ export type TourStepId =
   | "linkActions"
   | "dismissed"
   | "retrieval"
-  | "matrix"
-  | "provisions"
-  | "audit"
   | "newRun";
 
 export type TourStepDef = {
@@ -44,8 +36,6 @@ export type TourStepDef = {
   /** data-tour attribute of the element to spotlight. */
   target: string;
   stage: TourStage;
-  /** Results tab the step lives on. */
-  tab?: ResultsTab;
   /** Steps with an action wait for the user (or "Do it for me"). */
   action?: TourAction;
   /** Open the collapsible section that is spotlighted. */
@@ -57,27 +47,20 @@ export const TOUR_STEPS: TourStepDef[] = [
   { id: "language", target: "matcher-language", stage: "setup" },
   { id: "releaseNotes", target: "matcher-release-notes", stage: "setup", action: "selectFile" },
   { id: "regulations", target: "matcher-regulations", stage: "setup", action: "selectRegulation" },
-  { id: "method", target: "matcher-method", stage: "setup" },
   { id: "runBar", target: "matcher-run-bar", stage: "setup", action: "startRun" },
-  { id: "progress", target: "matcher-progress", stage: "progress" },
-  { id: "stages", target: "matcher-stages", stage: "progress" },
-  { id: "liveLog", target: "matcher-live-log", stage: "progress", action: "awaitResults" },
-  { id: "meta", target: "matcher-meta", stage: "results", tab: "evidence" },
-  { id: "kpis", target: "matcher-kpis", stage: "results", tab: "evidence" },
-  { id: "tabs", target: "matcher-tabs", stage: "results", tab: "evidence" },
-  { id: "noteList", target: "matcher-note-list", stage: "results", tab: "evidence" },
-  { id: "noteCard", target: "matcher-note-card", stage: "results", tab: "evidence" },
-  { id: "interpretation", target: "matcher-interpretation", stage: "results", tab: "evidence" },
-  { id: "link", target: "matcher-link-head", stage: "results", tab: "evidence" },
-  { id: "quotes", target: "matcher-quotes", stage: "results", tab: "evidence" },
-  { id: "checks", target: "matcher-checks", stage: "results", tab: "evidence" },
-  { id: "linkActions", target: "matcher-link-actions", stage: "results", tab: "evidence" },
-  { id: "dismissed", target: "matcher-dismissed", stage: "results", tab: "evidence", expand: true },
-  { id: "retrieval", target: "matcher-retrieval", stage: "results", tab: "evidence", expand: true },
-  { id: "matrix", target: "matcher-matrix", stage: "results", tab: "matrix" },
-  { id: "provisions", target: "matcher-provisions-view", stage: "results", tab: "provisions" },
-  { id: "audit", target: "matcher-audit-view", stage: "results", tab: "audit" },
-  { id: "newRun", target: "matcher-new-run", stage: "results", tab: "evidence" },
+  { id: "progress", target: "matcher-progress", stage: "progress", action: "awaitResults" },
+  { id: "summary", target: "matcher-summary", stage: "results" },
+  { id: "impacted", target: "matcher-impacted", stage: "results" },
+  { id: "noteList", target: "matcher-note-list", stage: "results" },
+  { id: "noteCard", target: "matcher-note-card", stage: "results" },
+  { id: "interpretation", target: "matcher-interpretation", stage: "results" },
+  { id: "link", target: "matcher-link-head", stage: "results" },
+  { id: "quotes", target: "matcher-quotes", stage: "results" },
+  { id: "checks", target: "matcher-checks", stage: "results" },
+  { id: "linkActions", target: "matcher-link-actions", stage: "results" },
+  { id: "dismissed", target: "matcher-dismissed", stage: "results", expand: true },
+  { id: "retrieval", target: "matcher-retrieval", stage: "results", expand: true },
+  { id: "newRun", target: "matcher-new-run", stage: "results" },
 ];
 
 type TourText = { chapter: string; title: string; body: string[]; action?: string; empty?: string };
@@ -209,7 +192,7 @@ const EN: MatcherOnboardingCopy = {
     title: "Every change, traced to the rule it touches",
     body: [
       "Each release of the calculation engine changes how figures are computed or which data feeds them. Supervisors and auditors expect you to show, for every change, which regulatory requirement it affects – with the exact article, paragraph, page and wording.",
-      "The matcher does this groundwork for you. It reads every release note in the files you select, searches the regulations you select article by article, and returns a traceability matrix in which every link is backed by word-for-word quotes from both sources and a documented series of checks.",
+      "The matcher does this groundwork for you. It reads every release note in the files you select, searches the regulations you select article by article, and returns a traceability result in which every link is backed by word-for-word quotes from both sources and a documented series of checks.",
       "You stay in control: every decision is shown with its evidence, every dismissed candidate with its reason, and anything doubtful is marked for your review.",
     ],
     learnTitle: "In the next minutes you will learn",
@@ -281,7 +264,7 @@ const EN: MatcherOnboardingCopy = {
     ],
     play: "Play",
     pause: "Pause",
-    footnote: "Every stage is written to the run log, which you find in the audit trail and in the Excel audit workbook.",
+    footnote: "Every stage is written to the run log, which you find in the Excel audit workbook.",
   },
   anatomy: {
     eyebrow: "Reading a link",
@@ -350,7 +333,7 @@ const EN: MatcherOnboardingCopy = {
   controls: {
     eyebrow: "Trust & control",
     title: "Built to survive an audit",
-    intro: "Nine controls run on every link, whatever the model says. You find them again in each run's audit trail.",
+    intro: "Nine controls run on every link, whatever the model says. You find their outcome on every link of a result.",
     rules: [
       { title: "Closed candidate set", text: "Only provisions retrieved from the regulation text can be linked, by id – no invented articles or paragraphs." },
       { title: "Verbatim quotes", text: "Every quote is matched against its source; typo-level differences are replaced by the exact wording, anything else is rejected." },
@@ -369,15 +352,15 @@ const EN: MatcherOnboardingCopy = {
     title: "Ready for the hands-on tour",
     body: [
       "The tour walks you through the real tab: you select your sources, start a run and explore every part of the result.",
-      "Run matching starts a real run with the sources you select – exactly as outside the tour. A small release-note file keeps it short: each release note takes about 10–20 seconds, up to four run in parallel. The run is saved under Runs like any other.",
+      "Run matching starts a real run with the sources you select – exactly as outside the tour. A small release-note file keeps it short: a run takes about a minute for every four release notes. The run is saved under Runs like any other.",
     ],
     checklistTitle: "What you will do",
     checklist: [
       "Select release notes and a regulation",
-      "Start a run and watch the pipeline",
-      "Read the key figures",
-      "Open an evidence card and its checks",
-      "Explore the matrix, provisions and audit trail",
+      "Start a run and follow its progress",
+      "Read the result at a glance",
+      "Filter by an impacted provision",
+      "Open the evidence of a release note and its checks",
       "Start your own run",
     ],
   },
@@ -394,15 +377,15 @@ const EN: MatcherOnboardingCopy = {
       chapter: "Setup",
       title: "Work in English or German",
       body: [
-        "This switch sets the language of the whole tab: labels, the AI-written interpretations and rationales, the verification messages, the log and the Excel audit workbook.",
+        "This switch sets the language of the whole tab: labels, the AI-written interpretations and rationales, the verification messages and the Excel export.",
         "Every run is written in both languages, so you can switch at any time – also while you read a result. The rest of the application keeps its own language.",
       ],
     },
     releaseNotes: {
       chapter: "Setup",
-      title: "Choose the release notes",
+      title: "Step 1: the release notes",
       body: [
-        "Every release-note file uploaded in the Release Notes tab appears here, with its number of release notes and the first Jira IDs.",
+        "Every release-note file uploaded in the Release Notes tab appears here, with its number of release notes and its Jira IDs.",
         "Every release note in a selected file is analysed – Excel rows and PDF passages alike. Nothing is selected until you choose.",
       ],
       action: "Tick at least one release-note file.",
@@ -410,24 +393,19 @@ const EN: MatcherOnboardingCopy = {
     },
     regulations: {
       chapter: "Setup",
-      title: "Choose the regulations",
+      title: "Step 2: the regulations",
       body: [
-        "The indexed regulation PDFs from the Regulation tab. Only files marked Ready can be selected; Semantic index means the search also matches by meaning, not only by words.",
+        "The indexed regulation PDFs from the Regulation tab. A file that is still being indexed cannot be selected yet.",
         "You can match against several regulations at once – every link names the regulation it comes from.",
       ],
-      action: "Tick at least one ready regulation.",
+      action: "Tick at least one regulation.",
       empty: "No regulation is indexed yet, so there is nothing to match against. Upload a regulation PDF in the Regulation tab, then start this tour again with “Guided tour”.",
-    },
-    method: {
-      chapter: "Setup",
-      title: "What happens when you run",
-      body: ["Five stages per release note: interpret, retrieve, adjudicate, verify and the four-eyes review. You will watch them live in a moment."],
     },
     runBar: {
       chapter: "Setup",
       title: "Start the run",
       body: [
-        "The bar sums up the scope of the run and the model in use. A real run takes about 10–20 seconds per release note; up to four are analysed in parallel.",
+        "The bar sums up the scope of the run. A real run takes about a minute for every four release notes; up to four are analysed in parallel.",
         "This starts a real run – exactly as outside the tour – and saves it under Runs.",
       ],
       action: "Press Run matching.",
@@ -436,55 +414,41 @@ const EN: MatcherOnboardingCopy = {
       chapter: "Run",
       title: "Live progress",
       body: [
-        "Your run is in progress now: elapsed time, model calls, tokens and links found so far, with the overall progress below. It continues on the server if you leave the tab; Cancel stops it after the steps in progress, and finished release notes are kept.",
+        "Every release note passes five steps: interpret, search, link, verify and the four-eyes review. The bars show where each one is, the right column how many provisions it was linked to.",
+        "The run continues on the server if you leave the tab; Cancel stops it after the steps in progress, and finished release notes are kept.",
       ],
-    },
-    stages: {
-      chapter: "Run",
-      title: "The pipeline, stage by stage",
-      body: ["Each card counts the release notes that have passed the stage. The list below shows where every single release note is right now."],
-    },
-    liveLog: {
-      chapter: "Run",
-      title: "The live log",
-      body: ["Every decision is logged as it happens: concepts found, candidates retrieved, correction rounds, review verdicts and the final links. The same log is kept in the audit trail and the Excel workbook."],
       action: "Wait for the run to finish – the tour continues by itself as soon as the result is ready.",
     },
-    meta: {
-      chapter: "Results",
-      title: "Run summary and exports",
+    summary: {
+      chapter: "Result",
+      title: "The result at a glance",
       body: [
-        "Status, start time, runtime, model and sources of the run.",
-        "Excel audit workbook exports everything – summary, traceability matrix, coverage grid, dismissed candidates and the log – ready to file. JSON gives the raw result for further processing.",
+        "How many release notes were analysed and linked, the provisions they affect, the links – direct and indirect – and how many quotes were found word for word in their source.",
+        "The icons on the right export the result as an Excel audit workbook or delete the run.",
       ],
     },
-    kpis: {
-      chapter: "Results",
-      title: "The key figures",
+    impacted: {
+      chapter: "Result",
+      title: "Impacted provisions",
       body: [
-        "Coverage is the share of release notes with a link. Links counts direct and indirect links, Provisions the distinct provisions touched.",
-        "Quotes verified shows how many quotes were found in their source. Candidates shows how many provisions were considered and how many were dismissed with a reason. Avg. confidence combines model judgement and verified evidence.",
+        "Every provision the release notes affect, with the number of release notes: a filled dot means direct links, a ring indirect ones.",
+        "Select a provision to list only the release notes that affect it – the basis of an impact assessment per article. Select it again to show all.",
       ],
-    },
-    tabs: {
-      chapter: "Results",
-      title: "Four views on one result",
-      body: ["Evidence: every release note with its links and proof. Traceability matrix: release notes against provisions at a glance. Provisions: the result from the regulation's side. Audit trail: how the run was produced."],
     },
     noteList: {
-      chapter: "Evidence",
+      chapter: "Result",
       title: "The release notes",
-      body: ["Filter by status or search by Jira ID, text or provision. Each entry shows its status, a one-line regulatory summary and its links – D for direct, I for indirect."],
+      body: ["Each release note with its status, a one-line regulatory summary and the provisions it affects – green for direct links, blue for indirect ones. Select one to see its evidence on the right."],
     },
     noteCard: {
       chapter: "Evidence",
       title: "The release note itself",
-      body: ["The original fields: Jira ID, change type, module, problem and solution description. The words quoted as evidence are highlighted, so you see exactly which statement each link rests on."],
+      body: ["Jira ID, file and fields, with the problem and solution description. The words quoted as evidence are highlighted, so you see exactly which statement each link rests on."],
     },
     interpretation: {
       chapter: "Evidence",
       title: "Regulatory interpretation",
-      body: ["How the change reads in regulatory terms: a summary, the kind of change and each regulatory concept with the exact words of the release note it comes from. The search was based on this."],
+      body: ["How the change reads in regulatory terms: a summary, the kind of change and the regulatory concepts with the exact words of the release note they come from – hover a concept for its effect. The search was based on this."],
     },
     link: {
       chapter: "Evidence",
@@ -502,37 +466,22 @@ const EN: MatcherOnboardingCopy = {
     checks: {
       chapter: "Evidence",
       title: "The verification record",
-      body: ["Every check that was run on this link, with its outcome: regulation quote, release-note quote, scope, substantive provision, shared concept and the four-eyes review with the reviewer's reason. The last line shows how the provision was found."],
+      body: ["Every check run on this link as one line: regulation quote, release-note quote, scope, substantive rule, shared concept and the four-eyes review – hover a check for its details. Problems and the reviewer's reason are spelled out below; the last pill shows how the provision was found."],
     },
     linkActions: {
       chapter: "Evidence",
       title: "Drill down to the source",
-      body: ["Refers to lists the provisions this one cross-references. Show provision text expands the full paragraph with the quote highlighted; Read opens the whole article in a side panel; PDF opens the regulation at the exact page (switched off for the tour replay)."],
+      body: ["Refers to lists the provisions this one cross-references. Show provision text expands the full paragraph with the quote highlighted; Read opens the whole article in a side panel; PDF opens the regulation at the exact page."],
     },
     dismissed: {
       chapter: "Evidence",
       title: "What was ruled out – and why",
-      body: ["Every candidate that was considered but not linked, with the reason and who decided: the model, the verification or the four-eyes review. Auditors often ask exactly this: why not that article?"],
+      body: ["Every other provision that was considered but not linked, with the reason and who decided: the model, the verification or the four-eyes review. Auditors often ask exactly this: why not that article?"],
     },
     retrieval: {
       chapter: "Evidence",
-      title: "The retrieval trace",
-      body: ["The search queries that were run and every candidate with its score, keyword rank, semantic similarity, how it was found and the decision – full transparency on how the evidence was gathered."],
-    },
-    matrix: {
-      chapter: "Overview",
-      title: "Traceability matrix",
-      body: ["Release notes as rows, provisions as columns grouped by article. A filled dot is a direct link, a ring an indirect one; the number is the confidence. Hover a cell for the rationale, click it to jump to its evidence card."],
-    },
-    provisions: {
-      chapter: "Overview",
-      title: "Provisions view",
-      body: ["The same result from the regulation's side: every provision that is touched, by how many release notes and by which – a sound basis for an impact assessment per article."],
-    },
-    audit: {
-      chapter: "Overview",
-      title: "Audit trail",
-      body: ["Run ID, timing, model, token usage and sources; the controls that were applied; and the complete run log, filterable by level – everything needed to retrace the result."],
+      title: "How the evidence was found",
+      body: ["The search queries that were run, every candidate with its score, keyword rank, semantic similarity, how it was found and the decision, and the self-corrections the automatic verification triggered."],
     },
     newRun: {
       chapter: "Next steps",
@@ -545,8 +494,8 @@ const EN: MatcherOnboardingCopy = {
     body: "You know the pipeline, the evidence and the controls. Close the tour and start your first run.",
     tipsTitle: "Good practice",
     tips: [
-      "Check every release note marked Needs review before relying on the matrix.",
-      "Use the dismissed candidates to answer “why not this article?”.",
+      "Check every release note marked Needs review before relying on the result.",
+      "Use the provisions considered but not linked to answer “why not this article?”.",
       "Export the Excel audit workbook for your documentation.",
       "Run again after new release notes or a new regulation version – runs are kept side by side.",
       "Restart this tour any time with the Guided tour button.",
@@ -592,7 +541,7 @@ const DE: MatcherOnboardingCopy = {
     title: "Jede Änderung, zurückverfolgt bis zur Vorschrift",
     body: [
       "Jedes Release der Berechnungsengine ändert, wie Größen berechnet werden oder welche Daten einfließen. Aufsicht und Prüfer erwarten, dass Sie für jede Änderung zeigen, welche regulatorische Anforderung sie berührt – mit genauem Artikel, Absatz, Seite und Wortlaut.",
-      "Der Abgleich übernimmt diese Vorarbeit. Er liest jede Release Note der ausgewählten Dateien, durchsucht die ausgewählten Regulierungen Artikel für Artikel und liefert eine Rückverfolgbarkeitsmatrix, in der jeder Bezug durch wörtliche Zitate aus beiden Quellen und eine dokumentierte Folge von Prüfungen belegt ist.",
+      "Der Abgleich übernimmt diese Vorarbeit. Er liest jede Release Note der ausgewählten Dateien, durchsucht die ausgewählten Regulierungen Artikel für Artikel und liefert ein Rückverfolgbarkeitsergebnis, in dem jeder Bezug durch wörtliche Zitate aus beiden Quellen und eine dokumentierte Folge von Prüfungen belegt ist.",
       "Sie behalten die Kontrolle: Jede Entscheidung wird mit ihren Nachweisen gezeigt, jeder verworfene Kandidat mit seiner Begründung, und alles Zweifelhafte wird zur Prüfung markiert.",
     ],
     learnTitle: "In den nächsten Minuten lernen Sie",
@@ -664,7 +613,7 @@ const DE: MatcherOnboardingCopy = {
     ],
     play: "Abspielen",
     pause: "Pause",
-    footnote: "Jede Stufe wird im Laufprotokoll festgehalten – im Prüfpfad und in der Excel-Prüfmappe.",
+    footnote: "Jede Stufe wird im Laufprotokoll festgehalten, das Sie in der Excel-Prüfmappe finden.",
   },
   anatomy: {
     eyebrow: "Einen Bezug lesen",
@@ -733,7 +682,7 @@ const DE: MatcherOnboardingCopy = {
   controls: {
     eyebrow: "Vertrauen & Kontrolle",
     title: "Gebaut, um einer Prüfung standzuhalten",
-    intro: "Neun Kontrollen laufen bei jedem Bezug – unabhängig davon, was das Modell sagt. Sie finden sie im Prüfpfad jedes Laufs wieder.",
+    intro: "Neun Kontrollen laufen bei jedem Bezug – unabhängig davon, was das Modell sagt. Ihr Ergebnis sehen Sie bei jedem Bezug eines Ergebnisses.",
     rules: [
       { title: "Geschlossene Kandidatenmenge", text: "Nur aus dem Verordnungstext gefundene Vorschriften können per ID verknüpft werden – keine erfundenen Artikel oder Absätze." },
       { title: "Wörtliche Zitate", text: "Jedes Zitat wird gegen seine Quelle geprüft; Abweichungen auf Tippfehlerniveau werden durch den exakten Wortlaut ersetzt, alles andere wird verworfen." },
@@ -752,15 +701,15 @@ const DE: MatcherOnboardingCopy = {
     title: "Bereit für die Praxis-Tour",
     body: [
       "Die Tour führt Sie durch den echten Tab: Sie wählen Ihre Quellen, starten einen Lauf und erkunden jeden Teil des Ergebnisses.",
-      "„Abgleich starten“ startet einen echten Lauf mit den von Ihnen gewählten Quellen – genau wie außerhalb der Tour. Eine kleine Release-Note-Datei hält ihn kurz: Jede Release Note dauert etwa 10–20 Sekunden, bis zu vier laufen parallel. Der Lauf wird wie jeder andere unter „Läufe“ gespeichert.",
+      "„Abgleich starten“ startet einen echten Lauf mit den von Ihnen gewählten Quellen – genau wie außerhalb der Tour. Eine kleine Release-Note-Datei hält ihn kurz: Ein Lauf dauert etwa eine Minute je vier Release Notes. Der Lauf wird wie jeder andere unter „Läufe“ gespeichert.",
     ],
     checklistTitle: "Was Sie tun werden",
     checklist: [
       "Release Notes und eine Regulierung auswählen",
-      "Einen Lauf starten und die Pipeline verfolgen",
-      "Die Kennzahlen lesen",
-      "Eine Nachweiskarte und ihre Prüfungen öffnen",
-      "Matrix, Vorschriften und Prüfpfad erkunden",
+      "Einen Lauf starten und den Fortschritt verfolgen",
+      "Das Ergebnis auf einen Blick lesen",
+      "Nach einer betroffenen Vorschrift filtern",
+      "Die Nachweise einer Release Note und ihre Prüfungen öffnen",
       "Einen eigenen Lauf starten",
     ],
   },
@@ -777,15 +726,15 @@ const DE: MatcherOnboardingCopy = {
       chapter: "Einrichtung",
       title: "Auf Deutsch oder Englisch arbeiten",
       body: [
-        "Dieser Schalter legt die Sprache des gesamten Tabs fest: Beschriftungen, die von der KI verfassten Interpretationen und Begründungen, die Prüfmeldungen, das Protokoll und die Excel-Prüfmappe.",
+        "Dieser Schalter legt die Sprache des gesamten Tabs fest: Beschriftungen, die von der KI verfassten Interpretationen und Begründungen, die Prüfmeldungen und den Excel-Export.",
         "Jeder Lauf wird in beiden Sprachen erstellt – Sie können also jederzeit wechseln, auch während Sie ein Ergebnis lesen. Die übrige Anwendung behält ihre eigene Sprache.",
       ],
     },
     releaseNotes: {
       chapter: "Einrichtung",
-      title: "Release Notes auswählen",
+      title: "Schritt 1: die Release Notes",
       body: [
-        "Hier erscheint jede im Tab Versionshinweise hochgeladene Release-Note-Datei, mit der Anzahl ihrer Release Notes und den ersten Jira-IDs.",
+        "Hier erscheint jede im Tab Versionshinweise hochgeladene Release-Note-Datei, mit der Anzahl ihrer Release Notes und ihren Jira-IDs.",
         "Jede Release Note einer ausgewählten Datei wird analysiert – Excel-Zeilen wie PDF-Passagen. Ausgewählt ist nichts, bis Sie wählen.",
       ],
       action: "Haken Sie mindestens eine Release-Note-Datei an.",
@@ -793,24 +742,19 @@ const DE: MatcherOnboardingCopy = {
     },
     regulations: {
       chapter: "Einrichtung",
-      title: "Regulierungen auswählen",
+      title: "Schritt 2: die Regulierungen",
       body: [
-        "Die indizierten Regulierungs-PDFs aus dem Tab Vorschriften. Nur Dateien mit „Bereit“ sind wählbar; „Semantischer Index“ heißt, dass die Suche auch nach Bedeutung findet, nicht nur nach Wörtern.",
+        "Die indizierten Regulierungs-PDFs aus dem Tab Vorschriften. Eine Datei, die noch indiziert wird, ist noch nicht wählbar.",
         "Sie können gegen mehrere Regulierungen gleichzeitig abgleichen – jeder Bezug nennt die Regulierung, aus der er stammt.",
       ],
-      action: "Haken Sie mindestens eine bereite Regulierung an.",
+      action: "Haken Sie mindestens eine Regulierung an.",
       empty: "Noch keine Regulierung indiziert, es gibt also nichts, wogegen abgeglichen werden kann. Laden Sie im Tab Vorschriften ein Regulierungs-PDF hoch und starten Sie diese Tour dann erneut über „Geführte Tour“.",
-    },
-    method: {
-      chapter: "Einrichtung",
-      title: "Was bei einem Lauf passiert",
-      body: ["Fünf Stufen je Release Note: Interpretieren, Suchen, Bewerten, Prüfen und die Vier-Augen-Prüfung. Gleich sehen Sie sie live."],
     },
     runBar: {
       chapter: "Einrichtung",
       title: "Den Lauf starten",
       body: [
-        "Die Leiste fasst den Umfang des Laufs und das verwendete Modell zusammen. Ein echter Lauf dauert etwa 10–20 Sekunden je Release Note; bis zu vier werden parallel analysiert.",
+        "Die Leiste fasst den Umfang des Laufs zusammen. Ein echter Lauf dauert etwa eine Minute je vier Release Notes; bis zu vier werden parallel analysiert.",
         "Damit startet ein echter Lauf – genau wie außerhalb der Tour – und wird unter „Läufe“ gespeichert.",
       ],
       action: "Klicken Sie auf „Abgleich starten“.",
@@ -819,55 +763,41 @@ const DE: MatcherOnboardingCopy = {
       chapter: "Lauf",
       title: "Fortschritt live",
       body: [
-        "Ihr Lauf läuft jetzt: Dauer, Modellaufrufe, Tokens und bisher gefundene Bezüge, darunter der Gesamtfortschritt. Er läuft auf dem Server weiter, wenn Sie den Tab verlassen; „Abbrechen“ stoppt ihn nach den laufenden Schritten, fertige Release Notes bleiben erhalten.",
+        "Jede Release Note durchläuft fünf Schritte: Interpretieren, Suchen, Verknüpfen, Prüfen und die Vier-Augen-Prüfung. Die Balken zeigen, wo jede steht, die rechte Spalte, mit wie vielen Vorschriften sie verknüpft wurde.",
+        "Der Lauf geht auf dem Server weiter, wenn Sie den Tab verlassen; „Abbrechen“ stoppt ihn nach den laufenden Schritten, fertige Release Notes bleiben erhalten.",
       ],
-    },
-    stages: {
-      chapter: "Lauf",
-      title: "Die Pipeline, Stufe für Stufe",
-      body: ["Jede Karte zählt die Release Notes, die die Stufe durchlaufen haben. Die Liste darunter zeigt, wo jede einzelne Release Note gerade steht."],
-    },
-    liveLog: {
-      chapter: "Lauf",
-      title: "Das Live-Protokoll",
-      body: ["Jede Entscheidung wird protokolliert, während sie fällt: gefundene Begriffe, gesuchte Kandidaten, Korrekturrunden, Urteile der Zweitprüfung und die endgültigen Bezüge. Dasselbe Protokoll steht im Prüfpfad und in der Excel-Mappe."],
       action: "Warten Sie, bis der Lauf fertig ist – die Tour geht von selbst weiter, sobald das Ergebnis vorliegt.",
     },
-    meta: {
+    summary: {
       chapter: "Ergebnis",
-      title: "Zusammenfassung und Export",
+      title: "Das Ergebnis auf einen Blick",
       body: [
-        "Status, Startzeit, Laufzeit, Modell und Quellen des Laufs.",
-        "„Excel-Prüfmappe“ exportiert alles – Zusammenfassung, Rückverfolgbarkeitsmatrix, Abdeckungsraster, verworfene Kandidaten und Protokoll – ablagefertig. JSON liefert das Rohergebnis zur Weiterverarbeitung.",
+        "Wie viele Release Notes analysiert und verknüpft wurden, die betroffenen Vorschriften, die Bezüge – direkt und indirekt – und wie viele Zitate wörtlich in ihrer Quelle gefunden wurden.",
+        "Die Symbole rechts exportieren das Ergebnis als Excel-Prüfmappe oder löschen den Lauf.",
       ],
     },
-    kpis: {
+    impacted: {
       chapter: "Ergebnis",
-      title: "Die Kennzahlen",
+      title: "Betroffene Vorschriften",
       body: [
-        "Abdeckung ist der Anteil der Release Notes mit Bezug. Bezüge zählt direkte und indirekte Bezüge, Vorschriften die unterschiedlichen berührten Vorschriften.",
-        "„Zitate bestätigt“ zeigt, wie viele Zitate in ihrer Quelle gefunden wurden. Kandidaten zeigt, wie viele Vorschriften betrachtet und wie viele begründet verworfen wurden. Die Ø Konfidenz verbindet Modellurteil und geprüfte Nachweise.",
+        "Jede Vorschrift, die die Release Notes betreffen, mit der Zahl der Release Notes: ein gefüllter Punkt steht für direkte Bezüge, ein Ring für indirekte.",
+        "Wählen Sie eine Vorschrift, um nur die Release Notes zu sehen, die sie betreffen – die Grundlage einer Auswirkungsanalyse je Artikel. Ein erneuter Klick zeigt wieder alle.",
       ],
-    },
-    tabs: {
-      chapter: "Ergebnis",
-      title: "Vier Ansichten auf ein Ergebnis",
-      body: ["Nachweise: jede Release Note mit ihren Bezügen und Belegen. Rückverfolgbarkeitsmatrix: Release Notes gegen Vorschriften auf einen Blick. Vorschriften: das Ergebnis aus Sicht der Regulierung. Prüfpfad: wie der Lauf entstanden ist."],
     },
     noteList: {
-      chapter: "Nachweise",
+      chapter: "Ergebnis",
       title: "Die Release Notes",
-      body: ["Nach Status filtern oder nach Jira-ID, Text oder Vorschrift suchen. Jeder Eintrag zeigt Status, eine einzeilige regulatorische Zusammenfassung und die Bezüge – D für direkt, I für indirekt."],
+      body: ["Jede Release Note mit Status, einer einzeiligen regulatorischen Zusammenfassung und den betroffenen Vorschriften – grün für direkte, blau für indirekte Bezüge. Wählen Sie eine aus, um rechts ihre Nachweise zu sehen."],
     },
     noteCard: {
       chapter: "Nachweise",
       title: "Die Release Note selbst",
-      body: ["Die Originalfelder: Jira-ID, Änderungsart, Modul, Problem- und Lösungsbeschreibung. Die als Beleg zitierten Wörter sind markiert – Sie sehen genau, auf welcher Aussage jeder Bezug beruht."],
+      body: ["Jira-ID, Datei und Felder mit Problem- und Lösungsbeschreibung. Die als Beleg zitierten Wörter sind markiert – Sie sehen genau, auf welcher Aussage jeder Bezug beruht."],
     },
     interpretation: {
       chapter: "Nachweise",
       title: "Regulatorische Interpretation",
-      body: ["Wie die Änderung regulatorisch zu lesen ist: eine Zusammenfassung, die Art der Änderung und jeder regulatorische Begriff mit den genauen Wörtern der Release Note, aus denen er stammt. Darauf beruhte die Suche."],
+      body: ["Wie die Änderung regulatorisch zu lesen ist: eine Zusammenfassung, die Art der Änderung und die regulatorischen Begriffe mit den genauen Wörtern der Release Note, aus denen sie stammen – der Tooltip zeigt die Wirkung. Darauf beruhte die Suche."],
     },
     link: {
       chapter: "Nachweise",
@@ -885,37 +815,22 @@ const DE: MatcherOnboardingCopy = {
     checks: {
       chapter: "Nachweise",
       title: "Das Prüfprotokoll",
-      body: ["Jede Prüfung zu diesem Bezug mit Ergebnis: Regulierungszitat, Release-Note-Zitat, Anwendungsbereich, materielle Vorschrift, gemeinsamer Begriff und die Vier-Augen-Prüfung mit der Begründung des Prüfers. Die letzte Zeile zeigt, wie die Vorschrift gefunden wurde."],
+      body: ["Jede Prüfung zu diesem Bezug in einer Zeile: Regulierungszitat, Release-Note-Zitat, Anwendungsbereich, materielle Regel, gemeinsamer Begriff und die Vier-Augen-Prüfung – der Tooltip zeigt die Details. Probleme und die Begründung des Prüfers stehen darunter ausgeschrieben; die letzte Marke zeigt, wie die Vorschrift gefunden wurde."],
     },
     linkActions: {
       chapter: "Nachweise",
       title: "Bis zur Quelle",
-      body: ["„Verweist auf“ listet die Vorschriften, auf die diese verweist. „Vorschriftentext anzeigen“ blendet den ganzen Absatz mit markiertem Zitat ein; „lesen“ öffnet den vollständigen Artikel in einer Seitenleiste; PDF öffnet die Verordnung auf der genauen Seite (für die Tour-Wiedergabe abgeschaltet)."],
+      body: ["„Verweist auf“ listet die Vorschriften, auf die diese verweist. „Vorschriftentext anzeigen“ blendet den ganzen Absatz mit markiertem Zitat ein; „lesen“ öffnet den vollständigen Artikel in einer Seitenleiste; PDF öffnet die Verordnung auf der genauen Seite."],
     },
     dismissed: {
       chapter: "Nachweise",
       title: "Was ausgeschlossen wurde – und warum",
-      body: ["Jeder Kandidat, der betrachtet, aber nicht verknüpft wurde, mit Begründung und Entscheider: das Modell, die Prüfung oder die Vier-Augen-Prüfung. Genau das fragen Prüfer oft: Warum nicht dieser Artikel?"],
+      body: ["Jede weitere Vorschrift, die geprüft, aber nicht verknüpft wurde, mit Begründung und Entscheider: das Modell, die Prüfung oder die Vier-Augen-Prüfung. Genau das fragen Prüfer oft: Warum nicht dieser Artikel?"],
     },
     retrieval: {
       chapter: "Nachweise",
-      title: "Die Suchspur",
-      body: ["Die ausgeführten Suchanfragen und jeder Kandidat mit Score, Stichwortrang, semantischer Ähnlichkeit, Fundweg und Entscheidung – volle Transparenz darüber, wie die Nachweise zusammengetragen wurden."],
-    },
-    matrix: {
-      chapter: "Überblick",
-      title: "Rückverfolgbarkeitsmatrix",
-      body: ["Release Notes als Zeilen, Vorschriften als Spalten, nach Artikel gruppiert. Ein gefüllter Punkt ist ein direkter Bezug, ein Ring ein indirekter; die Zahl ist die Konfidenz. Tooltip zeigt die Begründung, ein Klick springt zur Nachweiskarte."],
-    },
-    provisions: {
-      chapter: "Überblick",
-      title: "Ansicht Vorschriften",
-      body: ["Dasselbe Ergebnis aus Sicht der Regulierung: jede berührte Vorschrift, wie viele Release Notes sie berühren und welche – eine solide Grundlage für eine Auswirkungsanalyse je Artikel."],
-    },
-    audit: {
-      chapter: "Überblick",
-      title: "Prüfpfad",
-      body: ["Lauf-ID, Zeiten, Modell, Tokenverbrauch und Quellen; die angewandten Kontrollen; und das vollständige Laufprotokoll, nach Ebene filterbar – alles, um das Ergebnis nachzuvollziehen."],
+      title: "Wie die Belege gefunden wurden",
+      body: ["Die ausgeführten Suchanfragen, jeder Kandidat mit Score, Stichwortrang, semantischer Ähnlichkeit, Fundweg und Entscheidung, und die Selbstkorrekturen, die die automatische Prüfung ausgelöst hat."],
     },
     newRun: {
       chapter: "Nächste Schritte",
@@ -928,8 +843,8 @@ const DE: MatcherOnboardingCopy = {
     body: "Sie kennen die Pipeline, die Nachweise und die Kontrollen. Schließen Sie die Tour und starten Sie Ihren ersten Lauf.",
     tipsTitle: "Gute Praxis",
     tips: [
-      "Prüfen Sie jede Release Note mit dem Status „Prüfen“, bevor Sie sich auf die Matrix stützen.",
-      "Beantworten Sie „Warum nicht dieser Artikel?“ mit den verworfenen Kandidaten.",
+      "Prüfen Sie jede Release Note mit dem Status „Prüfen“, bevor Sie sich auf das Ergebnis stützen.",
+      "Beantworten Sie „Warum nicht dieser Artikel?“ mit den geprüften, aber nicht verknüpften Vorschriften.",
       "Exportieren Sie die Excel-Prüfmappe für Ihre Dokumentation.",
       "Starten Sie nach neuen Release Notes oder einer neuen Verordnungsfassung erneut – Läufe bleiben nebeneinander erhalten.",
       "Starten Sie diese Tour jederzeit über „Geführte Tour“ neu.",

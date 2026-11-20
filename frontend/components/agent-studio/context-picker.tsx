@@ -25,7 +25,7 @@ export function ContextPicker({
   onChange: (chips: ContextChip[]) => void;
   disabled?: boolean;
 }) {
-  const { t, formatDateTime } = useStudioText();
+  const { t, plural, formatDateTime } = useStudioText();
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<Tab>("executions");
   const { baseClusterId, comparisonClusterId } = useClusterSelection();
@@ -132,7 +132,7 @@ export function ContextPicker({
                           {checked && executionCount === 2 ? (order === 0 ? "A" : "B") : checked ? "✓" : ""}
                         </span>
                         <span className="flex-1">{formatDateTime(execution.executed_date)}</span>
-                        <span className="text-[#687386]">{t("context.values", { count: execution.values_computed ?? 0 })}</span>
+                        <span className="text-[#687386]">{plural("context.values", execution.values_computed ?? 0)}</span>
                       </button>
                     );
                   })}

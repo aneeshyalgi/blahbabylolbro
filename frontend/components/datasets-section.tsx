@@ -1,19 +1,10 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
-import { useTranslations } from "next-intl";
-import { RefreshCw, Upload, Trash2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useLocale, useTranslations } from "next-intl";
+import { AlertTriangle, FileSpreadsheet, Loader2, RefreshCw, Trash2, Upload } from "lucide-react";
 import { API_ENDPOINTS } from "@/lib/api-config";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -24,455 +15,417 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Spinner } from "@/components/ui/spinner";
-import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
+import {
+  DropOverlay, EYEBROW, EmptyState, INPUT, IconAction, PANEL, PRIMARY_BUTTON, SECONDARY_BUTTON, SearchField, Tag, WorkingBar,
+  formatBytes, formatDateTime, moveInList, relativeTime, useFileDrop,
+} from "@/components/workspace/ui";
+
+export type DatasetSummary = { id: string; user_name?: string; filename?: string; upload_date?: string; version?: string };
+type ClusterRef = { id: string; name: string; dataset_id?: string | null };
+
+const EXCEL_FILE = /\.(xlsx|xls)$/i;
+const ROW_GRID = "lg:grid-cols-[minmax(0,2.3fr)_minmax(0,0.7fr)_minmax(0,1.6fr)_minmax(0,1fr)_36px]";
+export const datasetLabel = (dataset: DatasetSummary) => dataset.user_name || dataset.filename || dataset.id;
 
 interface DatasetsSectionProps {
   isLoading?: boolean;
-  onDatasetSelect?: (datasetId: string) => void;
   selectedDatasetId?: string | null;
+  onDatasetSelect?: (datasetId: string | null) => void;
+  /** After a dataset was deleted (its tables, clusters and runs are gone with it). */
+  onDatasetDeleted?: (datasetId: string) => void;
+  /** Every time the list is (re)loaded. */
+  onDatasetsChange?: (datasets: DatasetSummary[]) => void;
 }
 
-export function DatasetsSection({ 
-  isLoading = false, 
-  onDatasetSelect,
-  selectedDatasetId 
-}: DatasetsSectionProps) {
-  const [datasets, setDatasets] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [uploading, setUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
-  const [uploadStage, setUploadStage] = useState("");
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [datasetName, setDatasetName] = useState("");
-  const [version, setVersion] = useState("v1.0.0");
-  const [datasetToDelete, setDatasetToDelete] = useState<{ id: string; name: string } | null>(null);
-  const [deleting, setDeleting] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+/**
+ * The uploaded Excel datasets: search, which clusters use each one, upload (button or drop a workbook on the panel) and
+ * delete (the confirmation names the clusters that are deleted with it).
+ */
+export function DatasetsSection({ isLoading = false, selectedDatasetId, onDatasetSelect, onDatasetDeleted, onDatasetsChange }: DatasetsSectionProps) {
+  const t = useTranslations("dataTab");
+  const locale = useLocale();
   const { toast } = useToast();
-  const t = useTranslations("datasets");
-  const tCommon = useTranslations("common");
+  const [datasets, setDatasets] = useState<DatasetSummary[]>([]);
+  const [clusters, setClusters] = useState<ClusterRef[]>([]);
+  const [runsByCluster, setRunsByCluster] = useState<Record<string, number>>({});
+  const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [query, setQuery] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [name, setName] = useState("");
+  const [version, setVersion] = useState("v1.0.0");
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [toDelete, setToDelete] = useState<DatasetSummary | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const fileInput = useRef<HTMLInputElement | null>(null);
+  const list = useRef<HTMLDivElement | null>(null);
+  const reportList = useRef(onDatasetsChange);
+  reportList.current = onDatasetsChange;
 
-  useEffect(() => {
-    fetchDatasets();
-  }, []);
-
-  const fetchDatasets = async () => {
+  const load = useCallback(async () => {
+    setLoading(true);
+    setLoadFailed(false);
     try {
-      setLoading(true);
-      const response = await fetch(API_ENDPOINTS.datasets);
-      const data = await response.json();
-      setDatasets(data.datasets || []);
-    } catch (error) {
-      console.error('Error fetching datasets:', error);
+      const [datasetsResponse, clustersResponse, runsResponse] = await Promise.all([
+        fetch(API_ENDPOINTS.datasets),
+        fetch(API_ENDPOINTS.clusters).catch(() => null),
+        fetch(API_ENDPOINTS.clustersExecutions).catch(() => null),
+      ]);
+      if (!datasetsResponse.ok) throw new Error(`HTTP ${datasetsResponse.status}`);
+      const loaded: DatasetSummary[] = (await datasetsResponse.json()).datasets ?? [];
+      setDatasets(loaded);
+      reportList.current?.(loaded);
+      setClusters(clustersResponse?.ok ? ((await clustersResponse.json()).clusters ?? []) : []);
+      const runs: { cluster_id: string }[] = runsResponse?.ok ? ((await runsResponse.json()).executions ?? []) : [];
+      const counts: Record<string, number> = {};
+      for (const run of runs) counts[run.cluster_id] = (counts[run.cluster_id] ?? 0) + 1;
+      setRunsByCluster(counts);
+    } catch {
+      setLoadFailed(true);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const handleUploadClick = () => {
-    fileInputRef.current?.click();
-  };
+  useEffect(() => {
+    void load();
+  }, [load]);
 
-  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    // Set file and open dialog for name and version input
-    setSelectedFile(file);
-    setDatasetName(file.name.replace(/\.[^/.]+$/, "")); // Remove file extension
-    setVersion("v1.0.0");
-    setDialogOpen(true);
-    
-    // Reset file input
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
+  const clustersOf = useMemo(() => {
+    const byDataset = new Map<string, ClusterRef[]>();
+    for (const cluster of clusters) {
+      if (cluster.dataset_id) byDataset.set(cluster.dataset_id, [...(byDataset.get(cluster.dataset_id) ?? []), cluster]);
     }
-  };
+    return byDataset;
+  }, [clusters]);
 
-  const handleUploadSubmit = async () => {
-    if (!selectedFile || !datasetName.trim() || !version.trim()) {
-      toast({
-        title: t("missingInfo"),
-        description: t("missingInfoDesc"),
-        variant: "destructive",
-      });
+  const shown = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return datasets;
+    return datasets.filter((dataset) => `${dataset.user_name ?? ""} ${dataset.filename ?? ""} ${dataset.version ?? ""}`.toLowerCase().includes(needle));
+  }, [datasets, query]);
+
+  const choose = (candidate: File | null | undefined) => {
+    if (!candidate) return;
+    if (!EXCEL_FILE.test(candidate.name)) {
+      toast({ title: t("onlyExcel"), variant: "destructive" });
       return;
     }
+    setFile(candidate);
+    setName(candidate.name.replace(/\.[^/.]+$/, ""));
+    setVersion("v1.0.0");
+    setUploadError(null);
+  };
+  const drop = useFileDrop(choose, !uploading);
 
+  const nameTaken = useMemo(() => {
+    const wanted = name.trim().toLowerCase();
+    return Boolean(wanted) && datasets.some((dataset) => (dataset.user_name ?? "").trim().toLowerCase() === wanted);
+  }, [name, datasets]);
+  const canUpload = Boolean(file && name.trim() && version.trim() && !nameTaken && !uploading);
+
+  const upload = async () => {
+    if (!file || !canUpload) return;
     setUploading(true);
-    setUploadProgress(0);
-    setUploadStage(t("uploadStageUploading"));
-    
+    setUploadError(null);
     try {
-      const formData = new FormData();
-      formData.append('file', selectedFile);
-      formData.append('dataset_name', datasetName.trim());
-      formData.append('version', version.trim());
-
-      setUploadProgress(20);
-      setUploadStage(t("uploadStageProcessing"));
-
-      const response = await fetch(API_ENDPOINTS.datasetsUpload, {
-        method: 'POST',
-        body: formData,
-      });
-
-      setUploadProgress(60);
-      setUploadStage(t("uploadStageDetecting"));
-
-      if (!response.ok) {
-        let errorMessage = `${t("uploadFailedDesc")} (HTTP ${response.status})`;
-        try {
-          const errData = await response.json();
-          if (errData?.detail && typeof errData.detail === "string") {
-            errorMessage = errData.detail;
-          }
-        } catch {
-          // Keep fallback message if response body is not JSON
-        }
-        throw new Error(errorMessage);
-      }
-
-      const data = await response.json();
-      console.log('Upload successful:', data);
-      
-      setUploadProgress(90);
-      setUploadStage(t("uploadStageSemantic"));
-      
-      // Give a moment for the semantic matching message to show
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      setUploadProgress(100);
-      setUploadStage(t("uploadStageComplete"));
-      
-      let description = t("uploadSuccessDesc", { count: data.tables.length });
-      if (data.auto_cluster?.created) {
-        description = t("autoClusterCreatedDesc", { name: data.auto_cluster.name });
-      } else if (data.auto_cluster?.reason === "duplicate_name") {
-        description = `${description} ${t("autoClusterSkippedDuplicate", { name: data.auto_cluster.name })}`;
-      } else if (data.auto_cluster?.reason === "no_code_files") {
-        description = `${description} ${t("autoClusterSkippedNoCode")}`;
-      }
-
-      toast({
-        title: tCommon("success"),
-        description,
-      });
-      
-      // Close dialog and reset form
-      setDialogOpen(false);
-      setSelectedFile(null);
-      setDatasetName("");
-      setUploadProgress(0);
-      setUploadStage("");
-      
-      // Refresh the list and auto-select the uploaded dataset
-      await fetchDatasets();
-      if (data.id && onDatasetSelect) {
-        onDatasetSelect(data.id);
-      }
+      const form = new FormData();
+      form.append("file", file);
+      form.append("dataset_name", name.trim());
+      form.append("version", version.trim());
+      const response = await fetch(API_ENDPOINTS.datasetsUpload, { method: "POST", body: form });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(typeof payload?.detail === "string" ? payload.detail : `HTTP ${response.status}`);
+      const notes = [t("uploadSuccess", { count: Array.isArray(payload.tables) ? payload.tables.length : 0 })];
+      if (payload.auto_cluster?.created) notes.push(t("autoClusterCreated", { name: payload.auto_cluster.name }));
+      else if (payload.auto_cluster?.reason === "duplicate_name") notes.push(t("autoClusterSkippedDuplicate", { name: payload.auto_cluster.name }));
+      else if (payload.auto_cluster?.reason === "no_code_files") notes.push(t("autoClusterSkippedNoCode"));
+      toast({ title: t("uploaded", { name: name.trim() }), description: notes.join(" ") });
+      setFile(null);
+      await load();
+      if (payload.id) onDatasetSelect?.(payload.id);
     } catch (error) {
-      console.error('Upload error:', error);
-      toast({
-        title: t("uploadFailed"),
-        description: error instanceof Error ? error.message : t("uploadFailedDesc"),
-        variant: "destructive",
-      });
+      setUploadError(error instanceof Error ? error.message : t("uploadFailed"));
     } finally {
       setUploading(false);
-      setUploadProgress(0);
-      setUploadStage("");
     }
   };
 
-  const formatDate = (dateString: string) => {
-    try {
-      return new Date(dateString).toLocaleString();
-    } catch {
-      return dateString;
-    }
-  };
-
-  const handleDeleteClick = (e: React.MouseEvent, dataset: { id: string; user_name?: string; filename?: string }) => {
-    e.stopPropagation();
-    setDatasetToDelete({
-      id: dataset.id,
-      name: dataset.user_name || dataset.filename || dataset.id,
-    });
-  };
-
-  const handleConfirmDelete = async () => {
-    if (!datasetToDelete) return;
+  const remove = async () => {
+    if (!toDelete) return;
     setDeleting(true);
     try {
-      const res = await fetch(API_ENDPOINTS.datasetDelete(datasetToDelete.id), { method: "DELETE" });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error((err as { detail?: string }).detail || "Delete failed");
+      const response = await fetch(API_ENDPOINTS.datasetDelete(toDelete.id), { method: "DELETE" });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(typeof payload?.detail === "string" ? payload.detail : `HTTP ${response.status}`);
       }
-      if (selectedDatasetId === datasetToDelete.id) {
-        onDatasetSelect?.("");
-      }
-      setDatasetToDelete(null);
-      await fetchDatasets();
-      toast({ title: t("datasetDeleted"), description: t("datasetDeletedDesc", { name: datasetToDelete.name }) });
-    } catch (err) {
-      toast({
-        title: t("deleteFailed"),
-        description: err instanceof Error ? err.message : t("deleteFailedDesc"),
-        variant: "destructive",
-      });
+      const removed = toDelete;
+      setToDelete(null);
+      onDatasetDeleted?.(removed.id);
+      await load();
+      toast({ title: t("deleted"), description: t("deletedDesc", { name: datasetLabel(removed) }) });
+    } catch (error) {
+      toast({ title: t("deleteFailed"), description: error instanceof Error ? error.message : undefined, variant: "destructive" });
     } finally {
       setDeleting(false);
     }
   };
 
+  const focusRow = (id: string) =>
+    window.requestAnimationFrame(() => list.current?.querySelector<HTMLElement>(`[data-dataset="${CSS.escape(id)}"]`)?.focus());
+
+  const onRowKey = (event: KeyboardEvent<HTMLDivElement>, dataset: DatasetSummary) => {
+    if (event.target !== event.currentTarget) return;
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      onDatasetSelect?.(dataset.id);
+    } else if (event.key === "Delete") {
+      event.preventDefault();
+      setToDelete(dataset);
+    } else if (moveInList(event.key, shown, dataset, (next) => focusRow(next.id))) {
+      event.preventDefault();
+    }
+  };
+
+  const busy = loading || isLoading;
+  const deleteClusters = toDelete ? clustersOf.get(toDelete.id) ?? [] : [];
+  const deleteRuns = deleteClusters.reduce((sum, cluster) => sum + (runsByCluster[cluster.id] ?? 0), 0);
+  const uploadButton = (
+    <button type="button" className={PRIMARY_BUTTON} onClick={() => fileInput.current?.click()} disabled={uploading}>
+      <Upload className="h-4 w-4" />
+      {t("upload")}
+    </button>
+  );
+
   return (
-    <Card>
-      <CardHeader className="pb-4">
-        <div className="flex flex-row items-center justify-between gap-4">
-          <CardTitle className="text-base font-semibold">{t("title")}</CardTitle>
-          <div className="flex gap-2">
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".xlsx,.xls"
-              onChange={handleFileChange}
-              style={{ display: 'none' }}
-            />
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button 
-                    variant="outline" 
-                    size="sm"
-                    onClick={handleUploadClick}
-                    disabled={uploading}
-                  >
-                    <Upload className="mr-2 h-4 w-4" />
-                    {uploading ? t("uploading") : t("uploadDataset")}
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>{t("uploadNewExcel")}</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button 
-                    variant="outline" 
-                    size="sm"
-                    onClick={fetchDatasets}
-                    disabled={loading}
-                  >
-                    <RefreshCw className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>{t("refreshList")}</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          </div>
+    <section className={cn(PANEL, "relative")} aria-label={t("datasets")} {...drop.handlers}>
+      <DropOverlay active={drop.active} title={t("dropTitle")} hint={t("dropHint")} />
+      <input
+        ref={fileInput}
+        type="file"
+        accept=".xlsx,.xls"
+        className="hidden"
+        onChange={(event) => {
+          choose(event.target.files?.[0]);
+          event.target.value = "";
+        }}
+      />
+
+      <div className="flex flex-wrap items-center gap-2.5 border-b border-[#1f252e] px-5 py-3.5">
+        <div className="mr-auto flex items-baseline gap-2">
+          <h3 className="text-[14px] font-semibold text-white">{t("datasets")}</h3>
+          {!busy && datasets.length ? <span className="text-[12px] text-[#687386]">{t("count", { count: datasets.length })}</span> : null}
         </div>
-      </CardHeader>
-      <CardContent>
-        {loading || isLoading ? (
-          <div className="space-y-3">
-            {[1, 2, 3].map((i) => (
-              <Skeleton key={i} className="h-12 w-full" />
-            ))}
+        {datasets.length ? <SearchField value={query} onChange={setQuery} placeholder={t("search")} clearLabel={t("clearSearch")} className="w-full sm:w-60" /> : null}
+        <IconAction label={t("refresh")} onClick={() => void load()} disabled={busy}>
+          <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
+        </IconAction>
+        {uploadButton}
+      </div>
+
+      {busy ? (
+        <div className="space-y-2 p-4">
+          {[0, 1, 2].map((index) => <Skeleton key={index} className="h-12 w-full bg-[#121821]" />)}
+        </div>
+      ) : loadFailed ? (
+        <EmptyState icon={AlertTriangle} title={t("loadFailed")}>
+          <button type="button" className={SECONDARY_BUTTON} onClick={() => void load()}>
+            <RefreshCw className="h-4 w-4" />
+            {t("retry")}
+          </button>
+        </EmptyState>
+      ) : !datasets.length ? (
+        <EmptyState icon={FileSpreadsheet} title={t("emptyTitle")} hint={t("emptyHint")}>
+          {uploadButton}
+        </EmptyState>
+      ) : (
+        <div className="p-2">
+          <div className={cn("hidden gap-3 px-3 pb-1.5 pt-1 lg:grid", ROW_GRID)}>
+            <span className={EYEBROW}>{t("colDataset")}</span>
+            <span className={EYEBROW}>{t("colVersion")}</span>
+            <span className={EYEBROW}>{t("colUsedBy")}</span>
+            <span className={EYEBROW}>{t("colUploaded")}</span>
+            <span />
           </div>
-        ) : datasets.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-12 text-center">
-            <Upload className="mb-4 h-12 w-12 text-muted-foreground" />
-            <h3 className="text-lg font-medium text-foreground">
-              {t("noDatasets")}
-            </h3>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {t("noDatasetsHint")}
-            </p>
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{t("datasetName")}</TableHead>
-                  <TableHead>{t("originalFile")}</TableHead>
-                  <TableHead>{t("version")}</TableHead>
-                  <TableHead>{t("uploadDate")}</TableHead>
-                  <TableHead className="w-[80px]">{t("actions")}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {datasets.map((dataset) => (
-                  <TableRow 
-                    key={dataset.id}
-                    className={`cursor-pointer ${selectedDatasetId === dataset.id ? 'bg-accent' : ''}`}
-                    onClick={() => onDatasetSelect?.(dataset.id)}
-                  >
-                    <TableCell className="font-medium">
-                      {dataset.user_name || dataset.filename}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {dataset.filename}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {dataset.version || "v1.0.0"}
-                    </TableCell>
-                    <TableCell>{formatDate(dataset.upload_date)}</TableCell>
-                    <TableCell onClick={(e) => e.stopPropagation()}>
-                      <TooltipProvider>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
-                              onClick={(e) => handleDeleteClick(e, dataset)}
-                              disabled={deleting}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            <p>{t("deleteThisDataset")}</p>
-                          </TooltipContent>
-                        </Tooltip>
-                      </TooltipProvider>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        )}
-      </CardContent>
-      
-      {/* Upload Dialog */}
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{t("uploadDialogTitle")}</DialogTitle>
-            <DialogDescription>
-              {t("uploadDialogDesc")}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-4 py-4">
-            <div className="grid gap-2">
-              <Label htmlFor="file-name">{t("selectedFile")}</Label>
-              <Input
-                id="file-name"
-                value={selectedFile?.name || ""}
-                disabled
-                className="bg-muted"
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="dataset-name">{t("datasetNameRequired")}</Label>
-              <Input
-                id="dataset-name"
-                value={datasetName}
-                onChange={(e) => setDatasetName(e.target.value)}
-                placeholder={t("datasetNamePlaceholder")}
-                autoFocus
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="dataset-version">{t("versionRequired")}</Label>
-              <Input
-                id="dataset-version"
-                value={version}
-                onChange={(e) => setVersion(e.target.value)}
-                placeholder={t("versionPlaceholder")}
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            {uploading && (
-              <div className="w-full space-y-2 mb-4">
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Spinner className="h-4 w-4" />
-                  <span>{uploadStage}</span>
+          <div ref={list} role="listbox" aria-label={t("datasets")} className="space-y-0.5">
+            {shown.map((dataset) => {
+              const selected = dataset.id === selectedDatasetId;
+              const used = clustersOf.get(dataset.id) ?? [];
+              const label = datasetLabel(dataset);
+              return (
+                <div
+                  key={dataset.id}
+                  role="option"
+                  aria-selected={selected}
+                  tabIndex={0}
+                  data-dataset={dataset.id}
+                  onClick={() => onDatasetSelect?.(dataset.id)}
+                  onKeyDown={(event) => onRowKey(event, dataset)}
+                  className={cn(
+                    "group grid cursor-pointer grid-cols-[minmax(0,1fr)_36px] items-center gap-3 rounded-lg px-3 py-2.5 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[#f5c400]/50",
+                    ROW_GRID,
+                    selected ? "bg-[#f5c400]/[0.06] shadow-[inset_3px_0_0_#f5c400]" : "hover:bg-white/[0.03]",
+                  )}
+                >
+                  <div className="flex min-w-0 items-center gap-3">
+                    <span
+                      className={cn(
+                        "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition-colors",
+                        selected ? "border-[#f5c400]/40 bg-[#f5c400]/10 text-[#f5c400]" : "border-[#2a313c] bg-[#0f141b] text-emerald-300/80",
+                      )}
+                    >
+                      <FileSpreadsheet className="h-4 w-4" />
+                    </span>
+                    <div className="min-w-0">
+                      <p className="truncate text-[13px] font-semibold text-white" title={label}>{label}</p>
+                      <p className="truncate font-mono text-[11px] text-[#687386]" title={dataset.filename}>{dataset.filename}</p>
+                    </div>
+                  </div>
+                  <div className="hidden lg:block">
+                    <Tag mono>{dataset.version || "v1.0.0"}</Tag>
+                  </div>
+                  <div className="hidden min-w-0 flex-wrap items-center gap-1 lg:flex">
+                    {used.length ? (
+                      <>
+                        {used.slice(0, 3).map((cluster) => (
+                          <Tag key={cluster.id} tone="sky" title={t("runs", { count: runsByCluster[cluster.id] ?? 0 })}>{cluster.name}</Tag>
+                        ))}
+                        {used.length > 3 ? <Tag>+{used.length - 3}</Tag> : null}
+                      </>
+                    ) : (
+                      <span className="text-[12px] text-[#5d6878]">{t("notUsed")}</span>
+                    )}
+                  </div>
+                  <div className="hidden min-w-0 truncate text-[12px] text-[#aab3c2] lg:block" title={formatDateTime(dataset.upload_date, locale)}>
+                    {relativeTime(dataset.upload_date, locale)}
+                  </div>
+                  <div className="flex justify-end">
+                    <IconAction
+                      label={t("deleteLabel", { name: label })}
+                      tone="danger"
+                      onClick={() => setToDelete(dataset)}
+                      className={cn("opacity-0 focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100", selected && "opacity-100")}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </IconAction>
+                  </div>
                 </div>
-                <Progress value={uploadProgress} className="w-full" />
+              );
+            })}
+          </div>
+          {!shown.length ? <p className="px-3 py-6 text-center text-[12.5px] text-[#8c96a8]">{t("noMatch", { query: query.trim() })}</p> : null}
+        </div>
+      )}
+
+      <Dialog open={file !== null} onOpenChange={(open) => { if (!open && !uploading) setFile(null); }}>
+        <DialogContent
+          className="border-[#252a33] bg-[#0b0f15] sm:max-w-lg"
+          onEscapeKeyDown={(event) => { if (uploading) event.preventDefault(); }}
+          onInteractOutside={(event) => { if (uploading) event.preventDefault(); }}
+        >
+          <DialogHeader>
+            <DialogTitle className="text-white">{t("uploadTitle")}</DialogTitle>
+            <DialogDescription className="text-[#8c96a8]">{t("uploadDescription")}</DialogDescription>
+          </DialogHeader>
+          <form
+            className="space-y-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void upload();
+            }}
+          >
+            <div className="flex items-center gap-3 rounded-lg border border-[#252a33] bg-[#0f141b] px-3.5 py-3">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-emerald-400/25 bg-emerald-400/[0.07] text-emerald-300">
+                <FileSpreadsheet className="h-4 w-4" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-[13px] font-medium text-white" title={file?.name}>{file?.name}</p>
+                <p className="text-[11.5px] text-[#687386]">{file ? formatBytes(file.size, locale) : ""}</p>
               </div>
-            )}
-            <Button
-              variant="outline"
-              onClick={() => {
-                setDialogOpen(false);
-                setSelectedFile(null);
-                setDatasetName("");
-                setVersion("v1.0.0");
-              }}
-              disabled={uploading}
-            >
-              {tCommon("cancel")}
-            </Button>
-            <Button 
-              onClick={handleUploadSubmit} 
-              disabled={uploading || !datasetName.trim() || !version.trim()}
-            >
-              {uploading ? (
-                <>
-                  <Spinner className="mr-2 h-4 w-4" />
-                  {t("uploading")}
-                </>
-              ) : (
-                t("upload")
-              )}
-            </Button>
-          </DialogFooter>
+              <button type="button" className="text-[12px] font-medium text-[#f5c400] hover:underline disabled:opacity-50" onClick={() => fileInput.current?.click()} disabled={uploading}>
+                {t("changeFile")}
+              </button>
+            </div>
+            <label className="block space-y-1.5">
+              <span className="text-[12px] font-medium text-[#aab3c2]">{t("name")}</span>
+              <input
+                className={cn(INPUT, nameTaken && "border-rose-400/60 focus:border-rose-400/70")}
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                placeholder={t("namePlaceholder")}
+                autoFocus
+                disabled={uploading}
+                aria-invalid={nameTaken}
+              />
+              {nameTaken ? <span className="block text-[11.5px] text-rose-300">{t("nameTaken")}</span> : null}
+            </label>
+            <label className="block space-y-1.5">
+              <span className="text-[12px] font-medium text-[#aab3c2]">{t("version")}</span>
+              <input className={cn(INPUT, "font-mono")} value={version} onChange={(event) => setVersion(event.target.value)} placeholder="v1.0.0" disabled={uploading} />
+            </label>
+            {uploading ? (
+              <div className="space-y-2">
+                <WorkingBar />
+                <p className="flex items-center gap-2 text-[12px] text-[#8c96a8]">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  {t("uploadingStatus")}
+                </p>
+              </div>
+            ) : null}
+            {uploadError ? (
+              <p role="alert" className="rounded-md border border-rose-400/30 bg-rose-400/[0.07] px-3 py-2 text-[12.5px] leading-5 text-rose-200">
+                {uploadError}
+              </p>
+            ) : null}
+            <DialogFooter className="gap-2">
+              <button type="button" className={SECONDARY_BUTTON} onClick={() => setFile(null)} disabled={uploading}>
+                {t("cancel")}
+              </button>
+              <button type="submit" className={PRIMARY_BUTTON} disabled={!canUpload}>
+                {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                {t("uploadAction")}
+              </button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
 
-      <AlertDialog open={!!datasetToDelete} onOpenChange={(open) => !open && setDatasetToDelete(null)}>
-        <AlertDialogContent>
+      <AlertDialog open={toDelete !== null} onOpenChange={(open) => { if (!open && !deleting) setToDelete(null); }}>
+        <AlertDialogContent className="border-[#252a33] bg-[#0b0f15]">
           <AlertDialogHeader>
-            <AlertDialogTitle>{t("deleteDatasetQuestion")}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t("deleteDatasetWarning", { name: datasetToDelete?.name ?? "" })}
+            <AlertDialogTitle className="text-white">{t("deleteTitle")}</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2.5 text-[13px] leading-5 text-[#aab3c2]">
+                <p>{t("deleteBody", { name: toDelete ? datasetLabel(toDelete) : "" })}</p>
+                {deleteClusters.length ? (
+                  <p className="rounded-md border border-amber-400/25 bg-amber-400/[0.06] px-3 py-2 text-amber-200">
+                    {t("deleteClusters", { count: deleteClusters.length, names: deleteClusters.map((cluster) => cluster.name).join(", "), runs: deleteRuns })}
+                  </p>
+                ) : null}
+              </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleting}>{tCommon("cancel")}</AlertDialogCancel>
+            <AlertDialogCancel disabled={deleting}>{t("cancel")}</AlertDialogCancel>
             <AlertDialogAction
-              onClick={(e) => {
-                e.preventDefault();
-                handleConfirmDelete();
+              onClick={(event) => {
+                event.preventDefault();
+                void remove();
               }}
               disabled={deleting}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              className="bg-rose-500 text-white hover:bg-rose-500/90"
             >
-              {deleting ? t("deleting") : tCommon("delete")}
+              {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+              {deleting ? t("deleting") : t("deleteAction")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </Card>
+    </section>
   );
 }

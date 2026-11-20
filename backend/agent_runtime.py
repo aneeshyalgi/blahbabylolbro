@@ -17,6 +17,7 @@ import math
 import operator
 import os
 import re
+import threading
 import time
 import traceback
 import uuid
@@ -43,7 +44,7 @@ RELEASE_NOTES_DIR = Path(
 )
 
 DRAFT_AGENT_ID = "__draft__"
-MAX_TOOL_RESULT_CHARS = 14000
+MAX_TOOL_RESULT_CHARS = 40000  # per tool result; larger results are cut at whole list items (_fit_tool_result)
 MAX_STEP_PREVIEW_CHARS = 5000
 MAX_MESSAGE_CHARS = 8000
 HISTORY_MESSAGE_LIMIT = 12
@@ -102,9 +103,42 @@ def _safe(value: Any) -> Any:
     return str(value)
 
 
+def _as_list(value: Any) -> List[Any]:
+    """A list argument the model may also send as one value ("1001" instead of ["1001"])."""
+    if value is None or value == "":
+        return []
+    return list(value) if isinstance(value, (list, tuple, set)) else [value]
+
+
+def _key_text(value: Any) -> str:
+    """A position key as text that matches however it was written: 1001, 1001.0, "1001 " and "1001" agree."""
+    if isinstance(value, bool):
+        return str(value).casefold()
+    try:
+        number = float(str(value).strip())
+    except (TypeError, ValueError):
+        return str(value).strip().casefold()
+    if not math.isfinite(number):
+        return str(value).strip().casefold()
+    return str(int(number)) if number.is_integer() else repr(number)
+
+
+def _cells_equal(left: Any, right: Any) -> bool:
+    """Equality between two runs: numbers by value, texts exactly (a changed case or space breaks a lookup)."""
+    if _is_missing(left) and _is_missing(right):
+        return True
+    if _is_missing(left) or _is_missing(right):
+        return False
+    try:
+        return math.isclose(float(left), float(right), rel_tol=1e-9, abs_tol=1e-9)
+    except (TypeError, ValueError):
+        return str(left) == str(right)
+
+
 def _records(frame: pd.DataFrame, include_row: bool = True) -> List[Dict[str, Any]]:
     rows = []
-    for index, row in frame.iterrows():
+    # As objects: a row of only numeric columns would otherwise turn integer ids into floats (1001 -> 1001.0).
+    for index, row in frame.astype(object).iterrows():
         record = {str(column): _safe(row[column]) for column in frame.columns}
         if include_row:
             record = {"_row": _safe(index), **record}
@@ -660,20 +694,30 @@ def _tool_compare_executions(args: Dict[str, Any]) -> ToolResult:
         raise ToolError(comparison.get("message") or "The executions could not be compared.")
     common = comparison.get("common_columns", [])
     wanted_columns = {_resolve_column(common, column) for column in (args.get("columns") or [])}
-    wanted_positions = {str(item).strip().casefold() for item in (args.get("positions") or [])}
+    wanted_positions = {_key_text(item) for item in _as_list(args.get("positions"))}
     stats: Dict[str, Dict[str, Any]] = {}
     changes: List[Dict[str, Any]] = []
     changed_keys = set()
+    only_in_a: List[Any] = []
+    only_in_b: List[Any] = []
     for row in comparison.get("comparison_data", []):
         key = row.get("key")
-        if wanted_positions and str(key).strip().casefold() not in wanted_positions:
+        if wanted_positions and _key_text(key) not in wanted_positions:
+            continue
+        # Positions in one run only are listed apart: they are not changes of a column, and their amounts would not
+        # add up with the matched positions' B - A.
+        if row.get("match_status") == "only_in_a":
+            only_in_a.append(_safe(key))
+            continue
+        if row.get("match_status") == "only_in_b":
+            only_in_b.append(_safe(key))
             continue
         for column in row.get("columns", []):
             name = column.get("column_name")
             if wanted_columns and name not in wanted_columns:
                 continue
             value_a, value_b = column.get("value_a"), column.get("value_b")
-            if _values_equal(value_a, value_b):
+            if _cells_equal(value_a, value_b):
                 continue
             difference = column.get("difference")
             entry = stats.setdefault(name, {"column": name, "changed_rows": 0, "sum_difference": 0.0, "max_abs_difference": 0.0})
@@ -709,6 +753,8 @@ def _tool_compare_executions(args: Dict[str, Any]) -> ToolResult:
         "common_columns": common,
         "changed_positions": len(changed_keys),
         "changed_cells": len(changes),
+        "positions_only_in_a": only_in_a[:limit],
+        "positions_only_in_b": only_in_b[:limit],
         "column_summary": column_summary,
         "largest_changes": changes[:limit],
         "truncated": len(changes) > limit,
@@ -729,7 +775,14 @@ def _code_file(code_id: Any) -> Tuple[Dict[str, Any], str]:
     if not meta or not path.exists():
         known = ", ".join(f"'{item.get('filename')}' (code_id {item['id']})" for item in files[:20])
         raise ToolError(f"Code file {code_id!r} not found. Known code files: {known or 'none'}.")
-    return meta, path.read_text(encoding="utf-8")
+    data = path.read_bytes()
+    try:
+        code = data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        code = data.decode("cp1252", errors="replace")
+    # Files uploaded before the newline fix end their lines with "\r\r\n": read as one line each, so line numbers
+    # match the Code tab, lineage and the results.
+    return meta, code.replace("\r\r\n", "\n").replace("\r\n", "\n").replace("\r", "\n")
 
 
 def _lineage_graph(code: str) -> Dict[str, set]:
@@ -850,19 +903,20 @@ def _tool_inspect_code(args: Dict[str, Any]) -> ToolResult:
         for column, parents in graph.items()
     ]
     lookup_tables, chained_lookups = _code_lookup_tables(code)
-    truncated = len(numbered) > 14000
+    truncated = len(numbered) > 24000
+    # The code comes first: when the result is too long, the lists after it are shortened, not the code.
     return {
         "code_id": meta["id"],
         "file": meta.get("filename"),
         "version": meta.get("version"),
         "description": meta.get("description"),
         "line_count": len(lines),
+        "code_with_line_numbers": numbered[:24000],
+        "truncated": truncated,
         "derived_columns": derived,
         "lookup_tables": lookup_tables,
         "chained_lookups": chained_lookups,
         "category_values": _category_values(lookup_tables, chained_lookups),
-        "code_with_line_numbers": numbered[:14000],
-        "truncated": truncated,
     }, _summary(
         f"{meta.get('filename')}: {len(lines)} lines, {len(derived)} assigned columns, {len(lookup_tables)} lookup tables",
         f"{meta.get('filename')}: {len(lines)} Zeilen, {len(derived)} zugewiesene Spalten, {len(lookup_tables)} Zuordnungstabellen",
@@ -1309,11 +1363,11 @@ def _tool_regulation_outline(args: Dict[str, Any]) -> ToolResult:
 def _tool_search_regulations(args: Dict[str, Any]) -> ToolResult:
     query = str(args.get("query") or "").strip()
     meaning = str(args.get("meaning") or "").strip()
-    if not query and not meaning and not args.get("articles"):
+    if not query and not meaning and not _as_list(args.get("articles")):
         return _tool_regulation_outline(args)  # nothing to search for: show the structure to browse instead
     documents = _regulation_documents(args.get("_regulation_sources") or [], args.get("files"))
     within = str(args.get("within") or "").strip()
-    requested = {_article_id(item) for item in (args.get("articles") or [])} | {m.lower() for m in _ARTICLE_REFERENCE.findall(query)}
+    requested = {_article_id(item) for item in _as_list(args.get("articles"))} | {m.lower() for m in _ARTICLE_REFERENCE.findall(query)}
     requested.discard("")
     annexes = {m.upper() for m in _ANNEX_IN_QUERY.findall(query)}
     text_query = " ".join(filter(None, [_ANNEX_IN_QUERY.sub(" ", _ARTICLE_REFERENCE.sub(" ", query)).strip(), meaning]))
@@ -1595,7 +1649,9 @@ def _tool_verify_regulation_quotes(args: Dict[str, Any]) -> ToolResult:
             )
             results.append(entry)
             continue
-        request = regulation_text.parse_unit_request(cited) if cited else None
+        # "Article 111(1) CRR" or "Art. 111 Abs. 1" are not parsed as they stand: take the provision out first.
+        reference = _ANSWER_CITATION.search(cited) if cited else None
+        request = regulation_text.parse_unit_request(reference.group(0) if reference else cited) if cited else None
         if notes and not request:
             cited_notes = [note for note in notes if note["jira"] and _mentions(note["jira"], cited)]
             owners = [note for note in notes if _quote_in(quote, note["text"])]
@@ -1619,6 +1675,12 @@ def _tool_verify_regulation_quotes(args: Dict[str, Any]) -> ToolResult:
         if not loaded:
             entry["status"] = "not_found"
             entry["note"] = "No regulation file can be read, and the text is not in the selected release notes."
+            results.append(entry)
+            continue
+        if cited and not request and not _JIRA_KEY.search(cited):
+            # A citation that names no readable provision cannot confirm where the words are from.
+            entry["status"] = "not_found"
+            entry["note"] = "The citation names no provision that can be read; cite it as e.g. 'Article 111(2)(a)' or 'Annex I'."
             results.append(entry)
             continue
         best: Optional[Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]] = None
@@ -1699,29 +1761,44 @@ def _calc_eval(node: ast.AST) -> Any:
         return node.value
     if isinstance(node, ast.BinOp) and type(node.op) in _CALC_BINARY:
         left, right = _calc_eval(node.left), _calc_eval(node.right)
-        if isinstance(node.op, ast.Pow) and abs(right) > 100:
-            raise ToolError("Exponent too large.")
-        return _CALC_BINARY[type(node.op)](left, right)
+        if not all(isinstance(value, (int, float)) and not isinstance(value, bool) for value in (left, right)):
+            raise ToolError("Arithmetic works on numbers; use sum(), mean(), min() or max() for a list.")
+        if isinstance(node.op, ast.Pow):
+            if abs(right) > 100:
+                raise ToolError("Exponent too large.")
+            if left not in (0, 1, -1) and right > 0 and right * math.log10(abs(left)) > 300:
+                raise ToolError("Result too large.")
+        result = _CALC_BINARY[type(node.op)](left, right)
+        if isinstance(result, int) and result.bit_length() > 1000:
+            raise ToolError("Result too large.")
+        return result
     if isinstance(node, ast.UnaryOp) and type(node.op) in _CALC_UNARY:
         return _CALC_UNARY[type(node.op)](_calc_eval(node.operand))
     if isinstance(node, (ast.List, ast.Tuple)):
         return [_calc_eval(item) for item in node.elts]
+    if isinstance(node, ast.Dict) and node.keys and all(isinstance(key, ast.Constant) and isinstance(key.value, str) for key in node.keys):
+        # Labelled results in one call: {'total_A': 20000 + 16000, 'delta': 78200 - 106000}.
+        return {key.value: _calc_eval(value) for key, value in zip(node.keys, node.values)}
     if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in _CALC_FUNCTIONS and not node.keywords:
         return _CALC_FUNCTIONS[node.func.id](*[_calc_eval(arg) for arg in node.args])
-    raise ToolError("Only numbers, + - * / // % **, parentheses, lists and abs/round/min/max/sum/mean/sqrt/log/exp are allowed.")
+    raise ToolError("Only numbers, + - * / // % **, parentheses, lists, {'label': value} maps and abs/round/min/max/sum/mean/sqrt/log/exp are allowed.")
 
 
 def _tool_calculator(args: Dict[str, Any]) -> ToolResult:
     expression = str(args.get("expression") or "").strip().replace("^", "**")
-    if not expression or len(expression) > 500:
-        raise ToolError("expression must be 1-500 characters.")
+    if not expression or len(expression) > 4000:
+        raise ToolError("expression must be 1-4000 characters.")
     try:
         tree = ast.parse(expression, mode="eval")
+        if isinstance(tree.body, ast.Tuple):
+            raise ToolError("Separate several values with a list, e.g. [1234.5, 0.2]; numbers have no thousands separators.")
         value = _calc_eval(tree)
     except ToolError:
         raise
     except ZeroDivisionError as exc:
         raise ToolError("Division by zero.") from exc
+    except RecursionError as exc:
+        raise ToolError("The expression is nested too deeply; add long series with sum([...]) or split the calculation.") from exc
     except (SyntaxError, TypeError, ValueError, OverflowError) as exc:
         raise ToolError(f"Could not evaluate expression: {exc}") from exc
     return {"expression": expression, "result": _safe(value)}, f"= {_safe(value)}"
@@ -1929,7 +2006,7 @@ TOOLS: Dict[str, ToolSpec] = {
         ),
         ToolSpec(
             "calculator", "Calculator", "Utilities", "calculator",
-            "Evaluate an arithmetic expression exactly (e.g. '(19200-20000)/20000*100'). Use for any non-trivial arithmetic instead of mental math.",
+            "Evaluate arithmetic exactly (e.g. '(19200-20000)/20000*100'); several results at once as a list or as labelled values {'delta': 78200-106000, 'pct': (78200-106000)/106000*100}. Use for any non-trivial arithmetic instead of mental math.",
             {"type": "object", "properties": {"expression": {"type": "string"}}, "required": ["expression"]},
             _tool_calculator,
         ),
@@ -2472,6 +2549,246 @@ def _friendly_llm_error(exc: Exception, language: str = "en") -> str:
     return f"Die Ausführung des Agenten ist fehlgeschlagen: {exc}" if german else f"The agent run failed: {exc}"
 
 
+# ---------------------------------------------------------------------------
+# The studio's language model
+# ---------------------------------------------------------------------------
+
+DEFAULT_OPENAI_MODEL = "gpt-6.1-sol"  # AGENT_STUDIO_MODEL overrides it; with Azure the configured deployment
+# What a model refused once, so later calls leave it out: gpt-6.1-sol takes function tools only on the Responses API and
+# accepts no fixed temperature on either API. Other models are learnt from their first refusal.
+_RESPONSES_MODELS: Set[str] = {DEFAULT_OPENAI_MODEL}
+_NO_TEMPERATURE_MODELS: Set[str] = {DEFAULT_OPENAI_MODEL}
+_MAX_TOKENS_MODELS: Set[str] = set()  # older deployments that know max_tokens but not max_completion_tokens
+MODEL_ROUND_ATTEMPTS = 5
+
+
+def studio_model() -> Tuple[Any, str, Optional[str]]:
+    """The client, the studio's model and the configured model to fall back to when that one is not available."""
+    client, configured = _llm_client()
+    override = os.environ.get("AGENT_STUDIO_MODEL", "").strip()
+    model = override or (DEFAULT_OPENAI_MODEL if os.environ.get("OPENAI_API_KEY") else configured)
+    return client, model, (configured if configured and configured != model else None)
+
+
+def _refusal(exc: Exception) -> Optional[str]:
+    """What a 400 answer says the model does not take: "responses" (function tools on chat completions),
+    "temperature" or "max_tokens"; None for any other error."""
+    if getattr(exc, "status_code", None) != 400:
+        return None
+    message = str(exc)
+    if "/v1/responses" in message or "Function tools with reasoning_effort" in message:
+        return "responses"
+    if "temperature" in message:
+        return "temperature"
+    if "max_tokens" in message and "max_completion_tokens" in message:
+        return "max_tokens"
+    return None
+
+
+def _retryable(exc: Exception) -> bool:
+    status = getattr(exc, "status_code", None)
+    return status in (408, 409, 429) or (status or 0) >= 500 or (status is None and type(exc).__name__ in ("APIConnectionError", "APITimeoutError"))
+
+
+def _chat_round(client: Any, model: str, messages: List[Dict[str, Any]], schemas: List[Dict[str, Any]], temperature: float, final: bool) -> Iterator[str]:
+    """One streamed chat-completions call: yields text and returns the tool calls (models that take tools there)."""
+    request: Dict[str, Any] = {
+        "model": model,
+        "messages": [{key: value for key, value in message.items() if not key.startswith("_")} for message in messages],
+        "stream": True,
+    }
+    if model not in _NO_TEMPERATURE_MODELS:
+        request["temperature"] = temperature
+    if schemas:
+        request["tools"] = schemas
+        if final:
+            request["tool_choice"] = "none"
+    stream = client.chat.completions.create(**request)
+    calls: Dict[int, Dict[str, str]] = {}
+    try:
+        for chunk in stream:
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta
+            if delta is None:
+                continue
+            if delta.content:
+                yield delta.content
+            for call in delta.tool_calls or []:
+                slot = calls.setdefault(call.index or 0, {"id": "", "name": "", "arguments": ""})
+                if call.id:
+                    slot["id"] = call.id
+                if call.function is not None:
+                    if call.function.name:
+                        slot["name"] += call.function.name
+                    if call.function.arguments:
+                        slot["arguments"] += call.function.arguments
+    finally:
+        close = getattr(stream, "close", None)
+        if callable(close):
+            close()
+    return [calls[index] for index in sorted(calls)], None
+
+
+def _responses_input(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """The tool loop's chat-style messages as Responses API input. An assistant turn the Responses API answered carries
+    its own output items (encrypted reasoning, function calls), which go back as they came."""
+    items: List[Dict[str, Any]] = []
+    for message in messages:
+        role = message.get("role")
+        if role == "tool":
+            items.append({"type": "function_call_output", "call_id": message["tool_call_id"], "output": message.get("content") or ""})
+        elif role == "assistant" and message.get("_items"):
+            items.extend(message["_items"])
+        elif role == "assistant" and message.get("tool_calls"):
+            if message.get("content"):
+                items.append({"role": "assistant", "content": message["content"]})
+            for call in message["tool_calls"]:
+                items.append({"type": "function_call", "call_id": call["id"], "name": call["function"]["name"], "arguments": call["function"]["arguments"] or "{}"})
+        else:
+            items.append({"role": role, "content": message.get("content") or ""})
+    return items
+
+
+def _responses_round(client: Any, model: str, messages: List[Dict[str, Any]], schemas: List[Dict[str, Any]], final: bool) -> Iterator[str]:
+    """One streamed Responses API call: yields text and returns the tool calls and the output items to send back.
+    Nothing is stored at the provider (store=False), so reasoning travels back encrypted."""
+    request: Dict[str, Any] = {
+        "model": model,
+        "input": _responses_input(messages),
+        "stream": True,
+        "store": False,
+        "include": ["reasoning.encrypted_content"],
+    }
+    if schemas:
+        request["tools"] = [
+            {"type": "function", "name": schema["function"]["name"], "description": schema["function"].get("description", ""),
+             "parameters": schema["function"]["parameters"], "strict": False}
+            for schema in schemas
+        ]
+        request["tool_choice"] = "none" if final else "auto"
+    stream = client.responses.create(**request)
+    calls: List[Dict[str, str]] = []
+    finished = None
+    try:
+        for event in stream:
+            kind = getattr(event, "type", "")
+            if kind == "response.output_text.delta":
+                if event.delta:
+                    yield event.delta
+            elif kind == "response.output_item.done" and getattr(event.item, "type", "") == "function_call":
+                calls.append({"id": event.item.call_id, "name": event.item.name, "arguments": event.item.arguments or "{}"})
+            elif kind in ("response.completed", "response.incomplete"):
+                finished = event.response
+            elif kind == "response.failed":
+                error = getattr(getattr(event, "response", None), "error", None)
+                raise RuntimeError(getattr(error, "message", None) or "The language model could not answer.")
+            elif kind == "error":
+                raise RuntimeError(getattr(event, "message", None) or "The language model reported an error.")
+    finally:
+        close = getattr(stream, "close", None)
+        if callable(close):
+            close()
+    items: List[Dict[str, Any]] = []
+    for item in (finished.output if finished is not None else []):
+        data = item.model_dump(exclude_none=True)
+        kind = data.get("type")
+        if kind == "reasoning" and data.get("encrypted_content"):
+            data.pop("status", None)
+            items.append(data)
+        elif kind == "function_call":
+            items.append({"type": "function_call", "call_id": data["call_id"], "name": data["name"], "arguments": data.get("arguments") or "{}"})
+        elif kind == "message":
+            said = "".join(part.get("text", "") for part in data.get("content") or [] if part.get("type") == "output_text")
+            if said:
+                items.append({"role": "assistant", "content": said})
+    return calls, items
+
+
+def _model_round(state: Dict[str, Any], messages: List[Dict[str, Any]], schemas: List[Dict[str, Any]], temperature: float, final: bool, sink: List[str]) -> Iterator[Dict[str, Any]]:
+    """One call of the tool loop, streamed as token events (the text also goes to `sink`); returns (tool calls,
+    Responses output items or None).
+    Before the first token it adapts to what the model refuses, falls back to the configured model when the studio's
+    model is not available, and retries busy or failing providers. `state` carries client, model and fallback."""
+    last: Optional[Exception] = None
+    for attempt in range(MODEL_ROUND_ATTEMPTS):
+        model = state["model"]
+        streamed = False
+        round_events = (
+            _responses_round(state["client"], model, messages, schemas, final)
+            if model in _RESPONSES_MODELS
+            else _chat_round(state["client"], model, messages, schemas, temperature, final)
+        )
+        try:
+            while True:
+                try:
+                    delta = next(round_events)
+                except StopIteration as done:
+                    return done.value
+                streamed = True
+                sink.append(delta)
+                yield {"type": "token", "text": delta}
+        except Exception as exc:
+            if streamed:
+                raise
+            last = exc
+            refused = _refusal(exc)
+            if refused == "responses":
+                _RESPONSES_MODELS.add(model)
+                continue
+            if refused == "temperature":
+                _NO_TEMPERATURE_MODELS.add(model)
+                continue
+            status = getattr(exc, "status_code", None)
+            if status in (403, 404) and state.get("fallback"):
+                state["model"], state["fallback"] = state["fallback"], None
+                continue
+            if _retryable(exc) and attempt < MODEL_ROUND_ATTEMPTS - 1:
+                time.sleep(1.5 * (attempt + 1))
+                continue
+            raise
+        finally:
+            round_events.close()
+    raise last or RuntimeError("The language model did not answer.")
+
+
+def studio_json(messages: List[Dict[str, str]], temperature: float = 0.3, max_tokens: int = 16000) -> Dict[str, Any]:
+    """One JSON answer (agent design and refinement), adapting to what the model refuses like the tool loop does."""
+    client, model, fallback = studio_model()
+    last: Optional[Exception] = None
+    for attempt in range(MODEL_ROUND_ATTEMPTS):
+        options: Dict[str, Any] = {"response_format": {"type": "json_object"}}
+        options["max_tokens" if model in _MAX_TOKENS_MODELS else "max_completion_tokens"] = max_tokens
+        if model not in _NO_TEMPERATURE_MODELS:
+            options["temperature"] = temperature
+        try:
+            response = client.chat.completions.create(model=model, messages=messages, **options)
+        except Exception as exc:
+            last = exc
+            refused = _refusal(exc)
+            if refused == "temperature":
+                _NO_TEMPERATURE_MODELS.add(model)
+                continue
+            if refused == "max_tokens" or (getattr(exc, "status_code", None) == 400 and "max_completion_tokens" in str(exc)):
+                _MAX_TOKENS_MODELS.add(model)
+                continue
+            if getattr(exc, "status_code", None) in (403, 404) and fallback:
+                model, fallback = fallback, None
+                continue
+            if _retryable(exc) and attempt < MODEL_ROUND_ATTEMPTS - 1:
+                time.sleep(1.5 * (attempt + 1))
+                continue
+            raise
+        choice = response.choices[0]
+        if getattr(choice, "finish_reason", "") == "length":
+            raise RuntimeError("The answer of the language model was cut off.")
+        content = (choice.message.content or "").strip()
+        if content.startswith("```"):
+            content = re.sub(r"^```(?:json)?\s*|\s*```$", "", content)
+        return json.loads(content or "{}")
+    raise last or RuntimeError("The language model did not answer.")
+
+
 _LANGUAGE_RULES = {
     "en": "Write the final answer in English unless the agent instructions explicitly require another language.",
     "de": (
@@ -2682,6 +2999,44 @@ def _execute_tool(
         return {"ok": False, "error": f"Tool failed: {exc}"}, f"Tool failed: {exc}"
 
 
+def _fit_tool_result(payload: Dict[str, Any], limit: int = MAX_TOOL_RESULT_CHARS) -> str:
+    """The tool result as JSON of at most `limit` characters. The longest lists are shortened by whole items first
+    (the result then says how many items of how many it holds), then the longest texts; the JSON stays valid."""
+    dump = lambda value: json.dumps(value, ensure_ascii=False, default=str)  # noqa: E731
+    text = dump(payload)
+    if len(text) <= limit:
+        return text
+    result = payload.get("result")
+    if payload.get("ok") and isinstance(result, dict):
+        result = dict(result)
+        cut: Dict[str, Any] = {}
+        for _ in range(60):
+            text = dump({**payload, "result": result})
+            if len(text) <= limit:
+                break
+            lists = [(len(dump(value)), key) for key, value in result.items() if isinstance(value, list) and len(value) > 1]
+            if lists:
+                size, key = max(lists)
+                items = result[key]
+                share = max(0.0, 1.0 - (len(text) - limit + 400) / max(size, 1))
+                keep = max(1, min(len(items) - 1, int(len(items) * share)))
+                cut.setdefault(key, {"total": len(items)})
+                result[key] = items[:keep]
+                cut[key]["included"] = keep
+                result["_shortened"] = {**cut, "note": "Lists were shortened to fit; narrow the request (filters, columns, query) or page with offset for the rest."}
+                continue
+            texts = [(len(value), key) for key, value in result.items() if isinstance(value, str) and len(value) > 2000]
+            if not texts:
+                break
+            size, key = max(texts)
+            keep = max(1000, size - (len(text) - limit) - 200)
+            result[key] = result[key][:keep] + f"\n…[{size - keep} more characters]"
+        text = dump({**payload, "result": result})
+    if len(text) > limit:
+        text = text[:limit] + " ...[truncated; narrow the request with filters, columns or limit]"
+    return text
+
+
 def _parse_arguments(raw: str) -> Dict[str, Any]:
     try:
         value = json.loads(raw or "{}")
@@ -2692,7 +3047,20 @@ def _parse_arguments(raw: str) -> Dict[str, Any]:
 
 # Automatic quote check: every quote an answer attributes to a regulation provision or a release note is
 # verified against the uploaded text before the answer is final, whatever the model did on its own.
-_ANSWER_QUOTE = re.compile(r"[“\"„]([^“”\"„\n]{20,700})[”\"“]")
+_CURLY_QUOTE = re.compile(r"“([^“”\n|]{20,700})”|„([^„“”\n|]{20,700})[“”]")
+
+
+def _quote_spans(line: str) -> List[Tuple[int, int, str]]:
+    """Quotations in one line as (start, end, text): “…”, „…“ and "…", each closed by its own kind of mark. Straight
+    marks pair up from the left, so the words between two quoted terms are never taken for a quote; a quote never
+    spans table cells."""
+    spans = [(match.start(), match.end(), match.group(1) or match.group(2)) for match in _CURLY_QUOTE.finditer(line)]
+    marks = [index for index, char in enumerate(line) if char == '"']
+    for opening, closing in zip(marks[0::2], marks[1::2]):
+        inner = line[opening + 1:closing]
+        if 20 <= len(inner) <= 700 and "|" not in inner and not any(start <= opening < end for start, end, _ in spans):
+            spans.append((opening, closing + 1, inner))
+    return sorted(spans)
 _ANSWER_CITATION = re.compile(
     r"\b(?:Article|Artikel|Art\.)\s*\d{1,4}[a-z]{0,3}(?:\s*\(\s*\d{1,3}[a-z]?\s*\))?(?:\s*\(\s*[a-z0-9]{1,4}\s*\))?"
     r"|\b(?:Annex|Anhang)\s+[IVXLC]+\b"
@@ -2709,12 +3077,12 @@ def _answer_quote_candidates(text: str) -> List[Dict[str, Any]]:
     found: List[Dict[str, Any]] = []
     seen: set = set()
     for line in text.splitlines():
-        for match in _ANSWER_QUOTE.finditer(line):
-            quote = match.group(1).strip()
-            if len(quote.split()) < 4 or _PARAPHRASE_MARK.search(line[max(0, match.start() - 40):match.start()] + " " + line[match.end():match.end() + 25]):
+        for start, end, inner in _quote_spans(line):
+            quote = inner.strip()
+            if len(quote.split()) < 4 or _PARAPHRASE_MARK.search(line[max(0, start - 40):start] + " " + line[end:end + 25]):
                 continue
-            before = list(_ANSWER_CITATION.finditer(line[:match.start()]))
-            after = _ANSWER_CITATION.search(line[match.end():])
+            before = list(_ANSWER_CITATION.finditer(line[:start]))
+            after = _ANSWER_CITATION.search(line[end:])
             citation = before[-1].group(0) if before else (after.group(0) if after else None)
             if (quote, citation) in seen:
                 continue
@@ -2826,8 +3194,13 @@ def _repair_quotes(text: str, definition: Dict[str, Any]) -> Tuple[str, List[Dic
     return text, repairs
 
 
+# A first line that talks about the answer itself ("Here is the corrected matrix:", "Korrigierte Antwort:"), not one
+# that reports content ("Release note 112752 updated the accrued-interest logic …").
 _CORRECTION_INTRO = re.compile(
-    r"\b(corrected|correction|adjustments? made|discrepanc|revised|updated|korrigiert|überarbeitet|berichtigt|aktualisiert|Abweichungen behoben)",
+    r"^\W*(?:(?:here(?:'s| is| are)|below (?:is|are)|i(?:'ve| have)|hier (?:ist|sind)|nachfolgend|im folgenden|ich habe)\b.{0,160}?"
+    r"\b(?:correct|revis|updat|adjust|fix|korrigier|überarbeit|berichtig|aktualisier|angepasst)"
+    r"|(?:the )?(?:corrected|revised|updated|korrigierte|überarbeitete|aktualisierte|berichtigte)\s+"
+    r"(?:answer|matrix|table|version|response|antwort|tabelle|fassung|matrix)\b)",
     re.IGNORECASE,
 )
 
@@ -2926,6 +3299,8 @@ _MANDATE_CLAUSE = re.compile(
 )
 _NO_LINK = re.compile(r"no link|kein(?:e|en)? bezug|keine verknüpfung|^\W*(?:none|keine?)\W*$", re.IGNORECASE)
 LINK_COVERAGE_LIMIT = 40
+# The coverage check (a row for every release note) applies only to questions about all of them.
+_ASKS_ALL = re.compile(r"\b(?:all|every|each|alle[nrs]?|jede[nrs]?|sämtliche[nrs]?|todas|todos|cada)\b", re.IGNORECASE)
 
 
 _SCOPE_LABELS = {
@@ -3106,8 +3481,8 @@ def _audit_link_matrix(text: str, definition: Dict[str, Any], message: str = "",
                     + (f" Vorschriften, die sie nennen: {evidence}" if evidence else ""),
                 ))
             if _LINKED.search(grade) and evidence_column is not None and not any(
-                len(match.group(1).split()) >= 4 and not _ANSWER_CITATION.fullmatch(match.group(1).strip())
-                for match in _ANSWER_QUOTE.finditer(quote_cell)
+                len(inner.split()) >= 4 and not _ANSWER_CITATION.fullmatch(inner.strip())
+                for _start, _end, inner in _quote_spans(quote_cell)
             ):
                 issues.append(_say(
                     language,
@@ -3153,7 +3528,7 @@ def _audit_link_matrix(text: str, definition: Dict[str, Any], message: str = "",
                             f"Jira {jira}: {citation} behandelt nicht {named}, die Größe, die diese Release Note betrifft; die maßgebliche Vorschrift verknüpfen oder die Zeile mit „kein Bezug gefunden“ bewerten."
                             + (f" Vorschriften, die sie nennen: {evidence}" if evidence else ""),
                         ))
-    if link_table and len(known) <= LINK_COVERAGE_LIMIT and not any(_mentions(jira, message) for jira in known):
+    if link_table and len(known) <= LINK_COVERAGE_LIMIT and _ASKS_ALL.search(message or "") and not any(_mentions(jira, message) for jira in known):
         missing = [jira for jira in known if not _mentions(jira, text)]
         if missing:
             listed = ", ".join(f"{jira} ({known[jira]['file']})" for jira in missing[:12])
@@ -3188,12 +3563,18 @@ def _column(headers: List[str], pattern: str, exclude: Tuple[int, ...] = ()) -> 
 
 
 def _matrix_value(cell: str) -> Optional[float]:
-    """'0.2', '20 %', '20%', '1,0' -> fraction; None when the cell holds no single value."""
-    match = re.search(r"(-?\d+(?:[.,]\d+)?)\s*(%)?", cell or "")
+    """'0.2', '20 %', '20%', '1,0', '2.5', 'Art. 133: 250 %' -> fraction; None when the cell holds no value. The number
+    marked with '%' wins and article numbers are left out; without '%', values up to 12.5 (the largest risk weight
+    written as a factor) are factors and larger ones percents."""
+    cell = _ANSWER_CITATION.sub(" ", cell or "")
+    percent = re.search(r"(-?\d+(?:[.,]\d+)?)\s*%", cell)
+    if percent:
+        return float(percent.group(1).replace(",", ".")) / 100
+    match = re.search(r"-?\d+(?:[.,]\d+)?", cell)
     if not match:
         return None
-    value = float(match.group(1).replace(",", "."))
-    return value / 100 if match.group(2) or value > 1.5 else value
+    value = float(match.group(0).replace(",", "."))
+    return value / 100 if abs(value) > 12.5 else value
 
 
 def _matrix_status(cell: str) -> str:
@@ -3385,6 +3766,7 @@ def run_turn(
     *,
     client: Any,
     model: str,
+    fallback: Optional[str] = None,
     definition: Dict[str, Any],
     conversation: Dict[str, Any],
     message: str,
@@ -3439,47 +3821,18 @@ def run_turn(
         schemas = [TOOLS[name].schema() for name in definition["tools"] if name in TOOLS]
         max_steps = definition["max_steps"]
         quote_checks = 0
+        last_draft = ""  # the complete answer sent back for correction, kept if the correction round fails
 
+        state = {"client": client, "model": model, "fallback": fallback}
         for iteration in range(max_steps + 1):
-            request: Dict[str, Any] = {
-                "model": model,
-                "messages": llm_messages,
-                "temperature": definition["temperature"],
-                "stream": True,
-            }
-            if schemas:
-                request["tools"] = schemas
-                if iteration == max_steps:
-                    request["tool_choice"] = "none"
             live_text = []
-            calls: Dict[int, Dict[str, str]] = {}
-            stream = client.chat.completions.create(**request)
-            try:
-                for chunk in stream:
-                    if not chunk.choices:
-                        continue
-                    delta = chunk.choices[0].delta
-                    if delta is None:
-                        continue
-                    if delta.content:
-                        live_text.append(delta.content)
-                        yield {"type": "token", "text": delta.content}
-                    for call in delta.tool_calls or []:
-                        slot = calls.setdefault(call.index or 0, {"id": "", "name": "", "arguments": ""})
-                        if call.id:
-                            slot["id"] = call.id
-                        if call.function is not None:
-                            if call.function.name:
-                                slot["name"] += call.function.name
-                            if call.function.arguments:
-                                slot["arguments"] += call.function.arguments
-            finally:
-                close = getattr(stream, "close", None)
-                if callable(close):
-                    close()
+            ordered_calls, output_items = yield from _model_round(
+                state, llm_messages, schemas, definition["temperature"], iteration == max_steps, live_text,
+            )
+            assistant_entry["model"] = state["model"]
 
             text = "".join(live_text)
-            if not calls:
+            if not ordered_calls:
                 answer, repairs = _repair_quotes(_strip_correction_intro(text.strip()) if quote_checks else text.strip(), definition)
                 audit = _audit_answer_quotes(answer, definition)
                 issues = _audit_matrix(answer, definition, language) + _audit_link_matrix(answer, definition, message, language)
@@ -3512,6 +3865,7 @@ def run_turn(
                     assistant_entry["timeline"].append(step)
                     yield {"type": "step_end", "step": dict(step)}
                     live_text = []
+                    last_draft = answer
                     llm_messages.append({"role": "assistant", "content": answer})
                     llm_messages.append({"role": "user", "content": _quote_audit_feedback(audit, issues)})
                     continue
@@ -3523,7 +3877,7 @@ def run_turn(
             if text.strip():
                 assistant_entry["timeline"].append({"kind": "note", "text": text.strip()})
             live_text = []
-            ordered = [calls[index] for index in sorted(calls)]
+            ordered = ordered_calls
             for call in ordered:
                 call["id"] = call["id"] or f"call_{uuid.uuid4().hex[:12]}"
             llm_messages.append({
@@ -3533,6 +3887,8 @@ def run_turn(
                     {"id": call["id"], "type": "function", "function": {"name": call["name"], "arguments": call["arguments"] or "{}"}}
                     for call in ordered
                 ],
+                # Responses API: the output items themselves go back (reasoning included); chat completions: None.
+                "_items": output_items,
             })
             for call in ordered:
                 spec = TOOLS.get(call["name"])
@@ -3550,9 +3906,7 @@ def run_turn(
                     call["name"], call["arguments"], allowed,
                     definition.get("release_note_sources"), definition.get("regulation_sources"),
                 )
-                result_text = json.dumps(payload, ensure_ascii=False, default=str)
-                if len(result_text) > MAX_TOOL_RESULT_CHARS:
-                    result_text = result_text[:MAX_TOOL_RESULT_CHARS] + " ...[truncated; narrow the request with filters, columns or limit]"
+                result_text = _fit_tool_result(payload)
                 preview_source = payload.get("result") if payload.get("ok") else payload
                 preview = json.dumps(preview_source, ensure_ascii=False, indent=2, default=str)
                 step.update({
@@ -3565,6 +3919,8 @@ def run_turn(
                 yield {"type": "step_end", "step": dict(step)}
                 llm_messages.append({"role": "tool", "tool_call_id": call["id"], "content": result_text})
 
+        if not assistant_entry["content"] and last_draft:
+            assistant_entry["content"] = last_draft
         if not assistant_entry["content"]:
             assistant_entry["content"] = (
                 "_Der Agent hat ohne abschließende Antwort beendet. Grenzen Sie die Frage ein oder erhöhen Sie die maximale Anzahl an Tool-Runden._"
@@ -3577,12 +3933,12 @@ def run_turn(
         traceback.print_exc()
         assistant_entry["status"] = "error"
         assistant_entry["error"] = _friendly_llm_error(exc, language)
-        assistant_entry["content"] = assistant_entry["content"] or "".join(live_text).strip()
+        assistant_entry["content"] = assistant_entry["content"] or last_draft or "".join(live_text).strip()
         finished = True
     finally:
         if not finished:
             assistant_entry["status"] = "stopped"
-            assistant_entry["content"] = assistant_entry["content"] or "".join(live_text).strip()
+            assistant_entry["content"] = assistant_entry["content"] or last_draft or "".join(live_text).strip()
         assistant_entry["duration_ms"] = int((time.monotonic() - started) * 1000)
         conversation["messages"] = prior_messages + [user_entry, assistant_entry]
         try:
@@ -3683,14 +4039,13 @@ def generate_agent(request: GeneratePayload):
         raise HTTPException(400, "Describe the agent you want, or the change you want to make.")
     if len(prompt) > MAX_MESSAGE_CHARS:
         raise HTTPException(400, "The description must be 8,000 characters or fewer.")
-    client, model = _llm_client()
     catalog = "\n".join(f"- {spec.name}: {spec.description}" for spec in TOOLS.values())
     system = (
         "You design tool-using AI agents for RegData Xplainer, a regulatory data platform (Excel datasets, Python "
         "transformation code, cluster executions, execution comparisons, column lineage, Jira release notes).\n"
         "Return one JSON object with keys: name (max 5 words), description (one sentence), purpose, instructions, "
         "tools (array of tool names from the catalog), starters (3-4 concrete example requests a user would send), "
-        "guardrails (3-6 short rules), output_format, icon, color, max_steps (integer 4-12), temperature (0-1).\n"
+        "guardrails (3-6 short rules), output_format, icon, color, max_steps (integer 4-12).\n"
         "purpose is one sentence. instructions is a single string (not an array) containing a numbered procedure, one step "
         "per line in the form '1. ...\\n2. ...', telling the agent which tools to use in which order "
         "and what evidence to gather, written for the agent itself. Select the tools the procedure needs, plus "
@@ -3718,19 +4073,15 @@ def generate_agent(request: GeneratePayload):
     else:
         user = prompt
     try:
-        response = client.chat.completions.create(
-            model=model,
-            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
-            temperature=0.3,
-            max_tokens=3000,
-            response_format={"type": "json_object"},
-        )
-        raw = _unwrap_agent(json.loads(response.choices[0].message.content or "{}"))
+        raw = _unwrap_agent(studio_json([{"role": "system", "content": system}, {"role": "user", "content": user}]))
         if request.base_definition:
             # A refinement only has to return what changed; anything it leaves out keeps its current value.
             raw = {
                 **request.base_definition,
-                **{key: value for key, value in raw.items() if value not in (None, "", [], {})},
+                **{
+                    key: value for key, value in raw.items()
+                    if value is not None and (key not in ("name", "instructions") or str(value).strip())
+                },
             }
             # File choices are made by the user in the editor; a refinement keeps them.
             raw["release_note_sources"] = request.base_definition.get("release_note_sources") or []
@@ -3743,7 +4094,8 @@ def generate_agent(request: GeneratePayload):
         raise
     except Exception as exc:
         traceback.print_exc()
-        raise HTTPException(502, f"Could not design the agent: {exc}") from exc
+        reason = _friendly_llm_error(exc, _language(request.language)) if getattr(exc, "status_code", None) else str(exc)
+        raise HTTPException(502, f"Could not design the agent: {reason}") from exc
 
 
 @router.get("")
@@ -3880,6 +4232,32 @@ def transcribe_audio(file: UploadFile = File(...), language: str = Form("en")):
     return {"text": (getattr(result, "text", "") or "").strip(), "language": lang}
 
 
+# Conversations with a run in progress (id -> start), so a second run on the same conversation waits until the first
+# is saved instead of both saving over each other: Stop takes effect only at the run's next step.
+_ACTIVE_CONVERSATIONS: Dict[str, float] = {}
+_ACTIVE_LOCK = threading.Lock()
+ACTIVE_RUN_WAIT = 45.0
+ACTIVE_RUN_STALE = 900.0
+
+
+def _claim_conversation(conversation_id: str) -> bool:
+    deadline = time.monotonic() + ACTIVE_RUN_WAIT
+    while True:
+        with _ACTIVE_LOCK:
+            claimed = _ACTIVE_CONVERSATIONS.get(conversation_id)
+            if claimed is None or time.monotonic() - claimed > ACTIVE_RUN_STALE:
+                _ACTIVE_CONVERSATIONS[conversation_id] = time.monotonic()
+                return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.25)
+
+
+def _release_conversation(conversation_id: str) -> None:
+    with _ACTIVE_LOCK:
+        _ACTIVE_CONVERSATIONS.pop(conversation_id, None)
+
+
 @router.post("/runs/stream")
 def stream_run(request: RunPayload):
     message = request.message.strip()
@@ -3894,7 +4272,6 @@ def stream_run(request: RunPayload):
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         owner_id = DRAFT_AGENT_ID
-        db.delete_stale_ai_agent_conversations(DRAFT_AGENT_ID, (datetime.now(timezone.utc) - timedelta(days=2)).isoformat())
     else:
         agent = db.get_ai_agent(str(request.agent_id or ""))
         if not agent:
@@ -3902,19 +4279,28 @@ def stream_run(request: RunPayload):
         definition = normalize_definition(agent["definition"])
         owner_id = agent["id"]
 
+    # The model first: a configuration error must not leave a conversation marked as running.
+    client, model, fallback = studio_model()
     conversation = None
     if request.conversation_id:
+        if not _claim_conversation(request.conversation_id):
+            raise HTTPException(409, "This conversation is still finishing its previous run. Try again in a moment.")
         conversation = db.get_ai_agent_conversation(request.conversation_id)
         if not conversation or conversation.get("agent_id") != owner_id:
+            _release_conversation(request.conversation_id)
             raise HTTPException(404, "Conversation not found for this agent")
     if conversation is None:
         now = _now_iso()
         conversation = {"id": str(uuid.uuid4()), "agent_id": owner_id, "title": "", "messages": [], "created_date": now}
+        _claim_conversation(conversation["id"])
+    if owner_id == DRAFT_AGENT_ID:
+        # Old test-bench chats go; one being continued is already loaded and is saved again by this run.
+        db.delete_stale_ai_agent_conversations(DRAFT_AGENT_ID, (datetime.now(timezone.utc) - timedelta(days=2)).isoformat())
 
-    client, model = _llm_client()
     events = run_turn(
         client=client,
         model=model,
+        fallback=fallback,
         definition=definition,
         conversation=conversation,
         message=message,
@@ -3928,8 +4314,9 @@ def stream_run(request: RunPayload):
                 yield f"data: {json.dumps(event, ensure_ascii=False, default=str)}\n\n"
         finally:
             # A client disconnect closes this generator; close the run too so the
-            # partial turn is persisted as "stopped".
+            # partial turn is persisted as "stopped". Then the conversation is free for the next run.
             events.close()
+            _release_conversation(conversation["id"])
 
     return StreamingResponse(
         encode(),

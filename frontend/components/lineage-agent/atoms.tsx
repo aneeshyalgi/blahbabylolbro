@@ -279,25 +279,6 @@ export function CodeBlock({ lines, start, columns, focus, highlight, className }
   );
 }
 
-export function Kpi({ label, value, detail, tone = "default", icon }: { label: string; value: ReactNode; detail?: ReactNode; tone?: "default" | "good" | "warn" | "bad"; icon?: ReactNode }) {
-  const tones = {
-    default: "text-white",
-    good: "text-emerald-300",
-    warn: "text-amber-300",
-    bad: "text-rose-300",
-  };
-  return (
-    <div className="relative overflow-hidden rounded-lg border border-[#252a33] bg-[#0b0f15] px-4 py-3.5">
-      <div className="flex items-center justify-between gap-2">
-        <p className={EYEBROW}>{label}</p>
-        {icon}
-      </div>
-      <p className={cn("mt-1.5 text-[26px] font-semibold leading-none tabular-nums tracking-tight", tones[tone])}>{value}</p>
-      {detail && <p className="mt-1.5 text-[11.5px] leading-snug text-[#8c96a8]">{detail}</p>}
-    </div>
-  );
-}
-
 export function SectionTitle({ icon, title, hint, actions }: { icon?: ReactNode; title: ReactNode; hint?: ReactNode; actions?: ReactNode }) {
   return (
     <div className="flex flex-wrap items-start justify-between gap-3">

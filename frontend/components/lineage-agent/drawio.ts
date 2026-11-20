@@ -12,8 +12,27 @@ const ROLE_STROKES: Record<Role, string> = {
   intermediate: "#71717a",
 };
 
-function escape(value: string): string {
+/** Escapes text for an XML attribute (draw.io labels with html=1 are HTML inside the attribute). */
+export function escapeXml(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/\n/g, "&#10;");
+}
+
+const escape = escapeXml;
+
+/** A draw.io (diagrams.net) document: the cells hang below the default parent "1". */
+export function drawIoDocument(title: string, id: string, cells: string[]): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net" modified="${new Date().toISOString()}" version="1.0">
+  <diagram name="${escape(title)}" id="${id}">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="0" pageScale="1" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        ${cells.join("\n        ")}
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>`;
 }
 
 /** The on-screen lineage graph as a draw.io (diagrams.net) document with the same layout. */
@@ -53,16 +72,5 @@ export function lineageToDrawIo(layout: GraphLayout, title: string, describe: (r
       `<mxCell id="${next++}" value="${escape(label)}" style="${style}fontSize=9;fontColor=#6b7280;" edge="1" parent="1" source="${source}" target="${target}"><mxGeometry relative="1" as="geometry"/></mxCell>`,
     );
   }
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<mxfile host="app.diagrams.net" modified="${new Date().toISOString()}" version="1.0">
-  <diagram name="${escape(title)}" id="technical-lineage">
-    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="0" pageScale="1" math="0" shadow="0">
-      <root>
-        <mxCell id="0"/>
-        <mxCell id="1" parent="0"/>
-        ${cells.join("\n        ")}
-      </root>
-    </mxGraphModel>
-  </diagram>
-</mxfile>`;
+  return drawIoDocument(title, "technical-lineage", cells);
 }

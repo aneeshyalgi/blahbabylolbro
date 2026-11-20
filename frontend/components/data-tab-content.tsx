@@ -1,34 +1,10 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useTranslations } from "next-intl";
-import { CalendarDays, Database, FileCode2, Maximize2, Play, RefreshCw, Trash2, X } from "lucide-react";
-import { ResultDataSection } from "@/components/result-data-section";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLocale, useTranslations } from "next-intl";
+import { CalendarDays, ChartColumnBig, Database, FileCode2, History, Loader2, Maximize2, Play, RefreshCw, Trash2 } from "lucide-react";
 import { API_ENDPOINTS } from "@/lib/api-config";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -39,22 +15,15 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
+import { EmptyState, EYEBROW, FactTile, IconAction, PageHeader, PANEL, PRIMARY_BUTTON, SECONDARY_BUTTON, Tag, formatDateTime, relativeTime } from "@/components/workspace/ui";
+import { ResultDataSection, type RunError } from "@/components/result-data-section";
+import { RunDataDialog, type RunResult } from "@/components/results/run-data-dialog";
 
 const STORAGE_KEY = "dataflow_results_cluster_id";
-
-interface DataTabContentProps {
-  isLoading?: boolean;
-}
-
-export type DataTabResultData = {
-  execution_id?: string;
-  data?: unknown[];
-  summary?: { columns?: string[]; computed_by_column?: Record<string, number> };
-  computed_cells?: { row: number; column: string; value?: unknown }[];
-  code_id?: string;
-} | null;
+const TRIGGER = "h-10 w-full border-[#252a33] bg-[#0f141b] text-[13px] font-medium text-white hover:bg-[#121821] dark:bg-[#0f141b] dark:hover:bg-[#121821]";
 
 interface ClusterOption {
   id: string;
@@ -62,8 +31,11 @@ interface ClusterOption {
   reporting_date: string;
   dataset_id: string;
   dataset_name?: string | null;
+  dataset_version?: string | null;
   code_id: string | null;
   code_filename?: string | null;
+  code_version?: string | null;
+  is_reference?: boolean | number;
 }
 
 interface ClusterExecutionRow {
@@ -80,504 +52,365 @@ interface ClusterExecutionRow {
   summary?: { total_values_computed?: number };
 }
 
-export function DataTabContent({ isLoading = false }: DataTabContentProps) {
-  const [selectedClusterId, setSelectedClusterId] = useState<string | null>(null);
-  const [resultData, setResultData] = useState<DataTabResultData>(null);
-  const [clusters, setClusters] = useState<ClusterOption[]>([]);
-  const [allExecutions, setAllExecutions] = useState<ClusterExecutionRow[]>([]);
-  const [loadingExecutions, setLoadingExecutions] = useState(true);
-  const [viewingExecutionData, setViewingExecutionData] = useState<{
-    data?: unknown[];
-    summary?: { columns?: string[]; computed_by_column?: Record<string, number>; rows_processed?: number; total_values_computed?: number };
-    computed_cells?: { row: number; column: string; value?: unknown }[];
-  } | null>(null);
-  const [loadingExecutionData, setLoadingExecutionData] = useState(false);
-  const [executionModalOpen, setExecutionModalOpen] = useState(false);
-  const [executionToDelete, setExecutionToDelete] = useState<ClusterExecutionRow | null>(null);
-  const [deletingExecution, setDeletingExecution] = useState(false);
-  const [runRequestNonce, setRunRequestNonce] = useState(0);
-  const [runControls, setRunControls] = useState<{
-    disabled: boolean;
-    executing: boolean;
-    label: string;
-  }>({
-    disabled: true,
-    executing: false,
-    label: "",
-  });
+function formatDay(value: string | null | undefined, locale: string): string {
+  if (!value) return "–";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString(locale, { dateStyle: "medium" });
+}
+
+function withVersion(name: string | null | undefined, version: string | null | undefined): string {
+  if (!name) return "–";
+  return version ? `${name} · ${version}` : name;
+}
+
+/** The Results tab: run a cluster's code on its dataset, see the computed values and the cluster's runs. */
+export function DataTabContent() {
+  const t = useTranslations("resultsTab");
+  const locale = useLocale();
   const { toast } = useToast();
-  const t = useTranslations("data");
-  const tResult = useTranslations("resultData");
+  const [clusters, setClusters] = useState<ClusterOption[] | null>(null);
+  const [executions, setExecutions] = useState<ClusterExecutionRow[] | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [selectedClusterId, setSelectedClusterId] = useState<string | null>(null);
+  const [result, setResult] = useState<RunResult | null>(null);
+  const [loadingResult, setLoadingResult] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [runError, setRunError] = useState<RunError | null>(null);
+  const [viewing, setViewing] = useState<ClusterExecutionRow | null>(null);
+  const [toDelete, setToDelete] = useState<ClusterExecutionRow | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const selectedRef = useRef<string | null>(null);
+  selectedRef.current = selectedClusterId;
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) setSelectedClusterId(saved);
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) setSelectedClusterId(saved);
+    } catch {
+      // Storage unavailable: nothing remembered.
+    }
   }, []);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (selectedClusterId) localStorage.setItem(STORAGE_KEY, selectedClusterId);
-    else localStorage.removeItem(STORAGE_KEY);
+    try {
+      if (selectedClusterId) localStorage.setItem(STORAGE_KEY, selectedClusterId);
+      else localStorage.removeItem(STORAGE_KEY);
+    } catch {
+      // Storage unavailable: the selection lasts for this visit.
+    }
   }, [selectedClusterId]);
 
-  useEffect(() => {
-    fetch(API_ENDPOINTS.clusters)
-      .then((res) => res.json())
-      .then((data) => {
-        const list: ClusterOption[] = data.clusters || [];
-        setClusters(list);
-        if (selectedClusterId && !list.some((c) => c.id === selectedClusterId)) {
-          setSelectedClusterId(null);
-        }
-      })
-      .catch(() => setClusters([]));
+  const loadExecutions = useCallback(async () => {
+    const response = await fetch(API_ENDPOINTS.clustersExecutions);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const payload = await response.json();
+    setExecutions(payload.executions ?? []);
   }, []);
 
-  const selectedCluster = clusters.find((c) => c.id === selectedClusterId) ?? null;
-  const selectedDatasetId = selectedCluster?.dataset_id ?? null;
-  const selectedCodeId = selectedCluster?.code_id ?? null;
-  const visibleExecutions = selectedClusterId
-    ? allExecutions.filter((execution) => execution.cluster_id === selectedClusterId)
-    : [];
-  const latestVisibleExecutionId = visibleExecutions[0]?.execution_id ?? null;
-  const displayedExecutionTimestamp =
-    visibleExecutions.find((execution) => execution.execution_id === resultData?.execution_id)?.executed_date ??
-    null;
-
-  const refetchAllExecutions = () => {
-    setLoadingExecutions(true);
-    fetch(API_ENDPOINTS.clustersExecutions)
-      .then((res) => res.json())
-      .then((data) => setAllExecutions(data.executions || []))
-      .catch(() => setAllExecutions([]))
-      .finally(() => setLoadingExecutions(false));
-  };
+  const loadAll = useCallback(async () => {
+    setLoadFailed(false);
+    try {
+      const [clustersResponse] = await Promise.all([fetch(API_ENDPOINTS.clusters), loadExecutions()]);
+      if (!clustersResponse.ok) throw new Error(`HTTP ${clustersResponse.status}`);
+      const payload = await clustersResponse.json();
+      setClusters(payload.clusters ?? []);
+    } catch {
+      setLoadFailed(true);
+      setClusters((current) => current ?? []);
+      setExecutions((current) => current ?? []);
+    }
+  }, [loadExecutions]);
 
   useEffect(() => {
-    refetchAllExecutions();
-  }, []);
+    void loadAll();
+  }, [loadAll]);
 
+  // A remembered cluster that was deleted since is no longer selected.
   useEffect(() => {
-    if (!selectedClusterId) {
-      setResultData(null);
+    if (clusters && selectedClusterId && !clusters.some((cluster) => cluster.id === selectedClusterId)) setSelectedClusterId(null);
+  }, [clusters, selectedClusterId]);
+
+  const selectedCluster = clusters?.find((cluster) => cluster.id === selectedClusterId) ?? null;
+  const runs = useMemo(
+    () => (selectedClusterId ? (executions ?? []).filter((execution) => execution.cluster_id === selectedClusterId) : []),
+    [executions, selectedClusterId],
+  );
+  const latestExecutionId = runs[0]?.execution_id ?? null;
+  const shownRun = runs.find((run) => run.execution_id === result?.execution_id) ?? null;
+
+  // A different cluster: its own error and result.
+  useEffect(() => {
+    setRunError(null);
+  }, [selectedClusterId]);
+
+  // The cluster's latest run is shown.
+  useEffect(() => {
+    if (!selectedClusterId || !latestExecutionId) {
+      setResult(null);
+      setLoadingResult(false);
       return;
     }
-
-    if (!latestVisibleExecutionId) {
-      setResultData(null);
-      return;
-    }
-
-    const currentExecutionId = (resultData as { execution_id?: string } | null)?.execution_id ?? null;
-    if (currentExecutionId === latestVisibleExecutionId) {
-      return;
-    }
-
+    if (result?.execution_id === latestExecutionId) return;
     let cancelled = false;
-
-    fetch(API_ENDPOINTS.resultById(latestVisibleExecutionId))
+    setLoadingResult(true);
+    fetch(API_ENDPOINTS.resultById(latestExecutionId))
       .then(async (response) => {
-        if (!response.ok) {
-          throw new Error("Failed to load latest execution result");
-        }
-        return response.json();
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return (await response.json()) as RunResult;
       })
       .then((data) => {
-        if (!cancelled) {
-          setResultData(data as DataTabResultData);
-        }
+        if (!cancelled) setResult(data);
       })
-      .catch((error) => {
-        if (!cancelled) {
-          console.error("Error loading latest cluster execution result:", error);
-          setResultData(null);
-        }
+      .catch(() => {
+        if (!cancelled) setResult(null);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingResult(false);
       });
-
     return () => {
       cancelled = true;
     };
-  }, [selectedClusterId, latestVisibleExecutionId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedClusterId, latestExecutionId]);
 
-  const handleViewExecutionData = async (executionId: string) => {
-    setExecutionModalOpen(true);
-    setLoadingExecutionData(true);
-    setViewingExecutionData(null);
+  const missingSource = Boolean(selectedCluster && (!selectedCluster.dataset_id || !selectedCluster.code_id || !selectedCluster.dataset_name || !selectedCluster.code_filename));
+
+  const run = async () => {
+    if (!selectedCluster || missingSource || running) return;
+    const clusterId = selectedCluster.id;
+    setRunning(true);
+    setRunError(null);
     try {
-      const response = await fetch(API_ENDPOINTS.resultById(executionId));
-      if (!response.ok) throw new Error("Failed to load execution data");
-      const data = await response.json();
-      setViewingExecutionData(data);
-    } catch (error) {
-      console.error("Error loading execution data:", error);
-      toast({
-        title: t("loadError"),
-        description: t("loadErrorDesc"),
-        variant: "destructive",
+      const response = await fetch(API_ENDPOINTS.execute, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dataset_id: selectedCluster.dataset_id, code_id: selectedCluster.code_id }),
       });
-      setExecutionModalOpen(false);
-    } finally {
-      setLoadingExecutionData(false);
-    }
-  };
-
-  const formatCellDisplay = (value: unknown): string => {
-    if (value === null || value === undefined) return "—";
-    if (typeof value === "number" && value === 0) return "—";
-    if (typeof value === "number") return Number(value).toLocaleString();
-    return String(value);
-  };
-
-  const handleDeleteExecution = async () => {
-    if (!executionToDelete) return;
-    setDeletingExecution(true);
-    try {
-      const response = await fetch(API_ENDPOINTS.clusterExecutionDelete(executionToDelete.id), {
-        method: "DELETE",
-      });
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error((err as { detail?: string }).detail || "Delete failed");
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload.status === "error" || !payload.execution_id) {
+        if (selectedRef.current === clusterId) {
+          setRunError({
+            message: payload.error || (typeof payload.detail === "string" ? payload.detail : "") || t("runFailedStatus", { status: response.status }),
+            line: payload.line ?? null,
+            traceback: payload.traceback ?? null,
+          });
+        }
+        return;
       }
-
-      toast({
-        title: t("deleteExecutionSuccess"),
-        description: t("deleteExecutionSuccessDesc"),
-      });
-      setExecutionToDelete(null);
-      refetchAllExecutions();
-    } catch (error) {
-      toast({
-        title: t("deleteExecutionFailed"),
-        description: error instanceof Error ? error.message : t("deleteExecutionFailedDesc"),
-        variant: "destructive",
-      });
+      const link = await fetch(API_ENDPOINTS.clusterLinkExecution(clusterId), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ execution_id: payload.execution_id }),
+      }).catch(() => null);
+      if (!link?.ok) toast({ title: t("linkFailed"), description: t("linkFailedDesc"), variant: "destructive" });
+      if (selectedRef.current === clusterId) setResult(payload as RunResult);
+      await loadExecutions().catch(() => undefined);
+    } catch (problem) {
+      if (selectedRef.current === clusterId) setRunError({ message: problem instanceof Error ? problem.message : String(problem) });
     } finally {
-      setDeletingExecution(false);
+      setRunning(false);
     }
   };
+
+  const removeRun = async () => {
+    if (!toDelete) return;
+    setDeleting(true);
+    try {
+      const response = await fetch(API_ENDPOINTS.clusterExecutionDelete(toDelete.id), { method: "DELETE" });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(typeof payload?.detail === "string" ? payload.detail : `HTTP ${response.status}`);
+      }
+      toast({ title: t("runRemoved"), description: t("runRemovedDesc") });
+      if (result?.execution_id === toDelete.execution_id) setResult(null);
+      setToDelete(null);
+      await loadExecutions().catch(() => undefined);
+    } catch (problem) {
+      toast({ title: t("removeFailed"), description: problem instanceof Error ? problem.message : t("removeFailedDesc"), variant: "destructive" });
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const loading = clusters === null;
+  const datasetName = selectedCluster?.dataset_name ?? "";
+  const codeName = selectedCluster?.code_filename ?? "";
 
   return (
-    <div className="space-y-6">
-      <div className="space-y-2">
-        <h2 className="text-base font-semibold text-foreground">{t("runViewResults")}</h2>
-        <p className="text-sm text-muted-foreground">
-          {t("runViewResultsDesc")}
-        </p>
-        <div className="pt-2">
-          <div className="min-w-[420px] rounded-xl border border-border/70 bg-gradient-to-br from-muted/70 via-card to-muted/30 px-4 py-3 shadow-sm">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="flex flex-wrap items-end gap-3">
-                <div className="w-[320px] space-y-2">
-                  <Label className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                    {t("clusterSelectionLabel")}
-                  </Label>
-                  <div className="flex items-center gap-2">
-                    <Select
-                      value={selectedClusterId ?? "__none__"}
-                      onValueChange={(v) => setSelectedClusterId(v === "__none__" ? null : v)}
-                    >
-                      <SelectTrigger className="h-11 w-[320px] bg-background/85 text-sm font-medium">
-                        <SelectValue placeholder={t("selectClusterForRun")} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__none__">{t("selectClusterForRun")}</SelectItem>
-                        {clusters.map((c) => (
-                          <SelectItem key={c.id} value={c.id}>
-                            {c.name}{c.reporting_date ? ` (${new Date(c.reporting_date).toLocaleDateString()})` : ""}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <Button
-                      size="sm"
-                      onClick={() => setRunRequestNonce((current) => current + 1)}
-                      disabled={runControls.disabled}
-                      className="h-11 min-w-[136px] shrink-0 px-4"
-                    >
-                      {runControls.executing ? (
-                        <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                      ) : (
-                        <Play className="mr-2 h-4 w-4" />
-                      )}
-                      {runControls.label || tResult("runCode")}
-                    </Button>
-                  </div>
-                </div>
-              </div>
-              {selectedCluster?.reporting_date && (
-                <div className="mt-8 inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/80 px-3 py-1 text-xs text-muted-foreground">
-                  <CalendarDays className="h-3.5 w-3.5" />
-                  <span>{new Date(selectedCluster.reporting_date).toLocaleDateString()}</span>
-                </div>
-              )}
-            </div>
+    <div className="space-y-5 pb-16">
+      <PageHeader icon={ChartColumnBig} title={t("title")} description={t("description")}>
+        <button type="button" className={SECONDARY_BUTTON} onClick={() => void loadAll()} aria-label={t("refresh")}>
+          <RefreshCw className="h-4 w-4" />
+          {t("refresh")}
+        </button>
+      </PageHeader>
 
-            {selectedCluster && (
-              <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                <div className="rounded-lg border border-border/60 bg-background/75 px-3 py-2">
-                  <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                    <Database className="h-3.5 w-3.5" />
-                    <span>{t("dataset")}</span>
-                  </div>
-                  <p className="mt-1 truncate text-sm font-medium text-foreground">
-                    {selectedCluster.dataset_name || "—"}
-                  </p>
-                </div>
-                <div className="rounded-lg border border-border/60 bg-background/75 px-3 py-2">
-                  <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                    <FileCode2 className="h-3.5 w-3.5" />
-                    <span>{t("code")}</span>
-                  </div>
-                  <p className="mt-1 truncate text-sm font-medium text-foreground">
-                    {selectedCluster.code_filename || "—"}
-                  </p>
-                </div>
-              </div>
+      <section className={cn(PANEL, "p-5")} aria-label={t("runTitle")}>
+        <div className="flex flex-wrap items-end gap-4">
+          <div className="min-w-[240px] max-w-[340px] flex-1 space-y-1.5">
+            <label className={EYEBROW} htmlFor="results-cluster">{t("cluster")}</label>
+            {loading ? (
+              <Skeleton className="h-10 w-full bg-[#121821]" />
+            ) : (
+              <Select value={selectedClusterId ?? "__none__"} onValueChange={(value) => setSelectedClusterId(value === "__none__" ? null : value)}>
+                <SelectTrigger id="results-cluster" className={TRIGGER} aria-label={t("cluster")}>
+                  <SelectValue placeholder={t("selectCluster")} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">{t("selectCluster")}</SelectItem>
+                  {(clusters ?? []).map((cluster) => (
+                    <SelectItem key={cluster.id} value={cluster.id}>
+                      {cluster.name}
+                      {cluster.reporting_date ? ` · ${formatDay(cluster.reporting_date, locale)}` : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             )}
           </div>
+
+          <div className="order-last grid w-full min-w-0 grid-cols-3 gap-2.5 2xl:order-none 2xl:w-auto 2xl:flex-1">
+            <FactTile icon={Database} label={t("dataset")} value={!selectedCluster ? "–" : selectedCluster.dataset_name ? withVersion(selectedCluster.dataset_name, selectedCluster.dataset_version) : t("missing")} warning={Boolean(selectedCluster && !selectedCluster.dataset_name)} />
+            <FactTile icon={FileCode2} label={t("code")} value={!selectedCluster ? "–" : selectedCluster.code_filename ? withVersion(selectedCluster.code_filename, selectedCluster.code_version) : t("missing")} mono={Boolean(selectedCluster?.code_filename)} warning={Boolean(selectedCluster && !selectedCluster.code_filename)} />
+            <FactTile icon={CalendarDays} label={t("reportingDate")} value={selectedCluster ? formatDay(selectedCluster.reporting_date, locale) : "–"} />
+          </div>
+
+          <button type="button" className={cn(PRIMARY_BUTTON, "ml-auto h-10 min-w-[148px] justify-center")} onClick={() => void run()} disabled={!selectedCluster || missingSource || running}>
+            {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+            {running ? t("running") : t("run")}
+          </button>
         </div>
-      </div>
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base font-semibold">{t("allExecutions")}</CardTitle>
-          <p className="text-sm text-muted-foreground">
-            {t("allExecutionsDesc")}
-          </p>
-        </CardHeader>
-        <CardContent>
-          {loadingExecutions ? (
-            <p className="text-sm text-muted-foreground">{t("loading")}</p>
-          ) : visibleExecutions.length === 0 ? (
-            <p className="text-sm text-muted-foreground">{t("noExecutionsYet")}</p>
+        <p className="mt-3 text-[12px] text-[#8c96a8]">
+          {loadFailed ? (
+            <span className="text-rose-300">{t("loadFailed")}</span>
+          ) : !loading && !(clusters ?? []).length ? (
+            t("noClusters")
+          ) : !selectedCluster ? (
+            t("pickCluster")
+          ) : missingSource ? (
+            <span className="text-amber-300">{t("missingSource")}</span>
           ) : (
-            <div className="max-h-[400px] overflow-y-auto rounded-md border border-border">
-              <Table>
-                <TableHeader className="sticky top-0 bg-muted/95 z-10">
-                  <TableRow className="hover:bg-transparent">
-                    <TableHead className="font-semibold">{t("cluster")}</TableHead>
-                    <TableHead className="font-semibold">{t("repDate")}</TableHead>
-                    <TableHead className="font-semibold">{t("dataset")}</TableHead>
-                    <TableHead className="font-semibold">{t("code")}</TableHead>
-                    <TableHead className="font-semibold">{t("timestamp")}</TableHead>
-                    <TableHead className="font-semibold text-right">{t("values")}</TableHead>
-                    <TableHead className="font-semibold w-[80px]">{t("actions")}</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {visibleExecutions.map((ex) => (
-                    <TableRow key={ex.id}>
-                      <TableCell className="font-medium">{ex.cluster_name ?? "—"}</TableCell>
-                      <TableCell>{ex.cluster_reporting_date ? new Date(ex.cluster_reporting_date).toLocaleDateString() : "—"}</TableCell>
-                      <TableCell>
-                        {ex.dataset_name != null ? `${ex.dataset_name}${ex.dataset_version ? ` (${ex.dataset_version})` : ""}` : "—"}
-                      </TableCell>
-                      <TableCell>
-                        {ex.code_filename != null
-                          ? `${ex.code_filename}${ex.code_version ? ` (${ex.code_version})` : ""}`
-                          : ex.code_version ?? "—"}
-                      </TableCell>
-                      <TableCell className="text-xs text-muted-foreground">
-                        {new Date(ex.executed_date).toLocaleString()}
-                      </TableCell>
-                      <TableCell className="text-right">{ex.summary?.total_values_computed ?? 0}</TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-1">
-                          <TooltipProvider>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-8 w-8"
-                                  onClick={() => handleViewExecutionData(ex.execution_id)}
-                                >
-                                  <Maximize2 className="h-4 w-4" />
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                <p>{t("viewData")}</p>
-                              </TooltipContent>
-                            </Tooltip>
-                          </TooltipProvider>
-
-                          <TooltipProvider>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
-                                  onClick={() => setExecutionToDelete(ex)}
-                                  disabled={deletingExecution}
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                <p>{t("deleteExecution")}</p>
-                              </TooltipContent>
-                            </Tooltip>
-                          </TooltipProvider>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+            t("runHint", { code: codeName, dataset: datasetName })
           )}
-        </CardContent>
-      </Card>
+        </p>
+      </section>
 
-      <ResultDataSection
-        isLoading={isLoading}
-        datasetId={selectedDatasetId}
-        selectedCodeId={selectedCodeId}
-        selectedClusterId={selectedClusterId}
-        executionTimestamp={displayedExecutionTimestamp}
-        runRequestNonce={runRequestNonce}
-        onRunActionStateChange={setRunControls}
-        resultData={resultData}
-        onResultDataChange={(data) => setResultData(data as DataTabResultData)}
-        onRunComplete={refetchAllExecutions}
+      {selectedCluster ? (
+        <>
+          <ResultDataSection
+            result={result}
+            runAt={shownRun?.executed_date ?? null}
+            loading={loadingResult}
+            running={running}
+            error={runError}
+            codeName={codeName}
+            datasetName={datasetName}
+            onDismissError={() => setRunError(null)}
+          />
+
+          <section className={PANEL} aria-label={t("runsTitle")}>
+            <div className="flex flex-wrap items-center gap-3 border-b border-[#1f252e] px-5 py-3.5">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[#252a33] bg-[#0f141b]">
+                <History className="h-4 w-4 text-[#aab3c2]" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <h3 className="flex items-center gap-2 text-[14px] font-semibold text-white">
+                  {t("runsTitle")}
+                  {executions ? <Tag className="font-mono">{runs.length}</Tag> : null}
+                </h3>
+                <p className="mt-0.5 text-[12px] text-[#8c96a8]">{t("runsDescription", { cluster: selectedCluster.name })}</p>
+              </div>
+            </div>
+            {executions === null ? (
+              <div className="space-y-2 p-5">
+                {[0, 1].map((index) => <Skeleton key={index} className="h-10 w-full bg-[#121821]" />)}
+              </div>
+            ) : !runs.length ? (
+              <EmptyState icon={History} title={t("noRunsTitle")} hint={t("noRunsHint")} className="py-9" />
+            ) : (
+              <div className="max-h-[360px] overflow-auto">
+                <table className="w-full border-separate border-spacing-0 text-[12.5px]">
+                  <thead className="sticky top-0 z-10 bg-[#0f141b]">
+                    <tr className="whitespace-nowrap text-left text-[10.5px] font-semibold uppercase tracking-[0.14em] text-[#687386]">
+                      <th scope="col" className="border-b border-[#1f252e] px-5 py-2 font-semibold">{t("colRun")}</th>
+                      <th scope="col" className="border-b border-[#1f252e] px-3 py-2 font-semibold">{t("dataset")}</th>
+                      <th scope="col" className="border-b border-[#1f252e] px-3 py-2 font-semibold">{t("code")}</th>
+                      <th scope="col" className="border-b border-[#1f252e] px-3 py-2 text-right font-semibold">{t("colValues")}</th>
+                      <th scope="col" className="w-[92px] border-b border-[#1f252e] px-5 py-2"><span className="sr-only">{t("colActions")}</span></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {runs.map((entry) => {
+                      const shown = entry.execution_id === result?.execution_id;
+                      return (
+                        <tr key={entry.id} className={cn("group transition-colors hover:bg-white/[0.02]", shown && "bg-[#f5c400]/[0.04]")}>
+                          <td className="whitespace-nowrap border-b border-[#161b22] px-5 py-2.5">
+                            <div className="flex items-center gap-2">
+                              <span className="text-[#e5e9f0]" title={formatDateTime(entry.executed_date, locale)}>{formatDateTime(entry.executed_date, locale)}</span>
+                              {shown ? <Tag tone="gold">{t("shownTag")}</Tag> : null}
+                            </div>
+                            <span className="text-[11px] text-[#687386]">{relativeTime(entry.executed_date, locale)}</span>
+                          </td>
+                          <td className="max-w-[240px] truncate border-b border-[#161b22] px-3 py-2.5 text-[#c9d1dc]" title={withVersion(entry.dataset_name, entry.dataset_version)}>
+                            {withVersion(entry.dataset_name, entry.dataset_version)}
+                          </td>
+                          <td className="max-w-[240px] truncate border-b border-[#161b22] px-3 py-2.5 font-mono text-[12px] text-[#c9d1dc]" title={withVersion(entry.code_filename, entry.code_version)}>
+                            {withVersion(entry.code_filename, entry.code_version)}
+                          </td>
+                          <td className="border-b border-[#161b22] px-3 py-2.5 text-right font-mono tabular-nums text-emerald-300">
+                            {(entry.summary?.total_values_computed ?? 0).toLocaleString(locale)}
+                          </td>
+                          <td className="border-b border-[#161b22] px-5 py-2.5">
+                            <div className="flex items-center justify-end gap-0.5">
+                              <IconAction label={t("viewData")} onClick={() => setViewing(entry)}>
+                                <Maximize2 className="h-3.5 w-3.5" />
+                              </IconAction>
+                              <IconAction label={t("removeRun")} tone="danger" onClick={() => setToDelete(entry)} disabled={deleting}>
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </IconAction>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        </>
+      ) : !loading && (clusters ?? []).length ? (
+        <section className={PANEL}>
+          <EmptyState icon={ChartColumnBig} title={t("pickClusterTitle")} hint={t("pickCluster")} />
+        </section>
+      ) : null}
+
+      <RunDataDialog
+        executionId={viewing?.execution_id ?? null}
+        title={t("runOf", { cluster: viewing?.cluster_name ?? selectedCluster?.name ?? "" })}
+        description={viewing ? `${formatDateTime(viewing.executed_date, locale)} · ${withVersion(viewing.dataset_name, viewing.dataset_version)} · ${withVersion(viewing.code_filename, viewing.code_version)}` : undefined}
+        onClose={() => setViewing(null)}
       />
 
-      {/* Execution data modal (same as Clusters tab View data) */}
-      {executionModalOpen && (
-        <div className="fixed inset-0 z-50 bg-background/95 backdrop-blur-sm flex items-center justify-center p-4 md:p-8 overflow-y-auto">
-          <div className="w-full max-w-7xl flex flex-col gap-4 my-auto">
-            <div className="flex items-center justify-between gap-4 sticky top-0 bg-background/95 backdrop-blur-sm pb-4 z-10">
-              <div className="flex-1 min-w-0">
-                <h3 className="text-xl md:text-2xl font-semibold text-foreground truncate">
-                  {t("executionResults")}
-                </h3>
-                <p className="text-sm text-muted-foreground mt-1">
-                  {t("executionResultsDesc")}
-                </p>
-              </div>
-              <button
-                onClick={() => setExecutionModalOpen(false)}
-                className="p-2 md:p-3 rounded-lg bg-card border border-border text-muted-foreground hover:text-foreground hover:bg-accent transition-all"
-                aria-label="Close"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <div className="space-y-6 pb-8">
-              {loadingExecutionData ? (
-                <div className="flex items-center justify-center py-12">
-                  <div className="text-center">
-                    <RefreshCw className="h-8 w-8 animate-spin mx-auto mb-2 text-muted-foreground" />
-                    <p className="text-sm text-muted-foreground">{t("loadingExecutionData")}</p>
-                  </div>
-                </div>
-              ) : viewingExecutionData ? (
-                <div className="space-y-4">
-                  <div className="grid grid-cols-3 gap-4 p-4 bg-muted rounded-lg">
-                    <div>
-                      <Label className="text-xs text-muted-foreground">{t("rowsProcessed")}</Label>
-                      <p className="text-lg font-semibold">
-                        {viewingExecutionData.summary?.rows_processed ?? 0}
-                      </p>
-                    </div>
-                    <div>
-                      <Label className="text-xs text-muted-foreground">{t("totalValuesComputed")}</Label>
-                      <p className="text-lg font-semibold">
-                        {viewingExecutionData.summary?.total_values_computed ?? 0}
-                      </p>
-                    </div>
-                    <div>
-                      <Label className="text-xs text-muted-foreground">{t("columns")}</Label>
-                      <p className="text-lg font-semibold">
-                        {viewingExecutionData.summary?.columns?.length ?? 0}
-                      </p>
-                    </div>
-                  </div>
-                  {viewingExecutionData.summary?.computed_by_column &&
-                   Object.keys(viewingExecutionData.summary.computed_by_column).length > 0 && (
-                    <div>
-                      <Label className="mb-2 block">{t("computedByColumn")}</Label>
-                      <div className="grid grid-cols-2 gap-2">
-                        {Object.entries(viewingExecutionData.summary.computed_by_column).map(
-                          ([column, count]) => (
-                            <div
-                              key={column}
-                              className="flex justify-between items-center p-2 bg-muted rounded"
-                            >
-                              <span className="text-sm font-medium">{column}</span>
-                              <Badge>{count as number} {t("valuesComputed")}</Badge>
-                            </div>
-                          )
-                        )}
-                      </div>
-                    </div>
-                  )}
-                  <div>
-                    <Label className="mb-2 block">{t("resultDataLabel")}</Label>
-                    <div className="border rounded-lg overflow-hidden">
-                      <div className="max-h-[400px] overflow-auto">
-                        <Table>
-                          <TableHeader>
-                            <TableRow>
-                              {viewingExecutionData.summary?.columns?.map((col: string) => (
-                                <TableHead key={col}>{col}</TableHead>
-                              ))}
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            {((viewingExecutionData.data ?? []) as Record<string, unknown>[]).map((row, rowIndex) => (
-                              <TableRow key={rowIndex}>
-                                {(viewingExecutionData.summary?.columns ?? []).map((col: string) => {
-                                  const isComputed = (viewingExecutionData.computed_cells ?? []).some(
-                                    (cell: { row: number; column: string }) =>
-                                      cell.row === rowIndex && cell.column === col
-                                  );
-                                  return (
-                                    <TableCell
-                                      key={col}
-                                      className={
-                                        isComputed ? "bg-green-100 dark:bg-green-900/20" : ""
-                                      }
-                                    >
-                                      {formatCellDisplay(row[col])}
-                                    </TableCell>
-                                  );
-                                })}
-                              </TableRow>
-                            ))}
-                          </TableBody>
-                        </Table>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <p className="text-center text-muted-foreground py-8">{t("noDataAvailable")}</p>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      <AlertDialog
-        open={!!executionToDelete}
-        onOpenChange={(open) => {
-          if (!open && !deletingExecution) setExecutionToDelete(null);
-        }}
-      >
-        <AlertDialogContent>
+      <AlertDialog open={toDelete !== null} onOpenChange={(open) => { if (!open && !deleting) setToDelete(null); }}>
+        <AlertDialogContent className="border-[#252a33] bg-[#0b0f15]">
           <AlertDialogHeader>
-            <AlertDialogTitle>{t("deleteExecutionQuestion")}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t("deleteExecutionWarning")}
+            <AlertDialogTitle className="text-white">{t("removeRunTitle")}</AlertDialogTitle>
+            <AlertDialogDescription className="text-[#aab3c2]">
+              {t("removeRunBody", { time: toDelete ? formatDateTime(toDelete.executed_date, locale) : "" })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={deletingExecution}>{t("cancel")}</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDeleteExecution} disabled={deletingExecution}>
-              {deletingExecution ? t("deleting") : t("delete")}
+            <AlertDialogCancel disabled={deleting}>{t("cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-rose-500 text-white hover:bg-rose-500/90"
+              disabled={deleting}
+              onClick={(event) => {
+                event.preventDefault();
+                void removeRun();
+              }}
+            >
+              {deleting ? t("removing") : t("remove")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

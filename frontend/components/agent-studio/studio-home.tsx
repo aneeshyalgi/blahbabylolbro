@@ -1,6 +1,6 @@
 "use client";
 
-import { KeyboardEvent, useMemo, useRef, useState } from "react";
+import { KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowRight, Check, Loader2, PenLine, Sparkles, Wand2 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
@@ -93,8 +93,19 @@ export function StudioHome({
   onUseTemplate: (template: AgentTemplate) => void;
   onStartBlank: () => void;
 }) {
-  const { t, toolLabel, toolDescription } = useStudioText();
+  const { t, plural, toolLabel, toolDescription } = useStudioText();
   const [prompt, setPrompt] = useState("");
+  // Designing takes up to about a minute; the elapsed time shows that it is still working.
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (!generating) {
+      setElapsed(0);
+      return;
+    }
+    const started = Date.now();
+    const timer = window.setInterval(() => setElapsed(Math.floor((Date.now() - started) / 1000)), 1000);
+    return () => window.clearInterval(timer);
+  }, [generating]);
   const briefRef = useRef<HTMLElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const toolsByName = useMemo(() => new Map(tools.map((tool) => [tool.name, tool])), [tools]);
@@ -197,9 +208,9 @@ export function StudioHome({
                   <span className="mt-3 text-sm font-semibold text-white">{template.definition.name}</span>
                   <span className="mt-1 line-clamp-2 text-xs leading-5 text-[#8c96a8]">{template.tagline}</span>
                   <span className="mt-3 flex items-center gap-2 text-[10.5px] text-[#687386]">
-                    <span>{t("home.stepCount", { count: stepCount })}</span>
+                    <span>{plural("home.stepCount", stepCount)}</span>
                     <span aria-hidden="true">·</span>
-                    <span>{t("home.toolCount", { count: template.definition.tools.length })}</span>
+                    <span>{plural("home.toolCount", template.definition.tools.length)}</span>
                   </span>
                 </button>
               );
@@ -259,9 +270,13 @@ export function StudioHome({
                 ))}
               </div>
               <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-[#1c222b] pt-4">
-                <span className="text-[11px] text-[#687386]">
-                  {selected ? t("home.shortcut2") : t("home.shortcut")}
-                  {!selected ? (
+                <span className="text-[11px] text-[#687386]" role={generating ? "status" : undefined}>
+                  {generating ? (
+                    <span className="text-[#aeb8c7]">
+                      {t("home.designingHint", { time: `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, "0")}` })}
+                    </span>
+                  ) : selected ? t("home.shortcut2") : t("home.shortcut")}
+                  {!selected && !generating ? (
                     <>
                       {" · "}
                       <button type="button" onClick={onStartBlank} disabled={generating} className="underline-offset-2 hover:text-white hover:underline">
@@ -331,7 +346,7 @@ export function StudioHome({
                       ))}
                     </ol>
                     {steps.length > BLUEPRINT_STEP_LIMIT ? (
-                      <p className="mt-2 pl-9 text-[11px] text-[#687386]">{t("home.moreSteps", { count: steps.length - BLUEPRINT_STEP_LIMIT })}</p>
+                      <p className="mt-2 pl-9 text-[11px] text-[#687386]">{plural("home.moreSteps", steps.length - BLUEPRINT_STEP_LIMIT)}</p>
                     ) : null}
                     <div className="blueprint-in mt-5 flex flex-wrap gap-1.5" style={{ animationDelay: `${80 + Math.min(steps.length, BLUEPRINT_STEP_LIMIT) * 45}ms` }}>
                       {selected.definition.tools.map((name) => {

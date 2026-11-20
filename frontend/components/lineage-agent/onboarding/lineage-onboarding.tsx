@@ -49,11 +49,10 @@ import {
   type EvidencePart,
   type LineageLocale,
   type LineageOnboardingCopy,
+  type ResultPart,
   type TourStage,
   type TourStepDef,
 } from "./lineage-onboarding-content";
-
-export const LINEAGE_ONBOARDING_STORAGE_KEY = "dataflow_lineage_onboarding_v2";
 
 /** What the tour needs from the lineage tab: its state and the actions it may perform for the user. */
 export type LineageTourController = {
@@ -123,15 +122,6 @@ export function LineageOnboarding({
 
   if (!open || !mounted) return null;
 
-  const finish = () => {
-    try {
-      localStorage.setItem(LINEAGE_ONBOARDING_STORAGE_KEY, "done");
-    } catch {
-      // Storage unavailable; the tour simply shows again next time.
-    }
-    onClose();
-  };
-
   return createPortal(
     <div ref={rootRef} className="ob-root" lang={language}>
       {phase === "deck" ? (
@@ -139,16 +129,16 @@ export function LineageOnboarding({
           copy={copy}
           language={language}
           setLanguage={setLanguage}
-          onSkip={finish}
+          onSkip={onClose}
           onStartTour={() => {
             onStartTour();
             setPhase("tour");
           }}
         />
       ) : phase === "tour" ? (
-        <SpotlightTour copy={copy} controller={controller} onDone={() => setPhase("complete")} onSkip={finish} />
+        <SpotlightTour copy={copy} controller={controller} onDone={() => setPhase("complete")} onSkip={onClose} />
       ) : (
-        <CompletionCard copy={copy} onFinish={finish} />
+        <CompletionCard copy={copy} onFinish={onClose} />
       )}
       <style>{ONBOARDING_CSS}</style>
       <style>{LINEAGE_CSS}</style>
@@ -284,7 +274,6 @@ function WelcomeDeck({
               {screen === "graph" ? <GraphScreen copy={copy} /> : null}
               {screen === "result" ? <ResultScreen copy={copy} /> : null}
               {screen === "evidence" ? <EvidenceScreen copy={copy} language={language} /> : null}
-              {screen === "controls" ? <ControlsScreen copy={copy} /> : null}
               {screen === "ready" ? <ReadyScreen copy={copy} onStart={startTour} /> : null}
             </div>
           </div>
@@ -881,21 +870,8 @@ function ResultScreen({ copy }: { copy: LineageOnboardingCopy }) {
 }
 
 /** A wireframe of one part of the result screen. */
-function ResultSketch({ kind }: { kind: "overview" | "graph" | "details" | "script" | "checks" }) {
+function ResultSketch({ kind }: { kind: ResultPart }) {
   const bar = "block h-1.5 rounded-full bg-[#1f2630]";
-  if (kind === "overview") {
-    return (
-      <span className="mt-2 block">
-        <span className={cn(bar, "w-11/12")} />
-        <span className={cn(bar, "mt-1 w-3/4")} />
-        <span className="mt-2 grid grid-cols-4 gap-1.5">
-          {["13", "12", "100 %", "10"].map((value) => (
-            <span key={value} className="rounded border border-[#1f2630] bg-[#0f141b] px-1.5 py-1 font-mono text-[10px] font-semibold text-white">{value}</span>
-          ))}
-        </span>
-      </span>
-    );
-  }
   if (kind === "graph") {
     const nodes: [number, number, string][] = [[4, 6, "#64748b"], [4, 34, "#22d3ee"], [92, 6, "#34d399"], [92, 34, "#34d399"], [180, 20, "#34d399"], [268, 20, "#34d399"]];
     const links: [number, number][] = [[0, 2], [1, 3], [2, 4], [3, 4], [4, 5]];
@@ -936,7 +912,6 @@ function ResultSketch({ kind }: { kind: "overview" | "graph" | "details" | "scri
     <span className="mt-1.5 flex items-center gap-2 rounded border border-[#1f2630] bg-[#0f141b] px-2 py-1">
       <ArrowRight className="h-3 w-3 text-[#5d6878]" />
       <span className={cn(bar, "w-1/3")} />
-      {kind === "checks" && <span className="ml-auto font-mono text-[9.5px] text-emerald-300">9 / 9</span>}
     </span>
   );
 }
@@ -1066,31 +1041,6 @@ function EvidenceScreen({ copy, language }: { copy: LineageOnboardingCopy; langu
           )}
         </div>
       </div>
-    </div>
-  );
-}
-
-function ControlsScreen({ copy }: { copy: LineageOnboardingCopy }) {
-  return (
-    <div>
-      <ScreenHeading eyebrow={copy.controls.eyebrow} title={copy.controls.title} intro={copy.controls.intro} />
-      <div className="mt-5 grid gap-2 lg:grid-cols-3">
-        {copy.controls.rules.map((rule, ruleIndex) => (
-          <div key={rule.title} className="ob-rise flex gap-3 rounded-xl border border-[#1f2630] bg-[#0b1017] px-3.5 py-3" style={{ animationDelay: `${120 + ruleIndex * 70}ms` }}>
-            <svg viewBox="0 0 24 24" className="mt-0.5 h-5 w-5 shrink-0" aria-hidden="true">
-              <circle cx="12" cy="12" r="10.5" fill="rgba(52,211,153,0.08)" stroke="#34d399" strokeWidth="1.3" className="ob-draw" style={{ "--len": 66, animationDelay: `${240 + ruleIndex * 70}ms` } as CSSProperties} />
-              <path d="M7.2 12.4l3.2 3.2 6.4-6.6" fill="none" stroke="#34d399" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="ob-draw" style={{ "--len": 16, animationDelay: `${640 + ruleIndex * 70}ms` } as CSSProperties} />
-            </svg>
-            <div>
-              <h3 className="text-[13px] font-semibold text-white">{rule.title}</h3>
-              <p className="mt-0.5 text-[11.5px] leading-[1.5] text-[#aeb8c7]">{rule.text}</p>
-            </div>
-          </div>
-        ))}
-      </div>
-      <p className="ob-rise mt-4 rounded-xl border border-[#f5c400]/25 bg-[#f5c400]/[0.05] px-4 py-3 text-xs leading-5 text-[#d6dbe3]" style={{ animationDelay: "820ms" }}>
-        {copy.controls.note}
-      </p>
     </div>
   );
 }

@@ -37,11 +37,14 @@ export function parseProcedure(text: string): { intro: string; steps: string[] }
     else if (steps.length) steps[steps.length - 1] += `\n${line}`;
     else intro.push(line);
   }
-  return { intro: intro.join("\n").trim(), steps: steps.map((step) => step.trimEnd()) };
+  // Text is kept as typed (no trimming): the editor rebuilds the instructions on every keystroke, so trimming here
+  // would swallow the space or line break the user just typed. Only blank lines before the intro are dropped.
+  const introText = intro.join("\n");
+  return { intro: introText.trim() ? introText.replace(/^(?:[ \t]*\n)+/, "") : "", steps };
 }
 
 export function serializeProcedure(intro: string, steps: string[]): string {
-  return [intro.trim(), ...steps.map((step, index) => `${index + 1}. ${step}`.trimEnd())].filter(Boolean).join("\n");
+  return [intro.trim() ? intro : "", ...steps.map((step, index) => `${index + 1}. ${step}`)].filter(Boolean).join("\n");
 }
 
 function splitIntoSteps(text: string): string[] {

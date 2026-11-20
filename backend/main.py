@@ -21,6 +21,7 @@ import shutil
 import threading
 import time
 from datetime import date, datetime
+from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple
@@ -37,7 +38,10 @@ import pdf_text
 import regulation_matcher
 import lineage_agent
 import content_lineage_agent
+import rootcause_analysis
+import rootcause_review
 import regulation_text
+import code_generator
 
 # Static content mirrored from frontend-only tabs (Regulations hardcoded example,
 # Release notes summary) so the chatbot can answer about them regardless of the
@@ -83,11 +87,15 @@ EXAMPLE_REGULATIONS: List[Dict[str, Any]] = [
 
 class GenerateCodeRequest(PydanticBaseModel):
     dataset_id: str
-    prompt: Optional[str] = None  # Optional description/formulas for filling cells
+    prompt: Optional[str] = None  # the user's instructions: rules or formulas for the empty cells
+    table_id: Optional[str] = None  # None: the first table, which the Results tab runs code on
+    language: Optional[str] = None  # language of the assumptions the page shows (en, de, es)
 
 
 class AutoColumnInstructionsRequest(PydanticBaseModel):
-    columns: List[str]
+    dataset_id: Optional[str] = None  # drafts rules from the table itself (preferred)
+    columns: List[str] = []  # without dataset_id: rules from the column names only
+    language: Optional[str] = None
 
 
 class ChatMessage(PydanticBaseModel):
@@ -101,8 +109,6 @@ class ChatRequest(PydanticBaseModel):
 
 
 app = FastAPI(title="RWA Backend API")
-
-NORMAL_ROOTCAUSE_SESSIONS: Dict[str, Dict[str, Any]] = {}
 
 # Seed default admin user on startup (idempotent)
 db.seed_default_user()
@@ -159,8 +165,12 @@ REGULATIONS_DIR = Path(
 RELEASE_NOTES_SHEET_RANGES: Dict[str, Tuple[str, str]] = {
     "rwa release notes": ("A1", "J4"),
 }
-SPECIAL_RELEASE_NOTES_FILENAME = "iref release notes_1.xlsm"
-SPECIAL_RELEASE_NOTES_VISIBLE_SHEET = "rwa release notes"
+# Workbooks whose release notes sit in one sheet only, by uploaded file name (see _release_note_file_key): the one
+# sheet that is shown and read, and its cell range (None: RELEASE_NOTES_SHEET_RANGES or the whole sheet).
+SPECIAL_RELEASE_NOTE_WORKBOOKS: Dict[str, Tuple[str, Optional[Tuple[str, str]]]] = {
+    "iref release notes 1.xlsm": ("rwa release notes", None),
+    "rwa release notes 1.xlsm": ("abacus360 r7.18.0.00", ("A3", "K6")),
+}
 CHAT_RELEASE_NOTES_MAX_SHEETS_PER_WORKBOOK = 12
 CHAT_RELEASE_NOTES_MAX_ROWS_PER_SHEET = 140
 CHAT_RELEASE_NOTES_MAX_COLS_PER_SHEET = 24
@@ -900,27 +910,28 @@ async def upload_code(
     file_path = CODE_DIR / f"{code_id}.py"
     upload_date = _german_now_timestamp().isoformat()
     
-    # Save file
     content = await file.read()
-    code_string = content.decode('utf-8')
+    try:
+        code_string = content.decode('utf-8')
+    except UnicodeDecodeError as e:
+        raise HTTPException(400, "The file is not UTF-8 text.") from e
+
+    # Only valid Python is stored: an invalid file used to be written to disk but left out of the database, so the
+    # upload looked successful while the file never appeared.
+    try:
+        compile(code_string, '<string>', 'exec')
+    except SyntaxError as e:
+        location = f"line {e.lineno}" if e.lineno else "unknown line"
+        raise HTTPException(400, f"Invalid Python syntax at {location}: {e.msg}") from e
+    syntax_valid = True
+    error = None
 
     # newline="" keeps the file's own line endings; text mode on Windows would turn "\r\n" into "\r\r\n",
     # doubling every line number that lineage and the AI agents cite.
     with open(file_path, "w", encoding="utf-8", newline="") as f:
         f.write(code_string)
-    
-    # Basic validation
-    try:
-        compile(code_string, '<string>', 'exec')
-        syntax_valid = True
-        error = None
-    except SyntaxError as e:
-        syntax_valid = False
-        error = str(e)
-    
-    # Store in database
-    if syntax_valid:
-        db.store_code_file(code_id, file.filename, upload_date, version, description)
+
+    db.store_code_file(code_id, file.filename, upload_date, version, description)
     
     # Store metadata (for backward compatibility)
     metadata = {
@@ -955,9 +966,8 @@ def get_code(code_id: str):
     
     if not os.path.exists(file_path):
         raise HTTPException(404, "Code file not found")
-    
-    with open(file_path) as f:
-        return {"content": f.read()}
+
+    return {"content": _read_code_text(file_path)}
 
 
 @app.put("/api/code/{code_id}")
@@ -980,7 +990,8 @@ def update_code(code_id: str, request: dict):
 
     temporary_path = file_path.with_suffix(".py.tmp")
     try:
-        with open(temporary_path, "w", encoding="utf-8") as f:
+        # newline="" writes the editor's "\n" as is (text mode on Windows would store "\r\n").
+        with open(temporary_path, "w", encoding="utf-8", newline="") as f:
             f.write(content)
         os.replace(temporary_path, file_path)
         
@@ -1010,420 +1021,38 @@ def delete_code_endpoint(code_id: str):
 
 @app.post("/api/generate-code")
 def generate_code(request: GenerateCodeRequest):
-    """Generate Python code to fill missing values using Azure OpenAI. Uses dataset metadata and optional user prompt."""
-    openai_api_key = os.environ.get("OPENAI_API_KEY")
-    openai_model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
-    api_key = os.environ.get("AZURE_OPENAI_API_KEY")
-    endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
-    api_version = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-10-21")
-    deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o")
-    metadata = db.get_dataset_metadata(request.dataset_id)
-    if not metadata:
-        raise HTTPException(404, "Dataset not found")
-
-    tables = metadata.get("tables") or []
-    if not tables:
-        raise HTTPException(400, "Dataset has no tables")
-
-    # Use first table: column names and optional sample for context
-    table = tables[0]
-    table_id = table.get("id", "")
-    columns = table.get("columns") or []
-    col_names = [c.get("name") or "" for c in columns if c.get("name")]
-    dataset_name = metadata.get("user_name") or request.dataset_id
-
-    if not openai_api_key and (not api_key or not endpoint):
-        raise HTTPException(
-            503,
-            "OpenAI is not configured. Set OPENAI_API_KEY, or set AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT in .env",
-        )
-
-    # `sample_rows` shows the model rows that still have gaps (what needs filling).
-    # `complete_rows` are fully-populated rows the model must use to derive real formulas/relationships
-    # between columns instead of guessing or defaulting to 0/null.
-    sample_rows: List[Dict[str, Any]] = []
-    complete_rows: List[Dict[str, Any]] = []
+    """AI writes Python that fills the empty cells of the dataset's table (see code_generator). Every answer is
+    test-run in the sandbox /api/execute uses, on the input table a Results run uses, before the page gets it."""
+    frame, metadata, _table = _load_execution_input(request.dataset_id, request.table_id)
+    dataset_name = metadata.get("user_name") or metadata.get("filename") or request.dataset_id
     try:
-        df = db.get_table_data(dataset_name, table_id, "input_data")
-        if not df.empty and len(df) > 0:
-            clean_df = df.replace([float("inf"), float("-inf")], np.nan)
-            fully_populated = clean_df[clean_df.notna().all(axis=1)]
-            if not fully_populated.empty:
-                complete_rows = _sample_rows_for_llm(fully_populated.head(10).to_dict(orient="records"))
-            sample_rows = _sample_rows_for_llm(clean_df.head(5).to_dict(orient="records"))
-    except Exception:
-        pass
-
-    # If no sample from DB (e.g. table not found or empty), try loading from Excel like execute does
-    if not sample_rows:
-        dataset_path = DATASETS_DIR / f"{request.dataset_id}.xlsx"
-        if os.path.exists(dataset_path):
-            try:
-                workbook = openpyxl.load_workbook(dataset_path, data_only=True)
-                worksheet = workbook[table["sheet"]]
-                rwa_filename_norm = _normalize_filename(metadata.get("filename"))
-                is_rwa_input = _is_rwa_input_filename(rwa_filename_norm)
-                is_iref_kalkulator = _is_iref_kalkulator_filename(rwa_filename_norm)
-                excel_row_offset = 1 if is_rwa_input else (2 if is_iref_kalkulator else 2)
-                data_rows = []
-                for row_idx in range(table["start_row"] + 1, table["end_row"] + 1):
-                    row_data = {}
-                    for col_info in table["columns"]:
-                        excel_row = row_idx + excel_row_offset
-                        excel_col = col_info["index"] + 1
-                        cell = worksheet.cell(row=excel_row, column=excel_col)
-                        val = None if ((is_rwa_input or is_iref_kalkulator) and _rwa_clear_cell(excel_row, excel_col, rwa_filename_norm)) else cell.value
-                        row_data[col_info["name"]] = val
-                    data_rows.append(row_data)
-                if data_rows:
-                    full_rows = [row for row in data_rows if all(v is not None for v in row.values())]
-                    if full_rows:
-                        complete_rows = _sample_rows_for_llm(full_rows[:10])
-                    sample_rows = _sample_rows_for_llm(data_rows[:5])
-            except Exception:
-                pass
-
-    # Column-level null stats so the LLM knows which columns have missing values
-    column_null_info: List[str] = []
-    for c in columns:
-        name = c.get("name") or ""
-        null_count = c.get("null_count")
-        total_count = c.get("total_count")
-        if name and null_count is not None and total_count is not None and total_count > 0:
-            column_null_info.append(f"{name}: {null_count}/{total_count} missing")
-    null_summary = "; ".join(column_null_info) if column_null_info else ""
-
-    system_prompt = """You are a Python expert specializing in reverse-engineering spreadsheet formulas from data. Generate code that modifies a pandas DataFrame named `df` in place.
-- The variable `df` is already defined (it is the dataset table loaded as a DataFrame). Do not load any file or create `df`.
-- Do not add `import pandas` or `import numpy`; they are already available as `pd` and `np`.
-- Your code must only modify `df` (fill missing values, add/compute columns, etc.) and must be runnable in an environment where `df`, `pd`, and `np` exist.
-- Missing values in `df` are pandas NaN. Use pd.isna(), df.isna(), or df.fillna() to detect and fill them. Do not compare to the string 'nan' or use df.replace('nan', ...).
-- You will be given "fully populated example rows" (no gaps) and "rows with missing values". Your primary job is to study the fully populated rows and derive the actual arithmetic/logical relationship between columns (e.g. a column that equals another column times a rate, a sum of other columns, a ratio, a lookup/mapping based on a categorical column, etc.). Verify a candidate formula against at least two or three fully populated rows before using it.
-- Once a column's formula is derived, apply that exact formula (via vectorized pandas operations, e.g. df['X'] = df['A'] * df['B'], or df.apply for conditional/categorical logic) to fill every missing value in that column. Do not hardcode the specific numbers you saw in the examples; compute from the current row's own values.
-- STRICTLY FORBIDDEN as a first resort: filling a numeric column with a constant like 0, or leaving it as null/None, when that column's values can be derived from other columns in the same row. Only fall back to a constant or statistical fill (e.g. df[col].fillna(df[col].median())) for a column when the fully populated rows show NO consistent relationship to any other column, and clearly state that reasoning is not possible to skip - still attempt the fill, just prefer median/mode over a hardcoded 0 in that specific fallback case.
-- For categorical/text columns with no derivable formula, use the most frequent existing value (mode) or a mapping learned from other rows, not a blank/'Unknown' placeholder, unless the data has no signal at all.
-- A column that is 100% missing (every value NaN) is NOT exempt from real derivation - it is the most common case for computed/regulatory fields (e.g. EAD, RWA, Risk Weight, CCF, Assessment Base) that always exist as formulas over OTHER columns and are never filled from their own history. For such a column: (1) First look for a mathematical relationship to other columns implied by its name (e.g. a column named like an exposure/EAD is typically Nominal, or Nominal combined with a conversion-factor column like CCF; a column named like RWA is typically an exposure column multiplied by a risk-weight column; a percentage/rate column like CCF or Risk Weight is typically assigned per category from a categorical column such as ProductType or Asset Class). (2) If the dataset has no numeric column to derive it from but has a categorical column (e.g. ProductType, Asset Class) that plausibly determines it, apply standard real-world regulatory/financial conventions for that field (e.g. standardized-approach credit conversion factors and risk weights by exposure/asset class) via a mapping (df['X'] = df['Category'].map({...}).fillna(<sensible default>)). (3) Only if the column name and available columns give no plausible relationship at all should it fall back to a constant, and that should be rare - do not treat 'this column has zero non-null values' as a reason to leave it untouched.
-- CRITICAL - avoid crashes when computing statistics on a column that has no non-null values: `df[col].mode()` and `df[col].value_counts()` return an EMPTY Series when a column is 100% missing, and indexing it with `[0]` or `.iloc[0]` raises a KeyError/IndexError and crashes the whole script. Never write `df[col].mode()[0]` or `.value_counts().index[0]` unguarded. Always compute the statistic into a variable first and check it is non-empty before using it, e.g.:
-  mode_vals = df['X'].mode()
-  fill_value = mode_vals.iloc[0] if not mode_vals.empty else 0  # or '' / 'Unknown' for text columns
-  df['X'] = df['X'].fillna(fill_value)
-  This guard is only for a last-resort self-statistic fallback - it must not be used as a reason to skip deriving the column from other columns first (see the point above).
-- If you use try/except for safety, only catch specific standard exceptions (e.g. KeyError, ValueError, ZeroDivisionError, TypeError, IndexError); do not import any modules.
-- Output only the Python code, no markdown or explanation. No file reading. No print statements unless the user asks."""
-
-    user_parts = [
-        f"Dataset: {dataset_name}. Table columns: {', '.join(col_names) or 'unknown'}."
-    ]
-    if null_summary:
-        user_parts.append(f"Columns with missing values (null_count/total_count): {null_summary}.")
-    if complete_rows:
-        user_parts.append(
-            "Fully populated example rows (no gaps) - use these to derive the real formula/relationship between columns. Check the same formula against multiple rows before relying on it:"
+        return code_generator.generate(
+            dataset_name,
+            frame,
+            request.prompt or "",
+            lambda code: _test_run_code(frame, code),
+            request.language,
         )
-        user_parts.append(json.dumps(complete_rows, default=str))
-    else:
-        user_parts.append(
-            "No fully populated example rows were found in this dataset (some columns are 100% missing), so no column relationship can be verified numerically from examples. This is common for computed/regulatory columns (e.g. EAD, RWA, Risk Weight, CCF, Assessment Base) - derive them from other columns using their names and standard real-world formulas/conventions for that field, as instructed above. Do not default to leaving a 100%-missing column blank; a statistical self-fill is impossible for it anyway since it has no values of its own."
-        )
-    if sample_rows:
-        user_parts.append(
-            "Rows that still contain gaps (first 5). <MISSING> means a pandas NaN in the DataFrame; use df.fillna() or pd.isna() to handle."
-        )
-        user_parts.append(json.dumps(sample_rows[:5], default=str))
-    if request.prompt and request.prompt.strip():
-        user_parts.append(f"User instructions: {request.prompt.strip()}")
-    else:
-        user_parts.append(
-            "From the data above: (1) Detect which columns have missing values. (2) Using the fully populated example rows, derive the actual formula for each derived/computed column and apply it to fill the gaps - do not just fill with 0 or null. (3) For categorical columns, infer the mapping/rule from other columns. (4) Only for columns where the fully populated rows show no relationship to any other column, fall back to a statistical fill (median for numeric, mode for categorical) instead of a hardcoded constant. Do not assume any column names or formulas not implied by the data—derive everything from the columns present."
-        )
-    user_prompt = "\n".join(user_parts)
-
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_prompt},
-    ]
-    kwargs = {"model": deployment, "messages": messages, "temperature": 0.2}
-
-    def extract_content(response: Any) -> str:
-        content = (response.choices[0].message.content or "").strip()
-        if content.startswith("```"):
-            lines = content.split("\n")
-            if lines[0].startswith("```python"):
-                lines = lines[1:]
-            elif lines[0].startswith("```"):
-                lines = lines[1:]
-            if lines and lines[-1].strip() == "```":
-                lines = lines[:-1]
-            content = "\n".join(lines)
-        return content
-
-    if openai_api_key:
-        try:
-            from openai import OpenAI
-            client = OpenAI(
-                api_key=openai_api_key,
-                timeout=60.0,
-                max_retries=1,
-            )
-            response = client.chat.completions.create(
-                **{**kwargs, "model": openai_model}
-            )
-            return {"code": extract_content(response)}
-        except Exception as e:
-            traceback.print_exc()
-            raise HTTPException(502, f"OpenAI request failed: {e}") from e
-
-    # Azure/custom gateways may need to ignore a broken local SSL_CERT_FILE setting.
-    import httpx
-    _http = httpx.Client(trust_env=False)
-
-    last_error: Optional[Exception] = None
-    base_url_style = os.environ.get("AZURE_OPENAI_USE_BASE_URL", "").lower() in ("1", "true", "yes")
-
-    # Try Azure-style endpoint first (unless base_url mode is set)
-    if not base_url_style:
-        try:
-            from openai import AzureOpenAI
-            client = AzureOpenAI(
-                api_key=api_key,
-                api_version=api_version,
-                azure_endpoint=endpoint.rstrip("/"),
-                http_client=_http,
-            )
-            response = client.chat.completions.create(**kwargs)
-            return {"code": extract_content(response)}
-        except Exception as e:
-            last_error = e
-            traceback.print_exc()
-
-    # Fallback: OpenAI-compatible base_url (e.g. Fabric or proxy).
-    # Some EYQ/Fabric endpoints expose deployment-scoped routes that do not use api-version
-    # and expect requests at /openai/deployments/{deployment}/chat/completions.
-    base_candidates: List[str] = []
-    if deployment:
-        base_candidates.append(endpoint.rstrip("/") + f"/openai/deployments/{deployment}")
-    base_candidates.extend(
-        [
-            endpoint.rstrip("/"),
-            endpoint.rstrip("/") + "/openai/v1",
-            endpoint.rstrip("/") + "/v1",
-        ]
-    )
-
-    for base in base_candidates:
-        try:
-            request_kwargs = dict(kwargs)
-            if "/openai/deployments/" in base:
-                # EYQ deployment-scoped routes accept a direct POST to the full
-                # chat completions path without api-version and without a model in the body.
-                request_kwargs.pop("model", None)
-                response = _http.post(
-                    base.rstrip("/") + "/chat/completions",
-                    headers={"Content-Type": "application/json", "api-key": api_key},
-                    json=request_kwargs,
-                )
-                response.raise_for_status()
-                payload = response.json()
-                content = ((payload.get("choices") or [{}])[0].get("message") or {}).get("content", "")
-                return {"code": extract_content(type("Resp", (), {"choices": [type("Choice", (), {"message": type("Msg", (), {"content": content})()})()]})())}
-
-            from openai import OpenAI
-            # Some custom gateways (including Fabric-style endpoints) require api-key style headers.
-            # Keep Authorization (from api_key) and add explicit key headers for compatibility.
-            client = OpenAI(
-                api_key=api_key,
-                base_url=base,
-                http_client=_http,
-                default_headers={"api-key": api_key, "x-api-key": api_key},
-            )
-            if "/openai/deployments/" in base:
-                # Deployment-scoped paths already encode the model/deployment in URL.
-                request_kwargs.pop("model", None)
-            response = client.chat.completions.create(**request_kwargs)
-            return {"code": extract_content(response)}
-        except Exception as e:
-            last_error = e
-            continue
-    traceback.print_exc()
-
-    err_msg = str(last_error) if last_error else "Unknown error"
-    raise HTTPException(
-        502,
-        f"Azure OpenAI request failed: {err_msg}. Check server logs for traceback. "
-        "For Fabric/custom endpoints try setting AZURE_OPENAI_USE_BASE_URL=true in .env",
-    )
+    except code_generator.GenerationError as exc:
+        raise HTTPException(502, str(exc)) from exc
 
 
 @app.post("/api/generate-column-instructions")
 def generate_column_instructions(request: AutoColumnInstructionsRequest):
-    """Generate suggested formula/rule instructions from column names only."""
-    openai_api_key = os.environ.get("OPENAI_API_KEY")
-    openai_model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
-    api_key = os.environ.get("AZURE_OPENAI_API_KEY")
-    endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
-    api_version = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-10-21")
-    deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o")
-
-    columns = [str(col).strip() for col in (request.columns or []) if str(col).strip()]
-    if not columns:
-        raise HTTPException(400, "columns must contain at least one column name")
-
-    if not openai_api_key and (not api_key or not endpoint):
-        raise HTTPException(
-            503,
-            "OpenAI is not configured. Set OPENAI_API_KEY, or set AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT in .env",
-        )
-
-    system_prompt = """You are a data transformation assistant.
-You receive only column names.
-Return a JSON object with one key per column name and a short suggested formula/rule string for that column.
-Rules:
-- Output must be STRICT JSON object only, no markdown.
-- Include every input column exactly once as key.
-- Values must be concise (max 1 sentence).
-- If a column looks like a base/input field, suggest 'keep as is' or a light cleanup rule.
-- If a column looks derived (e.g. EAD, RWA, Risk Weight), suggest a plausible formula using other column names.
-"""
-
-    user_prompt = "Column names:\n" + json.dumps(columns)
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_prompt},
-    ]
-
-    def _normalize_content(content: str) -> str:
-        text = (content or "").strip()
-        if text.startswith("```"):
-            lines = text.split("\n")
-            if lines and lines[0].startswith("```"):
-                lines = lines[1:]
-            if lines and lines[-1].strip() == "```":
-                lines = lines[:-1]
-            text = "\n".join(lines).strip()
-        return text
-
-    def _parse_instruction_map(raw: str) -> Dict[str, str]:
-        text = _normalize_content(raw)
-        try:
-            parsed = json.loads(text)
-        except Exception:
-            match = re.search(r"\{[\s\S]*\}", text)
-            if not match:
-                parsed = {}
-            else:
-                parsed = json.loads(match.group(0))
-
-        if not isinstance(parsed, dict):
-            parsed = {}
-
-        instructions: Dict[str, str] = {}
-        for col in columns:
-            value = parsed.get(col)
-            if value is None:
-                instructions[col] = "keep as is unless missing"
-            else:
-                instructions[col] = str(value).strip() or "keep as is unless missing"
-        return instructions
-
-    def _extract_content(response: Any) -> str:
-        return (response.choices[0].message.content or "").strip()
-
-    if openai_api_key:
-        try:
-            from openai import OpenAI
-
-            client = OpenAI(api_key=openai_api_key, timeout=60.0, max_retries=1)
-            response = client.chat.completions.create(
-                model=openai_model,
-                messages=messages,
-                temperature=0.2,
-                max_tokens=800,
-            )
-            return {"instructions": _parse_instruction_map(_extract_content(response))}
-        except Exception as e:
-            traceback.print_exc()
-            raise HTTPException(502, f"OpenAI request failed: {e}") from e
-
-    import httpx
-
-    _http = httpx.Client(trust_env=False)
-    last_error: Optional[Exception] = None
-    base_url_style = os.environ.get("AZURE_OPENAI_USE_BASE_URL", "").lower() in ("1", "true", "yes")
-
-    if not base_url_style:
-        try:
-            from openai import AzureOpenAI
-
-            client = AzureOpenAI(
-                api_key=api_key,
-                api_version=api_version,
-                azure_endpoint=endpoint.rstrip("/"),
-                http_client=_http,
-            )
-            response = client.chat.completions.create(
-                model=deployment,
-                messages=messages,
-                temperature=0.2,
-                max_tokens=800,
-            )
-            return {"instructions": _parse_instruction_map(_extract_content(response))}
-        except Exception as e:
-            last_error = e
-            traceback.print_exc()
-
-    base_candidates: List[str] = []
-    if deployment:
-        base_candidates.append(endpoint.rstrip("/") + f"/openai/deployments/{deployment}")
-    base_candidates.extend(
-        [
-            endpoint.rstrip("/"),
-            endpoint.rstrip("/") + "/openai/v1",
-            endpoint.rstrip("/") + "/v1",
-        ]
-    )
-
-    for base in base_candidates:
-        try:
-            if "/openai/deployments/" in base:
-                response = _http.post(
-                    base.rstrip("/") + "/chat/completions",
-                    headers={"Content-Type": "application/json", "api-key": api_key},
-                    json={
-                        "messages": messages,
-                        "temperature": 0.2,
-                        "max_tokens": 800,
-                    },
-                )
-                response.raise_for_status()
-                payload = response.json()
-                content = ((payload.get("choices") or [{}])[0].get("message") or {}).get("content", "")
-                return {"instructions": _parse_instruction_map(content)}
-
-            from openai import OpenAI
-
-            client = OpenAI(
-                api_key=api_key,
-                base_url=base,
-                http_client=_http,
-                default_headers={"api-key": api_key, "x-api-key": api_key},
-            )
-            response = client.chat.completions.create(
-                model=deployment,
-                messages=messages,
-                temperature=0.2,
-                max_tokens=800,
-            )
-            return {"instructions": _parse_instruction_map(_extract_content(response))}
-        except Exception as e:
-            last_error = e
-            continue
-
-    err_msg = str(last_error) if last_error else "Unknown error"
-    raise HTTPException(
-        502,
-        f"Azure OpenAI request failed: {err_msg}. Check server logs for traceback. "
-        "For Fabric/custom endpoints try setting AZURE_OPENAI_USE_BASE_URL=true in .env",
-    )
+    """A draft of the instructions for /api/generate-code: one rule per column the code should fill ("Column: rule"),
+    from the dataset's table, or from column names only when no dataset is given."""
+    if request.dataset_id:
+        frame, metadata, _table = _load_execution_input(request.dataset_id)
+        dataset_name = metadata.get("user_name") or metadata.get("filename") or request.dataset_id
+    else:
+        columns = [str(column).strip() for column in request.columns if str(column).strip()]
+        if not columns:
+            raise HTTPException(400, "Give a dataset_id or at least one column name.")
+        frame, dataset_name = pd.DataFrame(columns=columns), "Table"
+    try:
+        return code_generator.draft_instructions(dataset_name, frame, request.language)
+    except code_generator.GenerationError as exc:
+        raise HTTPException(502, str(exc)) from exc
 
 
 def _chat_table_context(dataset_name: str, table: Dict[str, Any]) -> Dict[str, Any]:
@@ -1716,26 +1345,26 @@ def _execution_input_frame(dataset_path: Path, metadata: Dict[str, Any], table_i
     column_names = [col["name"] for col in table_info["columns"]]
     # Prefer stored input data (includes any edits made in the UI)
     df_original = db.get_table_data(dataset_name, table_info["id"], "input_data")
-    if df_original is None or df_original.empty or list(df_original.columns) != column_names:
-        # Fall back to loading from Excel (e.g. first run or column mismatch)
-        workbook = openpyxl.load_workbook(dataset_path, data_only=True)
-        worksheet = workbook[table_info["sheet"]]
-        rwa_filename_norm = _normalize_filename(metadata.get("filename"))
-        is_rwa_input = _is_rwa_input_filename(rwa_filename_norm)
-        is_iref_kalkulator = _is_iref_kalkulator_filename(rwa_filename_norm)
-        excel_row_offset = 1 if is_rwa_input else (2 if is_iref_kalkulator else 2)
-        data_rows = []
-        for row_idx in range(table_info["start_row"] + 1, table_info["end_row"] + 1):
-            row_data = {}
-            for col_info in table_info["columns"]:
-                excel_row = row_idx + excel_row_offset
-                excel_col = col_info["index"] + 1
-                cell = worksheet.cell(row=excel_row, column=excel_col)
-                val = None if ((is_rwa_input or is_iref_kalkulator) and _rwa_clear_cell(excel_row, excel_col, rwa_filename_norm)) else cell.value
-                row_data[col_info["name"]] = val
-            data_rows.append(row_data)
-        df_original = pd.DataFrame(data_rows, columns=column_names)
-    return df_original
+    if df_original is not None and not df_original.empty and list(df_original.columns) == column_names:
+        return _restore_stored_dates(df_original, table_info)
+    # Fall back to loading from Excel (e.g. first run or column mismatch)
+    workbook = openpyxl.load_workbook(dataset_path, data_only=True)
+    worksheet = workbook[table_info["sheet"]]
+    rwa_filename_norm = _normalize_filename(metadata.get("filename"))
+    is_rwa_input = _is_rwa_input_filename(rwa_filename_norm)
+    is_iref_kalkulator = _is_iref_kalkulator_filename(rwa_filename_norm)
+    excel_row_offset = 1 if is_rwa_input else (2 if is_iref_kalkulator else 2)
+    data_rows = []
+    for row_idx in range(table_info["start_row"] + 1, table_info["end_row"] + 1):
+        row_data = {}
+        for col_info in table_info["columns"]:
+            excel_row = row_idx + excel_row_offset
+            excel_col = col_info["index"] + 1
+            cell = worksheet.cell(row=excel_row, column=excel_col)
+            val = None if ((is_rwa_input or is_iref_kalkulator) and _rwa_clear_cell(excel_row, excel_col, rwa_filename_norm)) else cell.value
+            row_data[col_info["name"]] = val
+        data_rows.append(row_data)
+    return pd.DataFrame(data_rows, columns=column_names)
 
 
 def _prepare_user_code(user_code: str) -> str:
@@ -1749,14 +1378,46 @@ def _execution_globals(df: pd.DataFrame) -> Dict[str, Any]:
     return {'pd': pd, 'pandas': pd, 'np': np, 'numpy': np, 'df': df, '__builtins__': dict(EXECUTION_BUILTINS)}
 
 
-def _load_execution_input(dataset_id: str, table_id: Optional[str] = None) -> Tuple[pd.DataFrame, Dict[str, Any], Dict[str, Any]]:
-    """Input frame, dataset metadata and table of a dataset, exactly as /api/execute loads them."""
-    dataset_path = DATASETS_DIR / f"{dataset_id}.xlsx"
+_STORED_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)?$")
+
+
+def _restore_stored_dates(frame: pd.DataFrame, table_info: Dict[str, Any]) -> pd.DataFrame:
+    """SQLite keeps dates as text ("2025-12-31 00:00:00"): date columns get them back as dates, as the Excel sheet
+    gives them, so code and results see the same values whichever source the input comes from."""
+    for col_info in table_info.get("columns") or []:
+        name = col_info.get("name")
+        if col_info.get("data_type") != "date" or name not in frame.columns:
+            continue
+        values = frame[name]
+        is_date_text = values.map(lambda value: isinstance(value, str) and bool(_STORED_DATE.match(value.strip())))
+        if not is_date_text.any():
+            continue
+        converted = pd.to_datetime(values.where(is_date_text).map(lambda value: value.strip() if isinstance(value, str) else value), errors="coerce")
+        frame[name] = converted if bool((is_date_text | values.isna()).all()) else values.where(~is_date_text, converted)
+    return frame
+
+
+def _dataset_metadata(dataset_id: str) -> Optional[Dict[str, Any]]:
+    """The dataset's metadata as the Data tab keeps it: the database copy, which has the dataset name the edited input
+    table is stored under and the current column names (the upload's _meta.json file has neither); the file only for
+    a dataset the database does not know."""
+    metadata = db.get_dataset_metadata(dataset_id)
+    if metadata:
+        return metadata
     meta_path = DATASETS_DIR / f"{dataset_id}_meta.json"
-    if not os.path.exists(dataset_path) or not os.path.exists(meta_path):
+    if not os.path.exists(meta_path):
+        return None
+    with open(meta_path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _load_execution_input(dataset_id: str, table_id: Optional[str] = None) -> Tuple[pd.DataFrame, Dict[str, Any], Dict[str, Any]]:
+    """Input frame, dataset metadata and table of a dataset, exactly as /api/execute loads them: the input table as
+    the Data tab shows it, with its saved edits (the Excel sheet when no stored table matches)."""
+    dataset_path = DATASETS_DIR / f"{dataset_id}.xlsx"
+    metadata = _dataset_metadata(dataset_id)
+    if not os.path.exists(dataset_path) or not metadata:
         raise HTTPException(404, "Dataset not found")
-    with open(meta_path) as f:
-        metadata = json.load(f)
     tables = metadata.get("tables") or []
     table_info = next((t for t in tables if t["id"] == table_id), None) if table_id else (tables[0] if tables else None)
     if not table_info:
@@ -1764,173 +1425,194 @@ def _load_execution_input(dataset_id: str, table_id: Optional[str] = None) -> Tu
     return _execution_input_frame(dataset_path, metadata, table_info), metadata, table_info
 
 
+CODE_FILENAME = "<code>"  # the file name of code run in the sandbox, so errors can name their line
+
+
+def _read_code_text(path: Path) -> str:
+    """A code file as text: UTF-8 (cp1252 for an older file that is not), "\\n" line ends. Files uploaded before the
+    newline fix end their lines with "\\r\\r\\n", which text mode reads as two line breaks."""
+    data = Path(path).read_bytes()
+    try:
+        text = data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = data.decode("cp1252", errors="replace")
+    return text.replace("\r\r\n", "\n").replace("\r\n", "\n").replace("\r", "\n")
+
+
+class CodeShapeError(ValueError):
+    """The code ran but left df in a shape the result cannot be compared with the input in."""
+
+
+def _json_safe(value: Any) -> Any:
+    """A cell for the result file: None for empty and non-finite cells, ISO text for dates, plain Python scalars."""
+    if value is None:
+        return None
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    if isinstance(value, (int, np.integer)):
+        return int(value)
+    if isinstance(value, (float, np.floating)):
+        number = float(value)
+        return number if np.isfinite(number) else None
+    if isinstance(value, Decimal):
+        number = float(value)
+        return number if np.isfinite(number) else None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    if isinstance(value, (pd.Timestamp, datetime, date)):
+        return value.isoformat()
+    if isinstance(value, np.datetime64):
+        return pd.Timestamp(value).isoformat()
+    if isinstance(value, np.generic):
+        return _json_safe(value.item())
+    return value
+
+
+def _result_records(df_result: pd.DataFrame) -> List[Dict[str, Any]]:
+    """The result rows as the result file and the pages get them."""
+    columns = list(df_result.columns)
+    return [{column: _json_safe(value) for column, value in zip(columns, row)} for row in df_result.itertuples(index=False, name=None)]
+
+
+def _error_line(exc: BaseException) -> Optional[int]:
+    """The line of the code file an error happened in (None: not in a line of the code itself)."""
+    if isinstance(exc, SyntaxError) and exc.filename == CODE_FILENAME:
+        return exc.lineno
+    line = None
+    trace = exc.__traceback__
+    while trace is not None:
+        if trace.tb_frame.f_code.co_filename == CODE_FILENAME:
+            line = trace.tb_lineno
+        trace = trace.tb_next
+    return line
+
+
+def _describe_error(exc: BaseException) -> str:
+    if isinstance(exc, CodeShapeError):
+        return str(exc)
+    if isinstance(exc, SyntaxError):
+        return f"SyntaxError: {exc.msg}"
+    if isinstance(exc, ImportError) and "__import__" in str(exc):
+        return "ImportError: import statements are not available; only pd (pandas) and np (numpy) exist."
+    return f"{type(exc).__name__}: {exc}"
+
+
+def _run_user_code(df_original: pd.DataFrame, user_code: str) -> Tuple[pd.DataFrame, List[Dict[str, Any]], Dict[str, Any]]:
+    """Runs code on a copy of the input in the sandbox, as a Results run does: the result frame, the cells the code
+    filled (empty before, a value after) and the summary."""
+    compiled = compile(_prepare_user_code(user_code), CODE_FILENAME, "exec")
+    exec_globals = _execution_globals(df_original.copy())
+    exec(compiled, exec_globals)
+    df_result = exec_globals.get("df")
+    if not isinstance(df_result, pd.DataFrame):
+        raise CodeShapeError("The code must leave the table in df (a pandas DataFrame).")
+    removed_columns = [str(column) for column in df_original.columns if column not in df_result.columns]
+    if removed_columns:
+        raise CodeShapeError(f"The code removed the column(s) {', '.join(removed_columns)}; every input column must stay in df.")
+    if not df_result.index.is_unique or not df_result.columns.is_unique:
+        raise CodeShapeError("The code left duplicate rows or columns in df; every input row and column must appear once.")
+    removed_rows = [index for index in df_original.index if index not in df_result.index]
+    if removed_rows:
+        raise CodeShapeError(f"The code removed {len(removed_rows)} row(s); every input row must stay in df.")
+
+    computed_cells = []
+    for idx in df_original.index:
+        for col in df_original.columns:
+            original_val = df_original.at[idx, col]
+            result_val = df_result.at[idx, col]
+            # A value that was missing and is now filled
+            was_null = pd.isna(original_val) or original_val is None
+            is_filled = not (pd.isna(result_val) or result_val is None)
+            if was_null and is_filled:
+                if isinstance(result_val, (int, float, np.integer, np.floating)):
+                    value = None if pd.isna(result_val) or result_val in [float('inf'), float('-inf')] else float(result_val)
+                else:
+                    value = str(result_val)
+                computed_cells.append({"row": int(idx), "column": col, "value": value})
+
+    summary = {
+        "rows_processed": len(df_result),
+        "columns": list(df_result.columns),
+        "total_values_computed": len(computed_cells),
+        "computed_by_column": {
+            col: len([c for c in computed_cells if c["column"] == col])
+            for col in set(c["column"] for c in computed_cells)
+        },
+    }
+    return df_result, computed_cells, summary
+
+
+def _test_run_code(frame: pd.DataFrame, code: str) -> Dict[str, Any]:
+    """A Results run of `code` on `frame` that stores nothing: what the code generator checks and the page shows."""
+    try:
+        df_result, computed_cells, _summary = _run_user_code(frame, code)
+        records = _result_records(df_result)
+        json.dumps(records)  # the result file must be writable
+    except Exception as exc:  # the code's own errors are the outcome of the test run
+        return {"ok": False, "error": _describe_error(exc), "line": _error_line(exc)}
+    return {"ok": True, "after": df_result, "computed": computed_cells, "records": records}
+
+
 @app.post("/api/execute")
 async def execute_code(request: dict):
     """Execute code on dataset - fills missing values based on user code"""
-    
     dataset_id = request.get("dataset_id")
     code_id = request.get("code_id")
-    table_id = request.get("table_id")  # Optional: which table to use
-    
+    table_id = request.get("table_id")  # Optional: which table to use (default: the first one)
+
     if not dataset_id or not code_id:
         raise HTTPException(400, "dataset_id and code_id required")
-    
-    # Load dataset
-    dataset_path = DATASETS_DIR / f"{dataset_id}.xlsx"
-    meta_path = DATASETS_DIR / f"{dataset_id}_meta.json"
-    
-    if not os.path.exists(dataset_path):
-        raise HTTPException(404, "Dataset not found")
-    
-    # Load metadata to get table info
-    with open(meta_path) as f:
-        metadata = json.load(f)
-    
-    # Get the table to work with (first table by default)
-    if table_id:
-        table_info = next((t for t in metadata["tables"] if t["id"] == table_id), None)
-        if not table_info:
-            raise HTTPException(404, "Table not found")
-    else:
-        table_info = metadata["tables"][0] if metadata["tables"] else None
-        if not table_info:
-            raise HTTPException(404, "No tables found in dataset")
-    
-    df_original = _execution_input_frame(dataset_path, metadata, table_info)
-    
-    # Load code
+
+    # The input table as the Data tab shows it, with its saved edits (else the Excel sheet)
+    df_original, metadata, table_info = _load_execution_input(dataset_id, table_id)
+
     code_path = CODE_DIR / f"{code_id}.py"
     if not os.path.exists(code_path):
         raise HTTPException(404, "Code file not found")
-    
-    with open(code_path) as f:
-        user_code = f.read()
-    
-    # Remove import statements since we provide pd and np pre-imported
-    user_code = _prepare_user_code(user_code)
-    
-    # Execute in isolated namespace
+    user_code = _read_code_text(code_path)
+
     try:
-        # Create execution environment with pandas and numpy pre-imported
-        exec_globals = _execution_globals(df_original.copy())  # Work on copy
-        
-        # Execute code
-        exec(user_code, exec_globals)
-        
-        # Get modified DataFrame
-        df_result = exec_globals.get('df')
-        
-        if df_result is None:
-            raise Exception("Code must modify 'df' variable")
-        
-        # Detect computed values (row by row, column by column)
-        computed_cells = []
-        for idx, row in df_original.iterrows():
-            for col in df_original.columns:
-                original_val = df_original.at[idx, col]
-                result_val = df_result.at[idx, col]
-                
-                # Check if value was null/missing and is now filled
-                was_null = pd.isna(original_val) or original_val is None
-                is_filled = not (pd.isna(result_val) or result_val is None)
-                
-                if was_null and is_filled:
-                    # Safely convert value to JSON-compatible format
-                    if isinstance(result_val, (int, float)):
-                        if pd.isna(result_val) or result_val in [float('inf'), float('-inf')]:
-                            value = None
-                        else:
-                            value = float(result_val)
-                    else:
-                        value = str(result_val)
-                    
-                    computed_cells.append({
-                        "row": int(idx),
-                        "column": col,
-                        "value": value
-                    })
-        
-        # Generate execution ID and date
+        df_result, computed_cells, summary = _run_user_code(df_original, user_code)
         execution_id = str(uuid.uuid4())
         execution_date = _german_now_timestamp().isoformat()
-        
-        # Prepare summary
-        summary = {
-            "rows_processed": len(df_result),
-            "columns": list(df_result.columns),
-            "total_values_computed": len(computed_cells),
-            "computed_by_column": {
-                col: len([c for c in computed_cells if c["column"] == col])
-                for col in set(c["column"] for c in computed_cells)
-            }
-        }
-        
-        # Get dataset metadata for user_name
-        metadata = db.get_dataset_metadata(dataset_id)
-        dataset_name = metadata["user_name"]
-        
-        # Replace NaN and infinity with None for JSON serialization
-        df_result = df_result.replace([float('inf'), float('-inf')], None)
-        df_result = df_result.where(pd.notna(df_result), None)
-        
-        # Store result in SQLite
-        db.store_execution_result(
-            execution_id, 
-            dataset_id, 
-            code_id, 
-            execution_date,
-            dataset_name,
-            table_info["id"],
-            df_result,
-            summary
-        )
-        
-        # Save result (for backward compatibility)
-        # Convert DataFrame to records with proper NaN/inf handling
-        def _to_json_safe_value(val: Any) -> Any:
-            if val is None or pd.isna(val):
-                return None
-            if isinstance(val, (pd.Timestamp, datetime, date)):
-                return val.isoformat()
-            if isinstance(val, np.datetime64):
-                return pd.Timestamp(val).isoformat()
-            if isinstance(val, (np.integer, int)):
-                return int(val)
-            if isinstance(val, (np.floating, float)):
-                return float(val)
-            return val
-
-        data_records = []
-        for _, row in df_result.iterrows():
-            record = {}
-            for col in df_result.columns:
-                val = row[col]
-                if val in [float('inf'), float('-inf')]:
-                    record[col] = None
-                else:
-                    record[col] = _to_json_safe_value(val)
-            data_records.append(record)
-        
         result = {
             "execution_id": execution_id,
             "dataset_id": dataset_id,
             "code_id": code_id,
             "table_id": table_info["id"],
             "status": "success",
-            "data": data_records,
+            "data": _result_records(df_result),
             "computed_cells": computed_cells,
             "summary": summary
         }
-        
-        with open(RESULTS_DIR / f"{execution_id}.json", "w") as f:
-            json.dump(result, f)
-        
+        # Serialised before anything is stored, so a value that cannot be written leaves no half-stored run.
+        result_text = json.dumps(result)
+
+        # Replace NaN and infinity with None for SQLite
+        stored_frame = df_result.replace([float('inf'), float('-inf')], None)
+        stored_frame = stored_frame.where(pd.notna(stored_frame), None)
+        db.store_execution_result(
+            execution_id,
+            dataset_id,
+            code_id,
+            execution_date,
+            metadata.get("user_name") or "",
+            table_info["id"],
+            stored_frame,
+            summary
+        )
+        with open(RESULTS_DIR / f"{execution_id}.json", "w", encoding="utf-8") as f:
+            f.write(result_text)
         return result
-        
+
     except Exception as e:
         return {
             "status": "error",
-            "error": str(e),
+            "error": _describe_error(e),
+            "line": _error_line(e),
             "traceback": traceback.format_exc()
         }
 
@@ -2046,8 +1728,26 @@ class RootCauseRequest(PydanticBaseModel):
     execution_id_b: str
     output_column: str = "RWA"
     position: Optional[str] = None
-    review_id: Optional[str] = None
-    human_review: Optional[Dict[str, Any]] = None
+    release_note_id: Optional[str] = None  # the release-notes file to explain with; None: every uploaded file
+    review_id: Optional[str] = None  # Rootcause AI Agents only
+    human_review: Optional[Dict[str, Any]] = None  # Rootcause AI Agents only
+
+
+class RootCauseReviewRequest(PydanticBaseModel):
+    """One message of the post-run human review chat of the normal RootCause tab, with the report as the page shows it
+    (the computed result with the review's earlier changes)."""
+    message: str
+    history: List[Dict[str, Any]] = []
+    output_column: str = ""
+    release_note_id: Optional[str] = None
+    runs: Dict[str, Any] = {}
+    rows: List[Dict[str, Any]] = []
+    summary: str = ""
+    summary_edited: bool = False
+    next_checks: List[str] = []
+    next_checks_edited: bool = False
+    view: Optional[Dict[str, Any]] = None
+    show_unchanged: bool = False
 
 
 @app.post("/api/content-lineage")
@@ -2074,21 +1774,10 @@ def build_content_lineage(request: ContentLineageRequest):
     code_path = CODE_DIR / f"{code_id}.py"
     if not os.path.exists(code_path):
         raise HTTPException(404, "Code file not found")
-    with open(code_path) as f:
-        code_str = f.read()
+    code_str = _read_code_text(code_path)
 
     rows = _analyze_code_content_lineage(code_str, input_columns, output_columns)
     return {"rows": rows}
-
-
-def _rootcause_result(execution_id: str) -> Dict[str, Any]:
-    result_path = RESULTS_DIR / f"{execution_id}.json"
-    if not result_path.exists():
-        raise HTTPException(404, f"Execution {execution_id} not found")
-    try:
-        return json.loads(result_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise HTTPException(500, f"Execution {execution_id} is invalid") from exc
 
 
 def _rootcause_json_safe(value: Any) -> Any:
@@ -2111,32 +1800,6 @@ def _rootcause_json_safe(value: Any) -> Any:
     except (TypeError, ValueError):
         pass
     return value
-
-
-def _rootcause_input_rows(dataset_id: str) -> List[Dict[str, Any]]:
-    metadata = db.get_dataset_metadata(dataset_id)
-    if not metadata or not metadata.get("tables"):
-        return []
-    table = metadata["tables"][0]
-    frame = db.get_table_data(metadata.get("user_name", ""), table.get("id"), "input_data")
-    if frame is None or frame.empty:
-        return []
-    records = frame.replace([float("inf"), float("-inf")], np.nan).to_dict(orient="records")
-    return _rootcause_json_safe(records)
-
-
-def _rootcause_position_map(rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
-    position_column = next(
-        (column for column in (rows[0].keys() if rows else []) if str(column).strip().lower() == "position"),
-        None,
-    )
-    if not position_column:
-        return {str(index): row for index, row in enumerate(rows)}
-    return {
-        str(row.get(position_column)): row
-        for row in rows
-        if row.get(position_column) is not None
-    }
 
 
 def _extract_jira_id_from_record(record: Dict[str, Any]) -> str:
@@ -2173,1267 +1836,281 @@ def _extract_release_note_solution_description(record: Dict[str, Any]) -> str:
     return ""
 
 
-def _rootcause_release_note_label(note: Dict[str, Any]) -> str:
-    """Return a display label for a matched release note (prefer Jira ID)."""
-    if not isinstance(note, dict):
-        return ""
-    jira_id = _extract_jira_id_from_record(note.get("record", {}))
-    if jira_id:
-        return jira_id
-    workbook = str(note.get("workbook") or "").strip()
-    sheet = str(note.get("sheet") or "").strip()
-    return workbook or sheet
+def _rootcause_platform() -> rootcause_analysis.Platform:
+    return rootcause_analysis.Platform(
+        stored_execution=lineage_agent._stored_execution,
+        code_text=lineage_agent._code_text,
+        code_meta=lineage_agent._code_meta,
+        dataset_meta=lambda dataset_id: db.get_dataset_metadata(dataset_id) or lineage_agent._dataset_meta(dataset_id),
+        load_input=_load_execution_input,
+        prepare=_prepare_user_code,
+        make_globals=_execution_globals,
+    )
 
 
-def _rootcause_join_release_note_labels(notes: List[Dict[str, Any]], limit: int = 3) -> str:
-    """Join multiple matched release-note labels for a single row."""
-    labels: List[str] = []
-    seen = set()
-    for note in notes:
-        label = _rootcause_release_note_label(note)
-        if not label:
-            continue
-        key = label.casefold()
-        if key in seen:
-            continue
-        seen.add(key)
-        labels.append(label)
-        if len(labels) >= limit:
-            break
-    return ", ".join(labels)
+def _rootcause_problem_description(record: Dict[str, Any]) -> str:
+    for key, value in record.items():
+        normalized_key = str(key).strip().lower().replace(" ", "").replace("_", "").replace("-", "")
+        if "problemdescription" in normalized_key and value is not None and str(value).strip():
+            return str(value).strip()
+    return ""
 
 
-def _rootcause_changed_field_list(
-    position_key: str,
-    lineage_evidence: List[Dict[str, Any]],
-) -> List[str]:
-    """Return unique changed field names for one position in stable order."""
-    fields: List[str] = []
-    seen = set()
-    for item in lineage_evidence:
-        if str(item.get("position")) != position_key:
-            continue
-        field = str(item.get("field") or "").strip()
-        if not field:
-            continue
-        if _rootcause_values_equal(item.get("value_a"), item.get("value_b")):
-            continue
-        key = field.casefold()
-        if key in seen:
-            continue
-        seen.add(key)
-        fields.append(field)
-    return fields
+def _rootcause_release_note_files(release_note_id: Optional[str]) -> List[Dict[str, Any]]:
+    """The release-notes file the user chose (404 when it is gone), or every uploaded file."""
+    workbooks = _list_release_note_workbooks()
+    if not release_note_id:
+        return workbooks[:12]
+    chosen = [workbook for workbook in workbooks if workbook.get("id") == release_note_id]
+    if not chosen:
+        raise HTTPException(404, "The selected release notes file no longer exists; choose it again.")
+    return chosen
 
 
-def _rootcause_normalize_release_note_text(value: Any) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", str(value).lower()).strip()
-
-
-def _rootcause_position_terms(position_key: str) -> set:
-    terms = set()
-    for token in _rootcause_normalize_release_note_text(position_key).split():
-        if not token.isdigit() and len(token) > 2:
-            terms.add(token)
-            if token.endswith("y"):
-                terms.add(f"{token[:-1]}ies")
-            elif token.endswith("s"):
-                terms.add(token[:-1])
-            else:
-                terms.add(f"{token}s")
-    return terms
-
-
-def _rootcause_release_note_matches(dependency_names: List[str]) -> List[Dict[str, Any]]:
-    terms = {term.strip().lower() for term in dependency_names if term and len(term.strip()) > 2}
-    if not terms:
-        return []
-    matches: List[Dict[str, Any]] = []
-    for workbook in _list_release_note_workbooks()[:12]:
+def _rootcause_release_notes(release_note_id: Optional[str] = None) -> Tuple[List[rootcause_analysis.Note], List[str]]:
+    """Every record of the chosen release-notes file (or of all uploaded files), to match against the deviations."""
+    notes: List[rootcause_analysis.Note] = []
+    workbooks: List[str] = []
+    for workbook in _rootcause_release_note_files(release_note_id):
         context = _chat_release_note_workbook_context(workbook)
         if not context:
             continue
+        filename = str(context.get("filename") or workbook.get("filename") or "")
+        count = 0
         for sheet in context.get("sheets", []):
-            for record in sheet.get("records", []):
-                text = _rootcause_normalize_release_note_text(json.dumps(record, default=str))
-                matched_terms = sorted(
-                    matched_term
-                    for term in terms
-                    if (normalized_term := _rootcause_normalize_release_note_text(term))
-                    and normalized_term in text
-                    for matched_term in {term, normalized_term}
-                )
-                if matched_terms:
-                    jira_id = _extract_jira_id_from_record(record)
-                    solution_description = _extract_release_note_solution_description(record)
-                    matches.append({
-                        "workbook": context.get("filename"),
-                        "sheet": sheet.get("name"),
-                        "matched_fields": matched_terms,
-                        "jira_id": jira_id,
-                        "solution_description": solution_description,
-                        "record": record,
-                    })
-                    if len(matches) >= 60:
-                        return matches
-    return matches
+            sheet_name = str(sheet.get("name") or "")
+            for index, record in enumerate(sheet.get("records", []), start=1):
+                if not isinstance(record, dict):
+                    continue
+                if isinstance(record.get("values"), list) and "row_number" in record:
+                    record = {f"Column {position}": value for position, value in enumerate(record["values"], start=1) if value not in (None, "")}
+                if not record:
+                    continue
+                notes.append(rootcause_analysis.Note(
+                    label=_extract_jira_id_from_record(record) or f"{filename} · {sheet_name} · {index}",
+                    workbook=filename,
+                    sheet=sheet_name,
+                    solution=_extract_release_note_solution_description(record),
+                    problem=_rootcause_problem_description(record),
+                    record=record,
+                ))
+                count += 1
+        if count:
+            workbooks.append(filename)
+    return notes, workbooks
 
 
-def _rootcause_position_release_notes(
-    release_notes: List[Dict[str, Any]],
-    position_key: str,
-    changed_fields: List[str],
-    preferred_source_fields: Optional[List[str]] = None,
-) -> List[Dict[str, Any]]:
-    position_terms = _rootcause_position_terms(position_key)
-    changed_terms = {
-        _rootcause_normalize_release_note_text(field)
-        for field in changed_fields
-        if field
-    }
-    preferred_terms = {
-        _rootcause_normalize_release_note_text(field)
-        for field in (preferred_source_fields or [])
-        if field
-    }
-    candidates = []
-    for note_index, note in enumerate(release_notes):
-        note_text = _rootcause_normalize_release_note_text(json.dumps(note.get("record", {}), default=str))
-        position_matches = sorted(term for term in position_terms if term in note_text)
-        field_matches = sorted(
-            field
-            for field in changed_terms
-            if field and field in note_text
-        )
-        if not position_matches or not field_matches:
+def _rootcause_normal_analysis(request: "RootCauseRequest") -> Dict[str, Any]:
+    """Deterministic RootCause result (see rootcause_analysis): per deviating position the compare run's lineage, the
+    origins of the deviation, the release notes that cover them, status, score and a German explanation."""
+    comparison = compare_clusters({"execution_id_a": request.execution_id_a, "execution_id_b": request.execution_id_b})
+    if comparison.get("status") == "error":
+        raise HTTPException(400, comparison.get("message") or "The two executions have no common fields.")
+    output = request.output_column.strip()
+    if output not in (comparison.get("common_columns") or []):
+        raise HTTPException(400, f"'{output}' is not a field of both executions.")
+    key_column = str(comparison.get("key_column") or "")
+    entries: List[Dict[str, Any]] = []
+    for item in comparison.get("comparison_data") or []:
+        key = str(item.get("key"))
+        if request.position is not None and key != request.position:
             continue
-
-        source_field_matches = sorted(
-            field
-            for field in preferred_terms
-            if field and field in note_text
-        )
-
-        problem_description_text = ""
-        record = note.get("record", {})
-        if isinstance(record, dict):
-            for key, value in record.items():
-                normalized_key = str(key).strip().lower().replace(" ", "").replace("-", "")
-                if "problemdescription" in normalized_key or normalized_key == "problemdescription":
-                    problem_description_text = _rootcause_normalize_release_note_text(value)
-                    break
-        problem_source_matches = sorted(
-            field
-            for field in preferred_terms
-            if field and field in problem_description_text
-        )
-
-        candidates.append({
-            **note,
-            "position_matches": position_matches,
-            "changed_field_matches": field_matches,
-            "source_field_matches": source_field_matches,
-            "problem_source_matches": problem_source_matches,
-            "relevance_score": len(position_matches) * 4 + len(field_matches) * 3,
-            "tie_break_source_field_hits": len(source_field_matches),
-            "tie_break_problem_source_hits": len(problem_source_matches),
-            "tie_break_original_order": note_index,
-        })
-    return sorted(
-        candidates,
-        key=lambda note: (
-            note["relevance_score"],
-            note["tie_break_source_field_hits"],
-            note["tie_break_problem_source_hits"],
-            -note["tie_break_original_order"],
-        ),
-        reverse=True,
-    )
-
-
-def _rootcause_value_text(value: Any) -> str:
-    if value is None:
-        return "not available"
-    if isinstance(value, (float, np.floating)) and np.isnan(value):
-        return "not available"
-    text = str(value).strip()
-    if not text:
-        return "not available"
-    placeholder = re.sub(r"[\s€$£¥,.-]", "", text)
-    if not placeholder:
-        return "not available"
-    return text
-
-
-def _rootcause_values_equal(value_a: Any, value_b: Any) -> bool:
-    text_a = _rootcause_value_text(value_a)
-    text_b = _rootcause_value_text(value_b)
-    if text_a == "not available" and text_b == "not available":
-        return True
-    try:
-        return float(text_a.replace(",", "")) == float(text_b.replace(",", ""))
-    except (ValueError, TypeError):
-        return text_a.strip().casefold() == text_b.strip().casefold()
-
-
-def _rootcause_fallback_row_explanation(
-    position_key: str,
-    output_column: str,
-    output_value: Dict[str, Any],
-    lineage_evidence: List[Dict[str, Any]],
-    position_release_notes: List[Dict[str, Any]],
-) -> str:
-    value_a = output_value.get("value_a")
-    value_b = output_value.get("value_b")
-    difference = output_value.get("difference")
-    changed_fields = [
-        item for item in lineage_evidence
-        if str(item.get("position")) == position_key
-        and not _rootcause_values_equal(item.get("value_a"), item.get("value_b"))
-    ]
-    changed_field_names = _rootcause_changed_field_list(position_key, lineage_evidence)
-    field_summary = ", ".join(
-        f"{item.get('field')} hat sich von {_rootcause_value_text(item.get('value_a'))} auf {_rootcause_value_text(item.get('value_b'))} geaendert"
-        for item in changed_fields
-    ) or "Es wurde kein geaendertes Lineage-Feld ausser dem Output identifiziert."
-    note = position_release_notes[0] if position_release_notes else None
-    if note:
-        jira_id = note.get("jira_id") or "the matched release note"
-        solution = note.get("solution_description")
-        matched_changed_fields = [
-            field
-            for field in changed_field_names
-            if _rootcause_normalize_release_note_text(field) in {
-                _rootcause_normalize_release_note_text(value)
-                for value in note.get("matched_fields", [])
-            }
-        ]
-        primary_note_text = (
-            f"Primar ist Jira {jira_id}"
-            + (f" (passende Felder: {', '.join(matched_changed_fields)})" if matched_changed_fields else "")
-            + "."
-        )
-        if solution:
-            primary_note_text += f" Die dokumentierte Loesung lautet: {solution}."
-        else:
-            primary_note_text += " In der Release-Note-Zeile ist keine Solution Description verfuegbar."
-
-        additional_lines: List[str] = []
-        for additional_note in position_release_notes[1:3]:
-            additional_label = _rootcause_release_note_label(additional_note)
-            if not additional_label:
-                continue
-            additional_matches = [
-                field
-                for field in changed_field_names
-                if _rootcause_normalize_release_note_text(field) in {
-                    _rootcause_normalize_release_note_text(value)
-                    for value in additional_note.get("matched_fields", [])
-                }
-            ]
-            additional_solution = additional_note.get("solution_description")
-            line = f"Zusaetzlich relevant ist {additional_label}"
-            if additional_matches:
-                line += f" (passende Felder: {', '.join(additional_matches)})"
-            line += "."
-            if additional_solution:
-                line += f" Loesungsinhalt: {additional_solution}."
-            additional_lines.append(line)
-
-        additional_text = (" " + " ".join(additional_lines)) if additional_lines else ""
-        driver_text = ", ".join(changed_field_names) if changed_field_names else "keine expliziten Treiber"
-        return (
-            f"Fuer {position_key} hat sich {output_column} von {_rootcause_value_text(value_a)} "
-            f"auf {_rootcause_value_text(value_b)} geaendert (B - A = {_rootcause_value_text(difference)}). "
-            f"Mehrere Abweichungstreiber pro Geschaeft sind moeglich; hier sind die beobachteten Treiber: {driver_text}. "
-            f"Die beobachteten Lineage-Aenderungen sind: {field_summary}. "
-            f"{primary_note_text}{additional_text}"
-        )
-    return (
-        f"Fuer {position_key} hat sich {output_column} von {_rootcause_value_text(value_a)} "
-        f"auf {_rootcause_value_text(value_b)} geaendert (B - A = {_rootcause_value_text(difference)}). "
-        f"Die beobachteten Lineage-Aenderungen sind: {field_summary}. "
-        "Fuer diese geaenderten Felder wurde keine positionsspezifische Release Note identifiziert."
-    )
-
-
-def _rootcause_row_explanation_is_valid(
-    explanation: Any,
-    position_key: str,
-    position_keys: List[str],
-    output_value: Dict[str, Any],
-) -> bool:
-    if not isinstance(explanation, str) or not explanation.strip():
-        return False
-    explanation_lower = explanation.lower()
-    if position_key.lower() not in explanation_lower:
-        return False
-    for other_position in position_keys:
-        if other_position != position_key and other_position.lower() in explanation_lower:
-            return False
-    return all(
-        str(value).lower() in explanation_lower
-        for value in (output_value.get("value_a"), output_value.get("value_b"))
-        if value is not None
-    )
-
-
-def _rootcause_detail_explanation(
-    position_key: str,
-    field: str,
-    value_a: Any,
-    value_b: Any,
-    difference: Any,
-    parents: List[str],
-    output_column: str,
-    output_value: Dict[str, Any],
-    lineage_evidence: List[Dict[str, Any]],
-    matched_release_note: Optional[Dict[str, Any]],
-) -> str:
-    field_changed = not _rootcause_values_equal(value_a, value_b)
-    if isinstance(value_a, (int, float)) and isinstance(value_b, (int, float)):
-        change_text = (
-            f"hat sich von {_rootcause_value_text(value_a)} auf {_rootcause_value_text(value_b)} geaendert, "
-            f"mit einer B - A Differenz von {_rootcause_value_text(difference)}"
-        )
-    elif field_changed:
-        change_text = f"hat sich von {_rootcause_value_text(value_a)} auf {_rootcause_value_text(value_b)} geaendert"
-    else:
-        change_text = "hat sich zwischen den beiden Ausfuehrungen nicht geaendert"
-
-    related_changes = [
-        item for item in lineage_evidence
-        if str(item.get("position")) == position_key
-        and item.get("field") != field
-        and not _rootcause_values_equal(item.get("value_a"), item.get("value_b"))
-    ]
-    related_text = ""
-    if field.lower().replace("_", " ") == "risk weight":
-        asset_change = next(
-            (item for item in related_changes if str(item.get("field", "")).lower().replace("_", " ") == "asset class"),
-            None,
-        )
-        if asset_change:
-            related_text = (
-                f" Die Asset Class hat sich von {_rootcause_value_text(asset_change.get('value_a'))} "
-                f"auf {_rootcause_value_text(asset_change.get('value_b'))} geaendert; das ist konsistent mit dieser Risk-Weight-Aenderung."
-            )
-    elif parents:
-        changed_parents = [
-            item for item in related_changes
-            if item.get("field") in parents
-        ]
-        if changed_parents:
-            related_text = " Geaenderte Parent-Felder waren " + ", ".join(
-                str(item.get("field")) for item in changed_parents
-            ) + "."
-
-    note_text = " Keine Release Note dokumentiert diese Feld-Aenderung direkt."
-    if matched_release_note:
-        jira_id = matched_release_note.get("jira_id") or "the matched release note"
-        solution = matched_release_note.get("solution_description")
-        matched_fields = {
-            _rootcause_normalize_release_note_text(value)
-            for value in matched_release_note.get("matched_fields", [])
-        }
-        normalized_field = _rootcause_normalize_release_note_text(field)
-        if normalized_field in matched_fields:
-            relationship = "stuetzt"
-        else:
-            relationship = "liefert geerbten Kontext fuer"
-        note_text = f" Die Release Note {jira_id} {relationship} dieses Feld."
-        if solution:
-            note_text += f" Die Solution Description lautet: {solution}"
-
-    propagation_text = ""
-    if field != output_column:
-        propagation_text = (
-            f" Dieses Feld ist Teil der Lineage, die {output_column} speist; der Wert hat sich von "
-            f"{_rootcause_value_text(output_value.get('value_a'))} auf "
-            f"{_rootcause_value_text(output_value.get('value_b'))} geaendert."
-        )
-    return f"Fuer {position_key} gilt: {field} {change_text}.{related_text}{propagation_text}{note_text}"
-
-
-def _rootcause_dependencies(dataset_id: str, code_id: str, output_column: str) -> List[str]:
-    metadata = db.get_dataset_metadata(dataset_id) or {}
-    columns = [column.get("name") for column in (metadata.get("tables") or [{}])[0].get("columns", [])]
-    code_path = CODE_DIR / f"{code_id}.py"
-    if not code_path.exists():
-        return []
-    lineage = _analyze_code_content_lineage(code_path.read_text(encoding="utf-8"), columns, [output_column])
-    dependencies = {
-        row["input"]
-        for row in lineage
-        if row.get("input") not in (None, "—", output_column)
-        and row.get("output") != row.get("input")
-    }
-    changed = True
-    while changed:
-        changed = False
-        for row in _analyze_code_content_lineage(code_path.read_text(encoding="utf-8"), columns):
-            if (
-                row.get("output") in dependencies
-                and row.get("input") not in (None, "—", row.get("output"))
-                and row.get("input") not in dependencies
-            ):
-                dependencies.add(row["input"])
-                changed = True
-    return sorted(dependencies)
-
-
-def _rootcause_lineage_steps(
-    dataset_ids_and_code_ids: List[Tuple[str, str]],
-    output_column: str,
-) -> List[Dict[str, Any]]:
-    """Build source-to-output lineage steps from the uploaded code AST."""
-    graph: Dict[str, set] = {}
-    for dataset_id, code_id in dataset_ids_and_code_ids:
-        metadata = db.get_dataset_metadata(dataset_id) or {}
-        columns = [
-            column.get("name")
-            for column in (metadata.get("tables") or [{}])[0].get("columns", [])
-            if column.get("name")
-        ]
-        code_path = CODE_DIR / f"{code_id}.py"
-        if not code_path.exists():
+        column = next((entry for entry in item.get("columns", []) if entry.get("column_name") == output), None)
+        if column is None:
             continue
-        for row in _analyze_code_content_lineage(code_path.read_text(encoding="utf-8"), columns):
-            output = row.get("output")
-            input_field = row.get("input")
-            if output and input_field not in (None, "—") and output != input_field:
-                graph.setdefault(output, set()).add(input_field)
+        match_status = item.get("match_status") or "matched"
+        changed = match_status != "matched" or not rootcause_analysis.same_value(column.get("value_a"), column.get("value_b"))
+        entries.append({"key": key, "match_status": match_status, "column": column, "changed": changed})
+    if request.position is not None and not entries:
+        raise HTTPException(404, f"Position {request.position} not found")
 
-    ordered: List[str] = []
-    visited = set()
+    def size(entry: Dict[str, Any]) -> float:
+        difference = entry["column"].get("difference")
+        return abs(difference) if isinstance(difference, (int, float)) and np.isfinite(difference) else 0.0
 
-    def visit(field: str) -> None:
-        if field in visited:
-            return
-        visited.add(field)
-        for parent in sorted(graph.get(field, set())):
-            visit(parent)
-        ordered.append(field)
+    detailed = sorted((entry for entry in entries if entry["changed"] and entry["match_status"] == "matched"), key=size, reverse=True)
+    detailed_keys = {entry["key"] for entry in detailed[:rootcause_analysis.MAX_DETAILED_POSITIONS]}
+    platform = _rootcause_platform()
+    run_a = rootcause_analysis.load_run(platform, request.execution_id_a, key_column, detailed_keys)
+    run_b = rootcause_analysis.load_run(platform, request.execution_id_b, key_column, detailed_keys)
+    notes, workbooks = _rootcause_release_notes(request.release_note_id) if detailed_keys else ([], [])
+    scope = rootcause_analysis.Scope.build(run_a, run_b, key_column, [entry["key"] for entry in entries])
+    expected = rootcause_analysis.counterfactual(platform, run_b, run_a, key_column, output) if detailed_keys else {}
+    context = rootcause_analysis.Context(run_a, run_b, output, key_column, notes, scope, expected)
 
-    visit(output_column)
-    return [
-        {
-            "field": field,
-            "parents": sorted(graph.get(field, set())),
-            "lineage": ", ".join(sorted(graph.get(field, set()))),
-        }
-        for field in ordered
-    ]
-
-
-def _rootcause_parse_json_object(content: str) -> Dict[str, Any]:
-    """Parse model content as JSON object, tolerating wrapper text and bad escapes."""
-
-    def _sanitize_invalid_escapes(raw: str) -> str:
-        out: List[str] = []
-        i = 0
-        hex_chars = set("0123456789abcdefABCDEF")
-        valid_escapes = {'"', "\\", "/", "b", "f", "n", "r", "t", "u"}
-        while i < len(raw):
-            ch = raw[i]
-            if ch != "\\":
-                out.append(ch)
-                i += 1
-                continue
-            if i + 1 >= len(raw):
-                out.append("\\\\")
-                i += 1
-                continue
-            nxt = raw[i + 1]
-            if nxt not in valid_escapes:
-                out.append("\\\\")
-                i += 1
-                continue
-            if nxt != "u":
-                out.append("\\")
-                out.append(nxt)
-                i += 2
-                continue
-            hex_part = raw[i + 2:i + 6]
-            if len(hex_part) == 4 and all(c in hex_chars for c in hex_part):
-                out.append("\\u")
-                out.append(hex_part)
-                i += 6
+    positions: List[Dict[str, Any]] = []
+    rows: List[Dict[str, Any]] = []
+    detail_rows: List[Dict[str, Any]] = []
+    for entry in entries:
+        key, column, changed = entry["key"], entry["column"], entry["changed"]
+        value_a, value_b, difference = column.get("value_a"), column.get("value_b"), column.get("difference")
+        if key in detailed_keys:
+            position = rootcause_analysis.analyse_position(context, key)
+            status, score = position["status"], position["score"]
+            text = rootcause_analysis.explanation(context, key, position, value_a, value_b, difference)
+            detail_rows.extend(rootcause_analysis.detail_rows(context, key, position))
+        else:
+            position = rootcause_analysis.empty_position()
+            score = None
+            status = "unexplained" if changed else "unchanged"
+            if entry["match_status"] == "only_in_a":
+                text = f"{key} gibt es nur im Base-Lauf; im Compare-Lauf fehlt die Position."
+            elif entry["match_status"] == "only_in_b":
+                text = f"{key} gibt es nur im Compare-Lauf (neue Position)."
+            elif changed:
+                text = rootcause_analysis._movement(output, key, value_a, value_b, difference) + " Diese Position wurde wegen der Menge der Abweichungen nicht im Detail analysiert; bitte einzeln auswählen."
             else:
-                out.append("\\\\u")
-                i += 2
-        return "".join(out)
+                text = rootcause_analysis._movement(output, key, value_a, value_b, difference)
+        positions.append({"position": key, "changed": changed, "status": status, "score": score, "difference": rootcause_analysis._number(difference), "analysis": position})
+        rows.append(rootcause_analysis.result_row(context, key, position, status, score, text, value_a, value_b, difference, changed))
 
-    text = (content or "{}").strip()
-    if text.startswith("```"):
-        text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
-        text = re.sub(r"\s*```$", "", text)
-
-    decoder = json.JSONDecoder()
-
-    def _attempt_parse(raw: str) -> Optional[Dict[str, Any]]:
-        try:
-            obj = json.loads(raw)
-            return obj if isinstance(obj, dict) else None
-        except Exception:
-            pass
-        starts = [idx for idx, c in enumerate(raw) if c == "{"]
-        for start in starts:
-            try:
-                obj, _ = decoder.raw_decode(raw[start:])
-                if isinstance(obj, dict):
-                    return obj
-            except Exception:
-                continue
-        return None
-
-    parsed = _attempt_parse(text)
-    if parsed is not None:
-        return parsed
-
-    repaired = _sanitize_invalid_escapes(text)
-    parsed = _attempt_parse(repaired)
-    if parsed is not None:
-        return parsed
-
-    raise ValueError("Model returned non-JSON or malformed JSON content")
-
-
-def _rootcause_llm(
-    prompt: str,
-    post_run_review: bool = False,
-    review_judge: bool = False,
-    edit_planner: bool = False,
-    requirement_extractor: bool = False,
-) -> Dict[str, Any]:
-    api_key = os.environ.get("OPENAI_API_KEY")
-    azure_key = os.environ.get("AZURE_OPENAI_API_KEY")
-    endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
-    if not api_key and not (azure_key and endpoint):
-        raise HTTPException(503, "OpenAI is not configured")
-    messages = [
-        {
-            "role": "system",
-            "content": "You are a financial data root-cause analyst. Use only supplied evidence and separate verified facts from hypotheses. The comparison direction is always B - A: execution_b minus execution_a. Treat value_a as the baseline value, value_b as the compared value, and every numeric difference as value_b - value_a. Never describe or calculate the deviation as A - B. Release notes are structured evidence: when a release note is relevant to a changed dependency, use its matched Jira ID and solution_description in the explanation and root_cause, paraphrasing the solution description naturally and explaining how it does or does not account for the observed B - A change. Do not merely mention the Jira ID, copy the solution description without connecting it to the lineage, or claim causation from a field-name match alone. If no relevant release note has a solution description, say that the solution detail is unavailable; if the release note only resembles the change, label it as supporting context rather than a verified cause. Return valid JSON only with keys: explanation (string), root_cause (string), confidence (number 0-100), evidence (array of strings), changed_fields (array of strings), release_note_links (array of strings), next_checks (array of strings), rows (array). The root_cause and explanation fields must be detailed, specific, and substantially longer than a one-sentence summary: write 2-4 paragraphs covering the affected positions, exact A and B values and B - A deviations, the relevant dependency chain, which source fields actually changed, how those changes propagate to the output, and whether release notes support or merely resemble the observed change. Explicitly state when the evidence is insufficient. Return exactly one rows item for every selected deviation position. Each rows item must have: position (string), output (string), lineage (string), input (string), release_note (string), explanation (string), confidence (number 0-100). Each row explanation must be specific to that position, include its B - A deviation and evidence-based reasoning, and incorporate the relevant Jira ID and solution description when supported by the evidence. Use an empty string when no evidence exists; never invent a release-note identifier. The confidence is evidence confidence, not certainty.",
-        },
-        {
-            "role": "system",
-            "content": "For each row, separate execution facts from release-note support. State the exact output movement and B - A difference, then name the changed lineage fields observed in the executions. Only use the position-specific release-note candidates supplied in the evidence. Include the candidate Jira ID and naturally paraphrase its solution description only when its position context, matched field, problem description, and solution description align. A note about assessment-base calculation supports only that assessment-base part; it does not prove Asset Class, Risk Weight, EAD, or other changes unless the note explicitly says so. Label each note as supporting, partially supporting, or not supporting the explanation. Never claim a release note caused a change based only on a field-name or Jira match.",
-        },
-        {
-            "role": "system",
-            "content": "Schreibe alle natuerlichsprachlichen Inhalte ausschliesslich auf Deutsch, insbesondere explanation, root_cause, evidence, next_checks sowie rows[].explanation. Verwende die Jira-ID und die Solution Description aus den Evidenzdaten unverfaelscht und binde die Solution Description natuerlich in die Begruendung ein.",
-        },
-        *([{
-            "role": "system",
-            "content": (
-                "POST-RUN HUMAN REVIEW MODUS: Die menschliche Anweisung ist die hoechste Prioritaet fuer die dargestellte Root-Cause-Ausgabe. "
-                "Die normalen Vorgaben zu Laenge, Detailgrad und unveraenderten Feldern gelten nicht, wenn sie der menschlichen Anweisung widersprechen. "
-                "Fuehre jeden geforderten Umbau vollstaendig durch: Zusammenfassung, Evidenz, Next Checks, Release-Note-Links, jede rows- und detail_rows-Erklaerung sowie dargestellte Lineage-, Output- und Abweichungswerte. "
-                "Wenn der Mensch eine Tabellenweite Aenderung fordert, gib ALLE rows und ALLE detail_rows zurueck. "
-                "Wenn der Mensch eine maximale Satzanzahl nennt, halte sie fuer jede betroffene Erklaerung strikt ein. "
-                "Wenn der Mensch Release-Note-Links entfernt, behalte oder entferne die geforderten Links konsequent in release_note_links, rows[].release_note und detail_rows[].release_note. "
-                "Gib ein vollstaendiges JSON mit root_cause, explanation, confidence, evidence, changed_fields, release_note_links, next_checks, rows und detail_rows zurueck."
-            ),
-        }] if post_run_review else []),
-        {"role": "user", "content": prompt},
-    ]
-    if post_run_review:
-        messages = [
+    used_notes: List[rootcause_analysis.Note] = []
+    for item in positions:
+        for note in item["analysis"]["notes"]:
+            if note not in used_notes:
+                used_notes.append(note)
+    deviating = [item for item in positions if item["changed"]]
+    counts = {status: sum(1 for item in deviating if item["status"] == status) for status in ("explained", "partial", "unexplained")}
+    score = rootcause_analysis.overall_score(positions)
+    summary = rootcause_analysis.summary(context, positions, len(entries))
+    analysis = {
+        "root_cause": summary,
+        "explanation": summary,
+        "confidence": score if score is not None else 0,
+        "evidence": rootcause_analysis.evidence(context, len(notes), workbooks),
+        "changed_fields": sorted({name for item in deviating for chain in [*item["analysis"]["chains"], *item["analysis"]["other_chains"]] for name in chain["fields"] if item["analysis"]["values"].get(name, {}).get("changed")}),
+        "release_note_links": sorted({note.workbook for note in used_notes if note.workbook}),
+        "next_checks": rootcause_analysis.next_checks(context, positions, bool(notes) or not detailed_keys),
+        "rows": rows,
+        "detail_rows": detail_rows,
+        "status_counts": {**counts, "unchanged": len(positions) - len(deviating)},
+    }
+    stages = {
+        "comparison_direction": "B - A (execution_b minus execution_a)",
+        "dependencies": sorted({name for item in positions for name in item["analysis"]["lineage_fields"] if name != output}),
+        "changed_source_fields": [
             {
-                "role": "system",
-                "content": (
-                    "Du bist ein Post-Run-Editor fuer einen Root-Cause-Bericht. Die menschliche Anweisung ist die einzige redaktionelle Spezifikation und hat hoechste Prioritaet. "
-                    "Fuehre jede Anforderung vollstaendig und exakt aus, unabhaengig davon ob sie Zusammenfassung, Erklaerungen, alle Tabellenzeilen, Lineage, Output-Darstellung, Abweichungen, Confidence, Evidenz, Release-Note-Links oder Detailzeilen betrifft. "
-                    "Gib ein vollstaendiges JSON mit root_cause, explanation, confidence, evidence, changed_fields, release_note_links, next_checks, rows und detail_rows zurueck. "
-                    "Gib alle vorhandenen rows und detail_rows zurueck. Positionen und ihre Zuordnung muessen erhalten bleiben. Antworte ausschliesslich mit JSON."
-                ),
-            },
-            {"role": "user", "content": prompt},
-        ]
-    elif review_judge:
-        messages = [
-            {
-                "role": "system",
-                "content": (
-                    "Du bist ein strenger Post-Run-Review-Judge. Pruefe, ob proposed_report jede einzelne Forderung aus user_instruction exakt erfuellt. "
-                    "Bewerte nur die dargestellte Ausgabe, nicht Absichten. Antworte ausschliesslich als JSON: "
-                    "{\"approved\": boolean, \"violations\": [string], \"correction\": string}. "
-                    "approved darf nur true sein, wenn jede Forderung vollstaendig erfuellt ist."
-                ),
-            },
-            {"role": "user", "content": prompt},
-        ]
-    elif edit_planner:
-        messages = [
-            {
-                "role": "system",
-                "content": (
-                    "You are a RootCause post-run edit planner. Convert the user's entire instruction into an executable JSON edit plan for the supplied report. "
-                    "The user instruction is highest priority. Return JSON only as {\"acceptance_criteria\":[...],\"operations\":[...]}. "
-                    "acceptance_criteria must contain one testable criterion for every distinct user requirement, with no omissions. "
-                    "Each operation has target, where, set, and satisfies. satisfies is a non-empty array of extracted requirement IDs implemented by that operation. target is one of analysis, stages, analysis.rows, analysis.detail_rows. "
-                    "where is optional for analysis/stages; for rows/detail_rows it selects existing records using fields such as position and output, or {\"position\":\"*\"} for all. "
-                    "set is an object containing every requested field value. Use [] or \"\" when the user requests removal. "
-                    "Plan every requested change, including summaries, explanations, lineage, output display, deviations, confidence, evidence, next checks, release-note links, rows, and detail rows. "
-                    "Never return an empty operations array. Do not return prose or a rewritten report; return only acceptance_criteria and operations. "
-                    "Example: {\"acceptance_criteria\":[\"Every summary row has confidence 70\",\"No release-note links remain\"],\"operations\":[{\"target\":\"analysis.rows\",\"where\":{\"position\":\"*\"},\"set\":{\"confidence\":70},\"satisfies\":[\"confidence\"]},{\"target\":\"analysis\",\"set\":{\"release_note_links\":[]},\"satisfies\":[\"release_notes\"]}]}."
-                ),
-            },
-            {"role": "user", "content": prompt},
-        ]
-    elif requirement_extractor:
-        messages = [
-            {
-                "role": "system",
-                "content": (
-                    "You are a RootCause post-run requirement extractor. Convert the user's complete instruction into a precise, exhaustive, machine-readable requirement specification. "
-                    "Return JSON only: {\"requirements\":[{\"id\":string,\"scope\":[string],\"instruction\":string,\"acceptance_test\":string}],\"protected_facts\":[string]}. "
-                    "Create one requirement for every independently testable user request, preserving quantities, exclusions, scope, and ordering exactly. "
-                    "Valid scopes include analysis, stages, rows, detail_rows, release_notes, lineage, explanations, confidence, evidence, and presentation. "
-                    "Protected facts are only immutable underlying identifiers and source facts, unless the user explicitly requests display-only changes."
-                ),
-            },
-            {"role": "user", "content": prompt},
-        ]
-    try:
-        if api_key:
-            from openai import OpenAI
-            client = OpenAI(api_key=api_key, timeout=60.0, max_retries=1)
-            response = client.chat.completions.create(
-                model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
-                messages=messages,
-                temperature=0.1,
-                max_tokens=2400 if requirement_extractor else 4000 if edit_planner else 8000 if post_run_review else 2400,
-                response_format={"type": "json_object"},
-            )
-        else:
-            from openai import AzureOpenAI
-            client = AzureOpenAI(
-                api_key=azure_key,
-                api_version=os.environ.get("AZURE_OPENAI_API_VERSION", "2024-10-21"),
-                azure_endpoint=endpoint.rstrip("/"),
-            )
-            response = client.chat.completions.create(
-                model=os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o"),
-                messages=messages,
-                temperature=0.1,
-                max_tokens=2400 if requirement_extractor else 4000 if edit_planner else 8000 if post_run_review else 2400,
-                response_format={"type": "json_object"},
-            )
-        content = (response.choices[0].message.content or "{}").strip()
-        try:
-            parsed = _rootcause_parse_json_object(content)
-        except Exception:
-            if post_run_review or edit_planner or requirement_extractor:
-                raise HTTPException(502, "Post-run RootCause editor returned malformed JSON")
-            parsed = {
-                "explanation": "",
-                "root_cause": "",
-                "confidence": 0,
-                "evidence": [],
-                "changed_fields": [],
-                "release_note_links": [],
-                "next_checks": [],
-                "rows": [],
+                "position": item["position"],
+                "field": origin["field"],
+                "kind": origin["kind"],
+                "value_a": item["analysis"]["values"].get(origin["field"], {}).get("a"),
+                "value_b": item["analysis"]["values"].get(origin["field"], {}).get("b"),
             }
-        parsed["confidence"] = max(0, min(100, float(parsed.get("confidence", 0))))
-        if not isinstance(parsed.get("rows"), list):
-            parsed["rows"] = []
-        return parsed
-    except HTTPException:
-        raise
-    except Exception as exc:
-        traceback.print_exc()
-        raise HTTPException(502, f"Root-cause analysis failed: {exc}") from exc
-
-
-def _normalize_post_run_edit_plan(plan: Dict[str, Any]) -> List[Dict[str, Any]]:
-    if not isinstance(plan, dict):
-        return []
-    raw_operations = plan.get("operations") or plan.get("edits") or plan.get("patches")
-    if isinstance(raw_operations, list):
-        operations = raw_operations
-    else:
-        operations = []
-        for source_key, target in (("analysis", "analysis"), ("report", "analysis"), ("stages", "stages")):
-            if isinstance(plan.get(source_key), dict):
-                operations.append({"target": target, "set": plan[source_key]})
-        for source_key, target in (("rows", "analysis.rows"), ("detail_rows", "analysis.detail_rows")):
-            source_rows = plan.get(source_key)
-            if isinstance(source_rows, list):
-                for row in source_rows:
-                    if not isinstance(row, dict):
-                        continue
-                    where = {key: row[key] for key in ("position", "output") if key in row}
-                    changes = {key: value for key, value in row.items() if key not in {"position", "output"}}
-                    if where and changes:
-                        operations.append({"target": target, "where": where, "set": changes})
-
-    normalized: List[Dict[str, Any]] = []
-    aliases = {
-        "report": "analysis",
-        "root_cause": "analysis",
-        "rows": "analysis.rows",
-        "table": "analysis.rows",
-        "detail_rows": "analysis.detail_rows",
-        "details": "analysis.detail_rows",
-        "release_notes": "stages",
+            for item in positions
+            for origin in item["analysis"]["origins"]
+        ],
+        "release_notes": [note.reference() for note in used_notes],
+        "deviations": [{"key": entry["key"], "match_status": entry["match_status"], "columns": [entry["column"]]} for entry in entries],
     }
-    for operation in operations:
-        if not isinstance(operation, dict):
-            continue
-        target = aliases.get(str(operation.get("target") or ""), operation.get("target"))
-        changes = operation.get("set") or operation.get("changes") or operation.get("patch")
-        where = operation.get("where") or operation.get("selector") or {}
-        if target in {"analysis", "stages", "analysis.rows", "analysis.detail_rows"} and isinstance(changes, dict):
-            satisfies = operation.get("satisfies") or operation.get("requirement_ids") or []
-            normalized.append({
-                "target": target,
-                "where": where if isinstance(where, dict) else {},
-                "set": changes,
-                "satisfies": [str(item) for item in satisfies] if isinstance(satisfies, list) else [],
-            })
-    return normalized
+
+    def describe(run: rootcause_analysis.Run) -> Dict[str, Any]:
+        return {"execution_id": run.execution_id, "code": run.code_filename, "dataset": run.dataset_name, "replayed": run.replayed, "verified": run.verified, "problem": run.problem}
+
+    return _rootcause_json_safe({
+        "status": "success",
+        "post_run_review_available": True,
+        "comparison_direction": "B - A (execution_b minus execution_a)",
+        "output_column": output,
+        "key_column": key_column,
+        "release_note_id": request.release_note_id,
+        "release_note_files": workbooks,
+        "runs": {"base": describe(run_a), "compare": describe(run_b)},
+        "stages": stages,
+        "analysis": analysis,
+    })
 
 
-def _post_run_acceptance_criteria(plan: Dict[str, Any]) -> List[str]:
-    if not isinstance(plan, dict):
-        return []
-    criteria = plan.get("acceptance_criteria") or plan.get("criteria") or plan.get("requirements")
-    return [str(item).strip() for item in criteria if isinstance(item, str) and item.strip()] if isinstance(criteria, list) else []
-
-
-def _extract_post_run_requirements(instruction: str) -> Dict[str, Any]:
-    specification = _rootcause_llm(instruction, requirement_extractor=True)
-    requirements = specification.get("requirements") if isinstance(specification, dict) else None
-    if not isinstance(requirements, list) or not requirements:
-        raise ValueError("Requirement extractor returned no requirements")
-    normalized: List[Dict[str, Any]] = []
-    for index, requirement in enumerate(requirements, start=1):
-        if not isinstance(requirement, dict):
-            raise ValueError("Requirement extractor returned an invalid requirement")
-        instruction_text = str(requirement.get("instruction") or "").strip()
-        acceptance_test = str(requirement.get("acceptance_test") or "").strip()
-        scopes = requirement.get("scope")
-        if not instruction_text or not acceptance_test or not isinstance(scopes, list) or not scopes:
-            raise ValueError("Requirement extractor omitted instruction, scope, or acceptance test")
-        normalized.append({
-            "id": str(requirement.get("id") or f"requirement_{index}"),
-            "scope": [str(scope) for scope in scopes],
-            "instruction": instruction_text,
-            "acceptance_test": acceptance_test,
-        })
+@app.get("/api/rootcause/release-notes/{release_note_id}")
+def rootcause_release_note_summary(release_note_id: str):
+    """What the RootCause analysis reads from one release-notes file: its sheets, their cell ranges and the notes."""
+    metadata = _rootcause_release_note_files(release_note_id)[0]
+    context = _chat_release_note_workbook_context(metadata) or {"sheets": []}
+    sheets: List[Dict[str, Any]] = []
+    labels: List[str] = []
+    total = 0
+    for sheet in context.get("sheets", []):
+        records = [record for record in sheet.get("records", []) if isinstance(record, dict)]
+        bounds = sheet.get("range") or {}
+        cells = ""
+        if bounds.get("min_row") and bounds.get("min_col"):
+            cells = (
+                f"{openpyxl.utils.get_column_letter(bounds['min_col'])}{bounds['min_row']}:"
+                f"{openpyxl.utils.get_column_letter(bounds['max_col'])}{bounds['max_row']}"
+            )
+        sheets.append({"name": sheet.get("name"), "range": cells, "notes": len(records)})
+        total += len(records)
+        for record in records:
+            label = _extract_jira_id_from_record(record)
+            if label and label not in labels:
+                labels.append(label)
     return {
-        "requirements": normalized,
-        "protected_facts": specification.get("protected_facts", []) if isinstance(specification.get("protected_facts"), list) else [],
+        "id": release_note_id,
+        "filename": metadata.get("filename"),
+        "kind": _release_note_kind(metadata),
+        "notes": total,
+        "labels": labels[:12],
+        "sheets": sheets,
     }
 
 
-def _apply_post_run_edit_plan(report: Dict[str, Any], plan: Dict[str, Any]) -> Dict[str, Any]:
-    updated = json.loads(json.dumps(report, default=str))
-    operations = _normalize_post_run_edit_plan(plan)
-    if not operations:
-        raise ValueError("Post-run edit planner returned no operations")
-    for operation in operations:
-        if not isinstance(operation, dict):
-            raise ValueError("Post-run edit plan contains an invalid operation")
-        target = operation["target"]
-        where = operation.get("where") or {}
-        changes = operation["set"]
-        if target in {"analysis", "stages"}:
-            updated.setdefault(target, {}).update(changes)
-            continue
-        collection_name = target.split(".", 1)[1]
-        collection = updated.setdefault("analysis", {}).get(collection_name)
-        if not isinstance(collection, list):
-            raise ValueError(f"Post-run report has no {collection_name} collection")
-        matched = 0
-        for item in collection:
-            if not isinstance(item, dict):
-                continue
-            if all(str(item.get(key)) == str(value) or str(value) == "*" for key, value in where.items()):
-                item.update(changes)
-                matched += 1
-        if not matched:
-            raise ValueError(f"Post-run edit plan selector matched no {collection_name} records")
-    return updated
+@app.get("/api/rootcause/fields")
+def rootcause_fields(execution_id_a: str, execution_id_b: str):
+    """The fields both executions have, with the number of positions whose value differs (for the field picker)."""
+    comparison = compare_clusters({"execution_id_a": execution_id_a, "execution_id_b": execution_id_b})
+    if comparison.get("status") == "error":
+        return {"key_column": None, "positions": 0, "fields": []}
+    key_column = comparison.get("key_column")
+    deviations: Dict[str, int] = {}
+    numeric: Dict[str, bool] = {}
+    data = comparison.get("comparison_data") or []
+    for item in data:
+        matched = item.get("match_status") == "matched"
+        for column in item.get("columns", []):
+            name = column.get("column_name")
+            value_a, value_b = column.get("value_a"), column.get("value_b")
+            if not matched or not rootcause_analysis.same_value(value_a, value_b):
+                deviations[name] = deviations.get(name, 0) + 1
+            for value in (value_a, value_b):
+                cleaned = rootcause_analysis._clean(value)
+                if cleaned is not None:
+                    numeric[name] = numeric.get(name, True) and isinstance(cleaned, float)
+    return {
+        "key_column": key_column,
+        "positions": len(data),
+        "fields": [
+            {"name": name, "numeric": numeric.get(name, False), "deviations": deviations.get(name, 0)}
+            for name in comparison.get("common_columns") or []
+            if name != key_column
+        ],
+    }
 
 
-def _post_run_llm_review(instruction: str, original_report: Dict[str, Any], proposed_report: Dict[str, Any], requirements: List[Dict[str, Any]]) -> Dict[str, Any]:
-    review_prompt = json.dumps({
-        "task": "Review whether the proposed RootCause report follows the user's instruction exactly.",
-        "user_instruction": instruction,
-        "extracted_requirements": requirements,
-        "original_report": original_report,
-        "proposed_report": proposed_report,
-        "required_output": {"approved": "boolean", "requirements": [{"id": "requirement id", "approved": "boolean", "reason": "specific evidence"}], "violations": ["specific unmet requirement"], "correction": "precise instruction for the planner"},
-    }, ensure_ascii=True, default=str)
-    review = _rootcause_llm(
-        "Return JSON only. Act as a strict post-run review judge. Do not rewrite the report. Return one requirement verdict for every extracted requirement. Approve only when every part of user_instruction is reflected in proposed_report. " + review_prompt,
-        review_judge=True,
-    )
-    return review if isinstance(review, dict) else {"approved": False, "violations": ["Reviewer returned invalid JSON"]}
+@app.post("/api/rootcause/review")
+def review_root_cause(request: RootCauseReviewRequest):
+    """One turn of the post-run human review chat: the answer to the reviewer's message and the checked edits of the
+    report (see rootcause_review). The page applies them on top of the computed result, so each stays undoable."""
+    if not request.message.strip():
+        raise HTTPException(400, "Write a message first.")
+    if not request.rows:
+        raise HTTPException(400, "There is no RootCause result to review; run the analysis first.")
+    try:
+        notes = [note.reference() for note in _rootcause_release_notes(request.release_note_id)[0]]
+    except HTTPException:
+        # The release-notes file was deleted since the analysis: the notes the rows carry still count.
+        notes = []
+        for row in request.rows:
+            for note in row.get("notes") or []:
+                if isinstance(note, dict) and note.get("id") and note not in notes:
+                    notes.append(note)
+    try:
+        return rootcause_review.review_turn(request.model_dump(), notes)
+    except rootcause_review.ReviewError as exc:
+        raise HTTPException(502, str(exc)) from exc
 
 
 @app.post("/api/rootcause/analyze")
 def analyze_root_cause(request: RootCauseRequest):
-    if request.review_id and request.human_review and request.human_review.get("review_type") == "post_run":
-        stored_request = NORMAL_ROOTCAUSE_SESSIONS.get(request.review_id)
-        if not stored_request:
-            raise HTTPException(404, "Normal RootCause review session not found")
-        base_request = RootCauseRequest(**stored_request)
-        refreshed = analyze_root_cause(base_request)
-        overrides = request.human_review
-        primary_cause = str(overrides.get("primary_cause_override") or "").strip()
-        if primary_cause:
-            analysis = refreshed.setdefault("analysis", {})
-            current_rows = analysis.get("rows") or []
-            original_report = {
-                "analysis": analysis,
-                "stages": refreshed.get("stages", {}),
-            }
-            specification = _extract_post_run_requirements(primary_cause)
-            requirements = specification["requirements"]
-            editor_prompt = json.dumps({
-                "user_instruction": primary_cause,
-                "extracted_requirements": requirements,
-                "protected_facts": specification["protected_facts"],
-                "current_report": original_report,
-                "instruction": "Return the complete executable edit plan that fulfills every extracted requirement exactly. Return at least one operation for every requirement.",
-            }, ensure_ascii=True, default=str)
-            review: Dict[str, Any] = {}
-            rewritten: Dict[str, Any] = {}
-            candidate: Dict[str, Any] = {}
-            for _ in range(8):
-                plan = _rootcause_llm(editor_prompt, edit_planner=True)
-                criteria = _post_run_acceptance_criteria(plan)
-                operations = _normalize_post_run_edit_plan(plan)
-                required_ids = {str(requirement["id"]) for requirement in requirements}
-                covered_ids = {requirement_id for operation in operations for requirement_id in operation.get("satisfies", [])}
-                if not criteria or len(criteria) < len(requirements) or not required_ids.issubset(covered_ids):
-                    review = {
-                        "approved": False,
-                        "violations": [f"The plan did not implement requirement IDs: {', '.join(sorted(required_ids - covered_ids))}."],
-                        "correction": "Return one acceptance criterion and at least one concrete operation with satisfies:[requirement_id] for every extracted requirement.",
-                    }
-                    editor_prompt += "\n\nPlanner correction:\n" + json.dumps(review, ensure_ascii=True)
-                    continue
-                try:
-                    candidate = _apply_post_run_edit_plan(original_report, plan)
-                except ValueError as exc:
-                    review = {"approved": False, "violations": [str(exc)], "correction": "Return valid executable operations only."}
-                    editor_prompt += "\n\nPlanner correction:\n" + json.dumps(review, ensure_ascii=True)
-                    continue
-                review = _post_run_llm_review(primary_cause, original_report, candidate, requirements)
-                requirement_verdicts = review.get("requirements") if isinstance(review.get("requirements"), list) else []
-                approved_ids = {
-                    str(verdict.get("id"))
-                    for verdict in requirement_verdicts
-                    if isinstance(verdict, dict) and verdict.get("approved") is True
-                }
-                if review.get("approved") is True and required_ids.issubset(approved_ids):
-                    rewritten = candidate.get("analysis", {})
-                    refreshed["stages"] = candidate.get("stages", refreshed.get("stages", {}))
-                    break
-                editor_prompt = json.dumps({
-                    "user_instruction": primary_cause,
-                    "extracted_requirements": requirements,
-                    "protected_facts": specification["protected_facts"],
-                    "current_report": original_report,
-                    "previous_plan": plan,
-                    "review_feedback": {
-                    "violations": review.get("violations", []),
-                    "correction": review.get("correction", ""),
-                    },
-                    "instruction": "Return a corrected complete executable edit plan only.",
-                }, ensure_ascii=True, default=str)
-            if not rewritten:
-                if not candidate:
-                    raise HTTPException(502, "Post-run RootCause planner could not produce an executable edit plan")
-                rewritten = candidate.get("analysis", {})
-                refreshed["stages"] = candidate.get("stages", refreshed.get("stages", {}))
-            rewritten["extracted_requirements"] = requirements
-            rewritten["protected_facts"] = specification["protected_facts"]
-            rewritten["requirement_review"] = {
-                "approved": review.get("approved") is True,
-                "requirements": review.get("requirements", []),
-                "violations": review.get("violations", []),
-            }
-            rewritten["primary_cause"] = primary_cause
-            refreshed["analysis"] = rewritten
-        refreshed["review_id"] = request.review_id
-        refreshed["post_run_review_available"] = True
-        return refreshed
-
-    result_a = _rootcause_result(request.execution_id_a)
-    result_b = _rootcause_result(request.execution_id_b)
-    comparison = compare_clusters({
-        "execution_id_a": request.execution_id_a,
-        "execution_id_b": request.execution_id_b,
-    })
-    output_column = request.output_column.strip()
-    rows = comparison.get("comparison_data", [])
-    selected_rows = [
-        row for row in rows
-        if request.position is None or str(row.get("key")) == request.position
-    ]
-    if output_column:
-        selected_rows = [
-            {**row, "columns": [column for column in row.get("columns", []) if column.get("column_name") == output_column]}
-            for row in selected_rows
-        ]
-        selected_rows = [row for row in selected_rows if row["columns"]]
-
-    dependencies = sorted(set(
-        _rootcause_dependencies(result_a.get("dataset_id", ""), result_a.get("code_id", ""), output_column)
-        + _rootcause_dependencies(result_b.get("dataset_id", ""), result_b.get("code_id", ""), output_column)
-    ))
-    lineage_steps = _rootcause_lineage_steps([
-        (result_a.get("dataset_id", ""), result_a.get("code_id", "")),
-        (result_b.get("dataset_id", ""), result_b.get("code_id", "")),
-    ], output_column)
-    input_a = _rootcause_position_map(_rootcause_input_rows(result_a.get("dataset_id", "")))
-    input_b = _rootcause_position_map(_rootcause_input_rows(result_b.get("dataset_id", "")))
-    result_data_a = _rootcause_position_map(result_a.get("data") or [])
-    result_data_b = _rootcause_position_map(result_b.get("data") or [])
-    position_keys = [str(row.get("key")) for row in selected_rows]
-    changed_sources = []
-    lineage_evidence = []
-    for position_key in position_keys:
-        input_row_a = input_a.get(position_key, {})
-        input_row_b = input_b.get(position_key, {})
-        result_row_a = result_data_a.get(position_key, {})
-        result_row_b = result_data_b.get(position_key, {})
-        for step in lineage_steps:
-            field = step["field"]
-            is_derived_field = bool(step["parents"]) or field == output_column
-            value_a = (result_row_a if is_derived_field else input_row_a).get(field)
-            value_b = (result_row_b if is_derived_field else input_row_b).get(field)
-            if value_a != value_b:
-                lineage_evidence.append({
-                    "position": position_key,
-                    "field": field,
-                    "lineage": step["lineage"],
-                    "value_a": value_a,
-                    "value_b": value_b,
-                })
-            if field in dependencies and value_a != value_b:
-                changed_sources.append({
-                    "position": position_key,
-                    "field": field,
-                    "value_a": value_a,
-                    "value_b": value_b,
-                })
-    release_notes = _rootcause_release_note_matches(dependencies + [output_column])
-    changed_fields_by_position = {
-        position_key: sorted({
-            str(item.get("field"))
-            for item in lineage_evidence
-            if str(item.get("position")) == position_key and item.get("field")
-        })
-        for position_key in position_keys
-    }
-    changed_source_fields_by_position = {
-        position_key: sorted({
-            str(item.get("field"))
-            for item in changed_sources
-            if str(item.get("position")) == position_key and item.get("field")
-        })
-        for position_key in position_keys
-    }
-    position_release_notes = {
-        position_key: _rootcause_position_release_notes(
-            release_notes,
-            position_key,
-            changed_fields_by_position.get(position_key, []),
-            changed_source_fields_by_position.get(position_key, []),
-        )
-        for position_key in position_keys
-    }
-    position_evidence = {
-        position_key: {
-            "output": output_column,
-            "value_a": next(
-                (
-                    column.get("value_a")
-                    for row in selected_rows
-                    if str(row.get("key")) == position_key
-                    for column in row.get("columns", [])
-                    if column.get("column_name") == output_column
-                ),
-                None,
-            ),
-            "value_b": next(
-                (
-                    column.get("value_b")
-                    for row in selected_rows
-                    if str(row.get("key")) == position_key
-                    for column in row.get("columns", [])
-                    if column.get("column_name") == output_column
-                ),
-                None,
-            ),
-            "difference_b_minus_a": next(
-                (
-                    column.get("difference")
-                    for row in selected_rows
-                    if str(row.get("key")) == position_key
-                    for column in row.get("columns", [])
-                    if column.get("column_name") == output_column
-                ),
-                None,
-            ),
-            "changed_fields": changed_fields_by_position.get(position_key, []),
-            "release_notes": position_release_notes.get(position_key, []),
-        }
-        for position_key in position_keys
-    }
-    evidence = {
-        "output_column": output_column,
-        "positions": position_keys,
-        "deviations": selected_rows,
-        "dependencies": dependencies,
-        "lineage_steps": lineage_steps,
-        "lineage_evidence": lineage_evidence,
-        "changed_source_fields": changed_sources,
-        "release_notes": release_notes,
-        "changed_fields_by_position": changed_fields_by_position,
-        "position_release_notes": position_release_notes,
-        "position_evidence": position_evidence,
-        "release_note_context": [
-            {
-                "jira_id": note.get("jira_id", ""),
-                "solution_description": note.get("solution_description", ""),
-                "matched_fields": note.get("matched_fields", []),
-                "workbook": note.get("workbook", ""),
-                "sheet": note.get("sheet", ""),
-            }
-            for note in release_notes
-        ],
-        "comparison_direction": "B - A (execution_b minus execution_a)",
-        "execution_a": {"id": request.execution_id_a, "cluster": result_a.get("dataset_id"), "label": "Base (subtracted from B)"},
-        "execution_b": {"id": request.execution_id_b, "cluster": result_b.get("dataset_id"), "label": "Compared (subtracted A from this)"},
-    }
-    evidence = _rootcause_json_safe(evidence)
-    prompt = "Analysiere diese strukturierte Root-Cause-Evidenz. Alle Differenzen sind als B - A (execution_b minus execution_a) berechnet. Erklaere jede ausgewaehlte Abweichung, identifiziere das letztlich geaenderte Quellfeld, sofern die Evidenz es traegt, und ordne Release Notes nur dann zu, wenn sie relevant sind. Verwende position_release_notes je Position als massgebliche Kandidatenliste. Kopiere niemals eine Jira-ID oder Solution Description aus einer anderen Position. Eine Release Note ist nur dann stuetzende Evidenz, wenn Positionskontext, Changed-Field-Treffer, Problem Description und Solution Description zur beobachteten Lineage passen; ein generischer RWA- oder Jira-Treffer allein reicht nicht. Falls die Kandidatenliste leer ist, gib explizit an, dass keine positionsspezifische Release Note identifiziert wurde. Wenn ein Kandidat relevant ist, nenne seine Jira-ID und erklaere, wie die Solution Description die B - A Abweichung stuetzt, ihr widerspricht oder sie nur teilweise erklaert. Bei Werten und Differenzen gilt: value_a stammt aus execution_a (Base), value_b aus execution_b (Compare), und die gemeldete Differenz entspricht (value_b - value_a). Schreibe alle Erklaertexte auf Deutsch.\n\n" + json.dumps(evidence, default=str, ensure_ascii=True)
-    analysis = _rootcause_llm(prompt)
-    analysis_rows = analysis.get("rows") or []
-    rows_by_position = {
-        str(row.get("position")): row
-        for row in analysis_rows
-        if isinstance(row, dict) and row.get("position") is not None
-    }
-    normalized_rows = []
-    detail_rows = []
-    for selected_row in selected_rows:
-        position_key = str(selected_row.get("key"))
-        output_value = next(
-            (column for column in selected_row.get("columns", []) if column.get("column_name") == output_column),
-            {},
-        )
-        source_fields = [
-            item for item in changed_sources
-            if str(item.get("position")) == position_key
-        ]
-        changed_field_names = {
-            item.get("field")
-            for item in lineage_evidence
-            if str(item.get("position")) == position_key
-        }
-        lineage_by_field = {step["field"]: step for step in lineage_steps}
-        relevant_fields = {output_column}
-
-        def include_changed_branch(field: str) -> None:
-            step = lineage_by_field.get(field)
-            if not step:
-                return
-            for parent in step["parents"]:
-                if parent in changed_field_names:
-                    relevant_fields.add(parent)
-                    include_changed_branch(parent)
-
-        include_changed_branch(output_column)
-        full_position_lineage = " -> ".join(step["field"] for step in lineage_steps)
-        source_fields = [
-            item for item in source_fields
-            if not lineage_by_field.get(item.get("field"), {}).get("parents")
-        ]
-        matched_notes_for_position = position_release_notes.get(position_key, [])
-        matched_release_note = (matched_notes_for_position or [None])[0]
-        release_note = _rootcause_join_release_note_labels(matched_notes_for_position, limit=3)
-        llm_row = rows_by_position.get(position_key, {})
-        summary_diff = output_value.get("difference")
-        # Enforce deterministic, evidence-grounded text so the matched release-note
-        # solution description is always integrated naturally when available.
-        llm_explanation = _rootcause_fallback_row_explanation(
-            position_key,
-            output_column,
-            output_value,
-            lineage_evidence,
-            position_release_notes.get(position_key, []),
-        )
-        normalized_rows.append({
-            "position": position_key,
-            "output": output_column,
-            "value_a": output_value.get("value_a"),
-            "value_b": output_value.get("value_b"),
-            "difference": summary_diff,
-            "lineage": full_position_lineage,
-            "input": ", ".join(item.get("field", "") for item in source_fields),
-            "release_note": release_note,
-            "explanation": llm_explanation,
-            "confidence": max(0, min(100, float(llm_row.get("confidence", analysis.get("confidence", 0)) or 0))),
-        })
-        for step in lineage_steps:
-            field = step["field"]
-            if field not in relevant_fields:
-                continue
-            is_derived_field = bool(step["parents"]) or field == output_column
-            value_a = (result_data_a.get(position_key, {}) if is_derived_field else input_a.get(position_key, {})).get(field)
-            value_b = (result_data_b.get(position_key, {}) if is_derived_field else input_b.get(position_key, {})).get(field)
-            difference = None
-            if isinstance(value_a, (int, float)) and isinstance(value_b, (int, float)):
-                difference = value_b - value_a
-            field_changed = not _rootcause_values_equal(value_a, value_b)
-            normalized_field_terms = {
-                _rootcause_normalize_release_note_text(field)
-            } | {
-                _rootcause_normalize_release_note_text(parent)
-                for parent in step["parents"]
-                if parent
-            }
-            matching_detail_release_notes = [
-                item
-                for item in position_release_notes.get(position_key, [])
-                if _rootcause_normalize_release_note_text(field) in {
-                    _rootcause_normalize_release_note_text(value)
-                    for value in item.get("matched_fields", [])
-                }
-                or any(
-                    _rootcause_normalize_release_note_text(parent) in {
-                        _rootcause_normalize_release_note_text(value)
-                        for value in item.get("matched_fields", [])
-                    }
-                    for parent in step["parents"]
-                )
-                or any(
-                    term and term in _rootcause_normalize_release_note_text(json.dumps(item.get("record", {}), default=str))
-                    for term in normalized_field_terms
-                )
-            ]
-            # Keep lineage-breakdown mapping field-relevant. Only the output row may
-            # inherit top position notes when no direct field match exists.
-            if not matching_detail_release_notes and field_changed and field == output_column:
-                matching_detail_release_notes = (position_release_notes.get(position_key, []) or [])[:3]
-            matched_detail_release_note = matching_detail_release_notes[0] if matching_detail_release_notes else None
-            detail_release_note = _rootcause_join_release_note_labels(matching_detail_release_notes, limit=3)
-            detail_explanation = _rootcause_detail_explanation(
-                position_key,
-                field,
-                value_a,
-                value_b,
-                difference,
-                step["parents"],
-                output_column,
-                output_value,
-                lineage_evidence,
-                matched_detail_release_note,
-            )
-            detail_rows.append({
-                "position": position_key,
-                "output": field,
-                "value_a": value_a,
-                "value_b": value_b,
-                "difference": difference,
-                "lineage": step["lineage"],
-                "input": ", ".join(step["parents"]),
-                "release_note": detail_release_note,
-                "explanation": detail_explanation,
-                "confidence": max(0, min(100, float(llm_row.get("confidence", analysis.get("confidence", 0)) or 0))),
-            })
-    analysis["rows"] = normalized_rows
-    analysis["detail_rows"] = detail_rows
-
-    if not isinstance(analysis.get("evidence"), list) or not analysis["evidence"]:
-        evidence_items: List[str] = []
-        if selected_rows:
-            evidence_items.append(
-                f"Verglichen wurden {len(selected_rows)} betroffene Positionen fuer {output_column} zwischen den beiden Ausfuehrungen."
-            )
-        if changed_sources:
-            evidence_items.append(
-                f"Es wurden {len(changed_sources)} geaenderte Source-Felder in der Lineage identifiziert: "
-                + ", ".join(sorted({str(item.get("field")) for item in changed_sources if item.get("field")}))
-                + "."
-            )
-        if position_release_notes:
-            matched_jira = sorted({
-                str(note.get("jira_id"))
-                for notes in position_release_notes.values()
-                for note in notes
-                if note.get("jira_id")
-            })
-            if matched_jira:
-                evidence_items.append(
-                    "Positionsbezogene Release-Notes wurden gefunden und mit den geaenderter Feldern verknuepft: "
-                    + ", ".join(matched_jira[:3])
-                    + "."
-                )
-        if not evidence_items:
-            evidence_items.append(
-                f"Keine belastbaren Evidenzpunkte fuer {output_column} gefunden; die Abweichung muss mit den Quell- und Lineage-Daten manuell validiert werden."
-            )
-        analysis["evidence"] = evidence_items
-
-    if not isinstance(analysis.get("next_checks"), list) or not analysis["next_checks"]:
-        next_checks: List[str] = []
-        if changed_sources:
-            next_checks.append(
-                "Pruefen Sie die geaenderte Lineage-Reihenfolge und die betroffenen Inputfelder erneut, damit die Ursache nicht nur durch die Ausgabeabweichung interpretiert wird."
-            )
-        if position_release_notes:
-            next_checks.append(
-                "Validieren Sie die zugeordneten Release-Notes gegen die jeweilige Position und die betroffenen Felder, bevor Sie sie als finale Ursache akzeptieren."
-            )
-        next_checks.append(
-            "Fuhren Sie eine tiefergehende Input-/Code-Validierung fuer die betroffenen Positionen durch, um die Ursache mit den urspruenglichen Datenaenderungen abzugleichen."
-        )
-        if not next_checks:
-            next_checks.append(
-                "Zusatzpruefung: Reproduzieren Sie die Abweichung mit den gleichen Eingabedaten und vergleichen Sie die relevanten Quellfelder erneut."
-            )
-        analysis["next_checks"] = next_checks[:4]
-
-    if not analysis.get("release_note_links"):
-        analysis["release_note_links"] = sorted({
-            str(note.get("workbook"))
-            for notes in position_release_notes.values()
-            for note in notes
-            if note.get("workbook")
-        })
-
-    review_id = str(uuid.uuid4())
-    NORMAL_ROOTCAUSE_SESSIONS[review_id] = {
-        "execution_id_a": request.execution_id_a,
-        "execution_id_b": request.execution_id_b,
-        "output_column": request.output_column,
-        "position": request.position,
-    }
-    return _rootcause_json_safe({
-        "status": "success",
-        "review_id": review_id,
-        "post_run_review_available": True,
-        "comparison_direction": "B - A (execution_b minus execution_a)",
-        "stages": {
-            "comparison_direction": "B - A (execution_b minus execution_a)",
-            "dependencies": dependencies,
-            "changed_source_fields": changed_sources,
-            "release_notes": release_notes,
-            "deviations": selected_rows,
-        },
-        "analysis": analysis,
-    })
+    return _rootcause_normal_analysis(request)
 
 
 @app.post("/api/rootcause/agents/analyze")
@@ -3903,9 +2580,8 @@ def _sanitize_release_note_header(value: str, fallback_index: int) -> str:
     return header if header else f"Column_{fallback_index + 1}"
 
 
-def _chat_release_note_sheet_bounds(worksheet: Any) -> Tuple[int, int, int, int, bool]:
-    key = _normalize_sheet_name(worksheet.title)
-    forced_range = RELEASE_NOTES_SHEET_RANGES.get(key)
+def _chat_release_note_sheet_bounds(worksheet: Any, forced_range: Optional[Tuple[str, str]] = None) -> Tuple[int, int, int, int, bool]:
+    forced_range = forced_range or RELEASE_NOTES_SHEET_RANGES.get(_normalize_sheet_name(worksheet.title))
     if forced_range:
         min_col, min_row, max_col, max_row = range_boundaries(f"{forced_range[0]}:{forced_range[1]}")
         return min_row, max_row, min_col, max_col, False
@@ -4035,19 +2711,13 @@ def _chat_release_note_workbook_context(metadata: Dict[str, Any]) -> Optional[Di
             "sheets": [],
         }
 
-        # Uploads are stored under a UUID, so recognise the special workbook by its original name.
-        is_special_workbook = SPECIAL_RELEASE_NOTES_FILENAME in {
-            _normalize_filename(file_path.name),
-            _normalize_filename(metadata.get("filename")),
-        }
+        # Uploads are stored under a UUID, so a special workbook is recognised by its original name.
+        special = _special_release_note_sheet(metadata.get("filename"), [worksheet.title for worksheet in workbook.worksheets])
         for worksheet in workbook.worksheets[:CHAT_RELEASE_NOTES_MAX_SHEETS_PER_WORKBOOK]:
-            if (
-                is_special_workbook
-                and _normalize_sheet_name(worksheet.title) != SPECIAL_RELEASE_NOTES_VISIBLE_SHEET
-            ):
+            if special and _normalize_sheet_name(worksheet.title) != special[0]:
                 continue
 
-            min_row, max_row, min_col, max_col, truncated = _chat_release_note_sheet_bounds(worksheet)
+            min_row, max_row, min_col, max_col, truncated = _chat_release_note_sheet_bounds(worksheet, _release_note_sheet_range(special, worksheet.title))
             records = _release_note_sheet_rows_for_chat(worksheet, min_row, max_row, min_col, max_col)
 
             image_count = len(getattr(worksheet, "_images", []))
@@ -4074,9 +2744,45 @@ def _normalize_sheet_name(name: str) -> str:
     return " ".join((name or "").strip().lower().split())
 
 
-def _sheet_view_bounds(worksheet: Any) -> Tuple[int, int, int, int, bool]:
-    key = _normalize_sheet_name(worksheet.title)
-    forced_range = RELEASE_NOTES_SHEET_RANGES.get(key)
+def _release_note_file_key(filename: Optional[str]) -> str:
+    """An uploaded release-notes file name as SPECIAL_RELEASE_NOTE_WORKBOOKS knows it: case, "_" or " " and copy
+    suffixes such as " (1)" do not matter ("RWA Release Notes 1 (1).xlsm" -> "rwa release notes 1.xlsm")."""
+    name = (filename or "").strip().lower()
+    stem, dot, extension = name.rpartition(".")
+    if not dot:
+        stem, extension = name, ""
+    stem = re.sub(r"(\s*\(\d+\))+$", "", stem)
+    stem = " ".join(stem.replace("_", " ").split())
+    return f"{stem}.{extension}" if extension else stem
+
+
+def _special_release_note_sheet(filename: Optional[str], sheet_names: Optional[List[str]]) -> Optional[Tuple[str, Optional[Tuple[str, str]]]]:
+    """(the only sheet to show and read, its cell range) of a special workbook that has that sheet. None for every other
+    workbook, also for another layout uploaded under the same name, which is read as usual."""
+    special = SPECIAL_RELEASE_NOTE_WORKBOOKS.get(_release_note_file_key(filename))
+    if not special:
+        return None
+    if sheet_names is not None and special[0] not in {_normalize_sheet_name(str(name)) for name in sheet_names}:
+        return None
+    return special
+
+
+def _release_note_sheet_range(special: Optional[Tuple[str, Optional[Tuple[str, str]]]], sheet_title: str) -> Optional[Tuple[str, str]]:
+    """The cells of a sheet that hold release notes: the special workbook's range, else RELEASE_NOTES_SHEET_RANGES."""
+    if special and special[1] and _normalize_sheet_name(sheet_title) == special[0]:
+        return special[1]
+    return RELEASE_NOTES_SHEET_RANGES.get(_normalize_sheet_name(sheet_title))
+
+
+def _release_note_visible_sheets(metadata: Dict[str, Any]) -> List[int]:
+    """Indexes of the sheets the Release notes tab shows (a special workbook: its one release-notes sheet)."""
+    sheets = [str(name) for name in metadata.get("sheets") or []]
+    special = _special_release_note_sheet(metadata.get("filename"), sheets)
+    return [index for index, name in enumerate(sheets) if not special or _normalize_sheet_name(name) == special[0]]
+
+
+def _sheet_view_bounds(worksheet: Any, forced_range: Optional[Tuple[str, str]] = None) -> Tuple[int, int, int, int, bool]:
+    forced_range = forced_range or RELEASE_NOTES_SHEET_RANGES.get(_normalize_sheet_name(worksheet.title))
     if forced_range:
         min_col, min_row, max_col, max_row = range_boundaries(f"{forced_range[0]}:{forced_range[1]}")
         return min_row, max_row, min_col, max_col, False
@@ -4361,10 +3067,22 @@ def _list_release_note_workbooks() -> List[Dict[str, Any]]:
 
 @app.get("/api/release-notes")
 def list_release_notes():
-    return {"workbooks": _list_release_note_workbooks()}
-def _build_excel_sheet_view(file_path: Path, sheet_index: int) -> Dict[str, Any]:
+    return {
+        "workbooks": [
+            {**workbook, "visible_sheets": _release_note_visible_sheets(workbook)}
+            for workbook in _list_release_note_workbooks()
+        ]
+    }
+
+
+def _build_excel_sheet_view(
+    file_path: Path,
+    sheet_index: int,
+    special: Optional[Tuple[str, Optional[Tuple[str, str]]]] = None,
+) -> Dict[str, Any]:
     """Read one worksheet from an .xlsx/.xlsm file into a styled, merge-aware grid.
-    Shared by the release-notes classic viewer and the Data Model classic viewer."""
+    Shared by the release-notes classic viewer and the Data Model classic viewer; `special` limits a special
+    release-notes workbook to its release-notes cells."""
     workbook_stream = BytesIO(file_path.read_bytes())
     try:
         workbook = openpyxl.load_workbook(
@@ -4381,7 +3099,10 @@ def _build_excel_sheet_view(file_path: Path, sheet_index: int) -> Dict[str, Any]
         if sheet_index < 0 or sheet_index >= len(workbook.worksheets):
             raise HTTPException(404, "Worksheet not found")
         worksheet = workbook.worksheets[sheet_index]
-        min_row, max_row, min_col, max_column, truncated = _sheet_view_bounds(worksheet)
+        min_row, max_row, min_col, max_column, truncated = _sheet_view_bounds(
+            worksheet,
+            _release_note_sheet_range(special, worksheet.title) if special else None,
+        )
         images_by_anchor = _extract_release_note_images(worksheet, min_row, max_row, min_col, max_column)
 
         covered_cells = set()
@@ -4470,7 +3191,8 @@ def get_release_notes_sheet(release_note_id: str, sheet_index: int):
     if _release_note_kind(metadata) == "pdf":
         raise HTTPException(400, "PDF release notes have no worksheets; open the file instead")
     file_path = RELEASE_NOTES_DIR / metadata["stored_filename"]
-    return _build_excel_sheet_view(file_path, sheet_index)
+    special = _special_release_note_sheet(metadata.get("filename"), metadata.get("sheets"))
+    return _build_excel_sheet_view(file_path, sheet_index, special)
 
 
 @app.get("/api/release-notes/{release_note_id}/file")

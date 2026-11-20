@@ -2,9 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
-import { BadgeCheck, Download, FileJson, FileSpreadsheet, GitBranch, GraduationCap, History, Plus, Trash2, TriangleAlert } from "lucide-react";
+import { GitBranch, GraduationCap, History, Plus, Trash2, TriangleAlert } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { API_ENDPOINTS } from "@/lib/api-config";
+import { recallInTab, rememberInTab } from "@/lib/tab-memory";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { SectionLanguageProvider, SectionLanguageSwitch } from "@/components/section-language";
@@ -14,17 +15,20 @@ import {
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { formatDateTime, formatDuration } from "./atoms";
-import { downloadFrom } from "./download";
+import { formatDateTime } from "./atoms";
 import { LineageView } from "./lineage-view";
 import { localizeResult } from "./localize";
 import { buildModel } from "./model";
-import { LINEAGE_ONBOARDING_STORAGE_KEY, LineageOnboarding, type LineageTourController } from "./onboarding/lineage-onboarding";
+import { LineageOnboarding, type LineageTourController } from "./onboarding/lineage-onboarding";
 import { RunProgress } from "./run-progress";
 import { SetupPanel } from "./setup-panel";
 import type { Focus, Preview, Run, RunListItem, Sources } from "./types";
 
 const POLL_MS = 1000;
+
+/** The run on screen when the user switched to another tab; it is open again when they come back (a reload starts fresh). */
+type OpenRun = { runId: string; view: "setup" | "run"; focus: Focus | null };
+const OPEN_RUN = "technical-lineage-agent.open-run";
 
 async function readJson(response: Response) {
   return response.json().catch(() => ({}));
@@ -58,20 +62,20 @@ function LineageAgentTab() {
   const [selectedExecution, setSelectedExecution] = useState<string | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
-  const [probes, setProbes] = useState(true);
   const [starting, setStarting] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   // The column or lookup table whose details are shown under the graph (none: every column at a glance).
   const [focus, setFocus] = useState<Focus | null>(null);
   const [tourOpen, setTourOpen] = useState(false);
-  // While the hands-on tour is open, the analysis it starts is followed by the tour; its progress view stays on
-  // screen while the tour explains it, also after the analysis has finished.
+  // The onboarding opens only from the Guided tour button. While its hands-on tour is open, the analysis it starts is
+  // followed by the tour; its progress view stays on screen while the tour explains it, also after it has finished.
   const [tourMode, setTourMode] = useState(false);
   const [tourRunId, setTourRunId] = useState<string | null>(null);
   const [holdProgress, setHoldProgress] = useState(false);
-  const tourAutoStarted = useRef(false);
   const initialised = useRef(false);
+  // Set once the run open at the last visit is back (or there was none); from then on, what is open is remembered.
+  const restored = useRef(false);
 
   const loadSources = useCallback(async () => {
     setLoadingSources(true);
@@ -116,17 +120,33 @@ function LineageAgentTab() {
     initialised.current = true;
     void loadSources();
     void loadRuns().then(async (list) => {
-      // The tab opens on a fresh setup; finished runs stay in the Runs menu. A run still in progress is shown again.
+      // Back from another tab: the run that was open is open again, as it was left. Otherwise the tab opens on a fresh
+      // setup; finished runs stay in the Runs menu, and a run still in progress is shown again.
+      const left = recallInTab<OpenRun>(OPEN_RUN);
+      const again = left ? list.find((item) => item.id === left.runId) : undefined;
       const active = list.find((item) => item.status === "running");
-      if (active) {
-        try {
+      try {
+        if (left && again) {
+          await openRun(again.id, again.status === "running");
+          setView(left.view);
+          setFocus(left.focus);
+        } else if (active) {
           await openRun(active.id, true);
-        } catch {
-          setView("setup");
         }
+      } catch {
+        setView("setup");
+      } finally {
+        if (left && !again) rememberInTab(OPEN_RUN, null);
+        restored.current = true;
       }
     });
   }, [loadRuns, loadSources, openRun]);
+
+  // What is open now is what the tab shows again after a visit to another tab.
+  useEffect(() => {
+    if (!restored.current) return;
+    rememberInTab<OpenRun>(OPEN_RUN, run ? { runId: run.id, view, focus } : null);
+  }, [run, view, focus]);
 
   // Preview of the selected execution.
   useEffect(() => {
@@ -192,19 +212,6 @@ function LineageAgentTab() {
     setHoldProgress(false);
   }, []);
 
-  // First visit: open the onboarding once the sources are known, unless an analysis is on screen.
-  useEffect(() => {
-    if (tourAutoStarted.current || loadingSources) return;
-    tourAutoStarted.current = true;
-    let seen = false;
-    try {
-      seen = localStorage.getItem(LINEAGE_ONBOARDING_STORAGE_KEY) === "done";
-    } catch {
-      seen = false;
-    }
-    if (!seen && view === "setup") setTourOpen(true);
-  }, [loadingSources, view]);
-
   const executionsAvailable = (sources?.clusters ?? []).some((cluster) => cluster.executions.length > 0);
   const target = useMemo(() => (run?.result ? tourColumn(run) : null), [run]);
   const tourRun: LineageTourController["tourRun"] = !tourRunId
@@ -258,7 +265,8 @@ function LineageAgentTab() {
       const response = await fetch(API_ENDPOINTS.lineageAgentRuns, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ execution_id: selectedExecution, language: locale, probes }),
+        // Runtime dependency probes always run; they are what proves the lineage.
+        body: JSON.stringify({ execution_id: selectedExecution, language: locale, probes: true }),
       });
       const payload = await readJson(response);
       if (!response.ok) throw new Error(payload.detail || t("errors.start"));
@@ -300,15 +308,6 @@ function LineageAgentTab() {
       toast({ title: t("errors.delete"), description: error instanceof Error ? error.message : undefined, variant: "destructive" });
     } finally {
       setDeleteOpen(false);
-    }
-  };
-
-  const exportRun = async (format: "xlsx" | "openlineage") => {
-    if (!run) return;
-    try {
-      await downloadFrom(API_ENDPOINTS.lineageAgentExport(run.id, format, locale), format === "xlsx" ? "technical-lineage.xlsx" : "technical-lineage.openlineage.json");
-    } catch (error) {
-      toast({ title: t("errors.export"), description: error instanceof Error ? error.message : undefined, variant: "destructive" });
     }
   };
 
@@ -381,10 +380,15 @@ function LineageAgentTab() {
               </DropdownMenuContent>
             </DropdownMenu>
             {view === "run" && run && run.status !== "running" && (
-              <Button data-tour="lineage-new" size="sm" onClick={newRun} className="gap-2 bg-[#f5c400] font-semibold text-[#0b0f15] hover:bg-[#ffd21f]">
-                <Plus className="h-4 w-4" />
-                {t("newRun")}
-              </Button>
+              <>
+                <Button data-tour="lineage-new" size="sm" onClick={newRun} className="gap-2 bg-[#f5c400] font-semibold text-[#0b0f15] hover:bg-[#ffd21f]">
+                  <Plus className="h-4 w-4" />
+                  {t("newRun")}
+                </Button>
+                <Button variant="ghost" size="icon" onClick={() => setDeleteOpen(true)} className="h-8 w-8 text-[#687386] hover:bg-rose-400/10 hover:text-rose-300" aria-label={t("deleteRun")} title={t("deleteRun")}>
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </>
             )}
             {view === "setup" && run && (
               <Button variant="outline" size="sm" onClick={() => setView("run")} className="border-[#2c3440] bg-transparent text-[#c9d1dd]">
@@ -404,8 +408,6 @@ function LineageAgentTab() {
           onSelect={setSelectedExecution}
           preview={preview}
           previewLoading={previewLoading}
-          probes={probes}
-          onProbes={setProbes}
           starting={starting}
           onStart={() => void start()}
         />
@@ -420,46 +422,7 @@ function LineageAgentTab() {
         </section>
       )}
 
-      {showResults && run && model && (
-        <>
-          <section data-tour="lineage-meta" className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#252a33] bg-[#0b0f15] px-5 py-3">
-            <div className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-1 text-xs text-[#8c96a8]">
-              <span className="flex items-center gap-1.5 font-medium text-emerald-300"><BadgeCheck className="h-4 w-4" />{t(`status.${run.status}`)}</span>
-              <span className="font-medium text-white">{run.source.cluster_name}</span>
-              <span>{t("meta.execution", { date: formatDateTime(run.source.executed_date, locale) })}</span>
-              <span className="font-mono text-[#c2cad5]">{run.source.code_filename}</span>
-              <span>{run.source.dataset_name}</span>
-              <span>{t("meta.duration", { value: formatDuration(run.duration_ms, locale) })}</span>
-              {run.model && <span className="rounded border border-[#252a33] bg-[#11161e] px-1.5 py-px font-mono text-[10px] text-[#aab3c2]">{run.model}</span>}
-            </div>
-            <div className="flex items-center gap-2">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button size="sm" variant="outline" className="h-8 gap-1.5 border-emerald-400/30 bg-emerald-400/10 text-xs font-medium text-emerald-200 hover:bg-emerald-400/20">
-                    <Download className="h-3.5 w-3.5" />
-                    {t("export.title")}
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-[300px] border-[#252a33] bg-[#0f141b]">
-                  <DropdownMenuItem onSelect={() => void exportRun("xlsx")} className="flex items-start gap-2.5 py-2">
-                    <FileSpreadsheet className="mt-0.5 h-4 w-4 text-emerald-300" />
-                    <span><span className="block text-xs font-medium text-[#e5e9f0]">{t("export.excel")}</span><span className="block text-[11px] text-[#687386]">{t("export.excelHint")}</span></span>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => void exportRun("openlineage")} className="flex items-start gap-2.5 py-2">
-                    <FileJson className="mt-0.5 h-4 w-4 text-sky-300" />
-                    <span><span className="block text-xs font-medium text-[#e5e9f0]">{t("export.openlineage")}</span><span className="block text-[11px] text-[#687386]">{t("export.openlineageHint")}</span></span>
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-              <Button variant="ghost" size="icon" onClick={() => setDeleteOpen(true)} className="h-8 w-8 text-[#687386] hover:bg-rose-400/10 hover:text-rose-300" aria-label={t("deleteRun")}>
-                <Trash2 className="h-4 w-4" />
-              </Button>
-            </div>
-          </section>
-
-          <LineageView model={model} run={run} focus={focus} onFocus={setFocus} />
-        </>
-      )}
+      {showResults && run && model && <LineageView model={model} run={run} focus={focus} onFocus={setFocus} />}
 
       <LineageOnboarding
         open={tourOpen}

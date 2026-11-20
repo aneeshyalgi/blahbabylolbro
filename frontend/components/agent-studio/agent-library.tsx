@@ -40,7 +40,7 @@ export function AgentLibrary({
   }, [agents, query]);
 
   return (
-    <aside data-tour="library" className="flex w-[272px] shrink-0 flex-col border-r border-[#1c222b] bg-[#070a0f]">
+    <aside data-tour="library" className="flex w-[236px] shrink-0 flex-col border-r border-[#1c222b] bg-[#070a0f] 2xl:w-[272px]">
       <div className="px-3 pt-4">
         <button
           type="button"
@@ -121,7 +121,7 @@ export function AgentLibrary({
                   <span className="mt-0.5 block text-[10.5px] text-[#687386]">
                     {agent.conversation_count
                       ? plural("library.conversations", agent.conversation_count, { time: relativeTime(agent.last_run_date) })
-                      : t("library.neverRun", { count: agent.definition.tools.length })}
+                      : plural("library.neverRun", agent.definition.tools.length)}
                   </span>
                 </span>
               </button>

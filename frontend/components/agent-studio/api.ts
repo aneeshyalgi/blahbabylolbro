@@ -76,8 +76,9 @@ export function formatDuration(ms?: number): string {
   if (ms === undefined || ms === null) return "";
   if (ms < 1000) return `${ms} ms`;
   const seconds = ms / 1000;
-  if (seconds < 60) return `${seconds.toFixed(1)} s`;
-  return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
+  if (seconds < 59.95) return `${seconds.toFixed(1)} s`;
+  const whole = Math.round(seconds);
+  return `${Math.floor(whole / 60)}m ${whole % 60}s`;
 }
 
 export function definitionsEqual(a: AgentDefinition | null, b: AgentDefinition | null): boolean {

@@ -19,6 +19,17 @@ import { LineageAgentTabContent } from "@/components/lineage-agent/lineage-agent
 import { ContentLineageAgentTabContent } from "@/components/content-lineage-agent/content-lineage-agent-tab-content";
 import { PlaceholderTab } from "@/components/placeholder-tab";
 import { DataAssistant } from "@/components/data-assistant";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { getLeaveGuard, type LeaveGuard } from "@/lib/leave-guard";
 
 const TAB_STORAGE_KEY = "dataflow_active_tab";
 const VALID_TAB_IDS = new Set([
@@ -40,9 +51,9 @@ const tabLabels: Record<string, string> = {
   "regulation-matcher": "Regulation–Release Note Matcher",
   "data-model": "Data Model",
   "data-modal": "Data Model",
-  "content-lineage": "Content Lineage",
+  "content-lineage": "Content Lineage (Legacy)",
   "content-lineage-agent": "Content Lineage AI Agents",
-  "technical-lineage": "Technical Lineage",
+  "technical-lineage": "Technical Lineage (Legacy)",
   "technical-lineage-agent": "Technical Lineage AI Agent",
   "semantic-lineage": "Semantic Lineage",
   validation: "Validation",
@@ -56,6 +67,8 @@ const tabLabels: Record<string, string> = {
 export default function HomePage() {
   const [activeTab, setActiveTab] = useState("code");
   const [isRootCauseAgentsNavigationLocked, setIsRootCauseAgentsNavigationLocked] = useState(false);
+  // A tab switch that would lose work in the current tab (see lib/leave-guard) waits for "Leave".
+  const [pendingLeave, setPendingLeave] = useState<{ tab: string; guard: LeaveGuard } | null>(null);
   const isRootCausePremium = activeTab === "rootcause-ai-agents";
 
   useEffect(() => {
@@ -65,10 +78,19 @@ export default function HomePage() {
     if (VALID_TAB_IDS.has(tab)) setActiveTab(tab);
   }, []);
 
-  const handleTabChange = (tab: string) => {
-    if (isRootCauseAgentsNavigationLocked) return;
+  const switchTab = (tab: string) => {
     setActiveTab(tab);
     if (typeof window !== "undefined") localStorage.setItem(TAB_STORAGE_KEY, tab);
+  };
+
+  const handleTabChange = (tab: string) => {
+    if (isRootCauseAgentsNavigationLocked || tab === activeTab) return;
+    const guard = getLeaveGuard();
+    if (guard) {
+      setPendingLeave({ tab, guard });
+      return;
+    }
+    switchTab(tab);
   };
 
   const renderTabContent = () => {
@@ -131,6 +153,28 @@ export default function HomePage() {
       </div>
 
       <DataAssistant />
+
+      <AlertDialog open={pendingLeave !== null} onOpenChange={(open) => { if (!open) setPendingLeave(null); }}>
+        <AlertDialogContent className="border-[#252a33] bg-[#0b0f15]">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-white">{pendingLeave?.guard.title}</AlertDialogTitle>
+            <AlertDialogDescription className="text-[#aab3c2]">{pendingLeave?.guard.message}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{pendingLeave?.guard.stay}</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-rose-500 text-white hover:bg-rose-500/90"
+              onClick={() => {
+                const next = pendingLeave;
+                setPendingLeave(null);
+                if (next) switchTab(next.tab);
+              }}
+            >
+              {pendingLeave?.guard.leave}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

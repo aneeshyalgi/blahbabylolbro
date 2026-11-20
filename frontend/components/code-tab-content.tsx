@@ -1,18 +1,13 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import { Braces, CheckCircle, Play, Upload, FileCode, Loader2, Trash2, Sparkles, Copy, SlidersHorizontal, Wand2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { API_ENDPOINTS } from "@/lib/api-config";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useLocale, useTranslations } from "next-intl";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  AlertTriangle, Braces, Check, Code2, Copy, Download, FileCode2, Loader2, PenLine, RefreshCw, Save, SlidersHorizontal, Sparkles, Trash2,
+  Upload, X,
+} from "lucide-react";
+import { API_ENDPOINTS } from "@/lib/api-config";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -23,891 +18,742 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
-import { useTranslations } from "next-intl";
+import { cn } from "@/lib/utils";
+import { parseGuidedCode } from "@/lib/guided-code";
 import { GuidedCodeEditor } from "@/components/guided-code-editor";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { CodeEditor } from "@/components/code/code-editor";
+import { GeneratePanel, type CodeFile } from "@/components/code/generate-panel";
+import type { DatasetSummary } from "@/components/datasets-section";
+import {
+  DropOverlay, EmptyState, INPUT, IconAction, PANEL, PRIMARY_BUTTON, SECONDARY_BUTTON, SearchField, Tag, WorkingBar,
+  formatBytes, formatDateTime, moveInList, PageHeader, relativeTime, useFileDrop,
+} from "@/components/workspace/ui";
+
+type ClusterRef = { id: string; name: string; code_id?: string | null };
+type Mode = "guided" | "python";
+/** What waits for "Discard": another file, or leaving edit mode. */
+type DiscardIntent = { kind: "select"; id: string } | { kind: "cancel" };
+
+const SELECTED_KEY = "dataflow_code_selected_id";
+const MODE_KEY = "dataflow_code_editor_mode";
+const PYTHON_FILE = /\.py$/i;
+
+const readStored = (key: string) => {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+};
+const writeStored = (key: string, value: string | null) => {
+  try {
+    if (value) localStorage.setItem(key, value);
+    else localStorage.removeItem(key);
+  } catch {
+    // Storage unavailable: remembered for this visit only.
+  }
+};
 
 interface CodeTabContentProps {
   isLoading?: boolean;
 }
 
+/**
+ * The Code tab: the Python files the runs execute (browse, edit in the guided or Python editor, upload, delete) and AI
+ * generation of a new file from a dataset.
+ */
 export function CodeTabContent({ isLoading = false }: CodeTabContentProps) {
-  const t = useTranslations("code");
-  const tCommon = useTranslations("common");
-  const [selectedFile, setSelectedFile] = useState<string | null>(null);
-  const [codeFiles, setCodeFiles] = useState<any[]>([]);
-  const [codeContent, setCodeContent] = useState<string>("");
-  const [editedContent, setEditedContent] = useState<string>("");
-  const [isEditing, setIsEditing] = useState(false);
-  const [editorMode, setEditorMode] = useState<"guided" | "python">("guided");
-  const [loadingContent, setLoadingContent] = useState(false);
-  const [uploading, setUploading] = useState(false);
+  const t = useTranslations("codeTab");
+  const locale = useLocale();
+  const { toast } = useToast();
+  const [files, setFiles] = useState<CodeFile[]>([]);
+  const [clusters, setClusters] = useState<ClusterRef[]>([]);
+  const [runsByCluster, setRunsByCluster] = useState<Record<string, number>>({});
+  const [datasets, setDatasets] = useState<DatasetSummary[]>([]);
+  const [filesLoading, setFilesLoading] = useState(true);
+  const [filesFailed, setFilesFailed] = useState(false);
+  const [query, setQuery] = useState("");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [content, setContent] = useState("");
+  const [draft, setDraft] = useState("");
+  const [editing, setEditing] = useState(false);
+  const [contentLoading, setContentLoading] = useState(false);
+  const [contentFailed, setContentFailed] = useState(false);
+  const [contentReload, setContentReload] = useState(0);
+  const [preferredMode, setPreferredMode] = useState<Mode>("guided");
   const [saving, setSaving] = useState(false);
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [selectedFileForUpload, setSelectedFileForUpload] = useState<File | null>(null);
+  const [saveError, setSaveError] = useState<{ message: string; line: number | null } | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [discard, setDiscard] = useState<DiscardIntent | null>(null);
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [version, setVersion] = useState("v1.0.0");
   const [description, setDescription] = useState("");
-  const [codeToDelete, setCodeToDelete] = useState<{ id: string; name: string } | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [toDelete, setToDelete] = useState<CodeFile | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const [datasets, setDatasets] = useState<{ id: string; user_name?: string; filename?: string }[]>([]);
-  const [generateDatasetId, setGenerateDatasetId] = useState<string>("");
-  const [generateColumns, setGenerateColumns] = useState<string[]>([]);
-  const [columnPrompts, setColumnPrompts] = useState<Record<string, string>>({});
-  const [loadingGenerateColumns, setLoadingGenerateColumns] = useState(false);
-  const [autoFillingColumnPrompts, setAutoFillingColumnPrompts] = useState(false);
-  const [generating, setGenerating] = useState(false);
-  const [generatedCodeDialog, setGeneratedCodeDialog] = useState<string | null>(null);
-  const [generatedFileBaseName, setGeneratedFileBaseName] = useState("");
-  const [savingGenerated, setSavingGenerated] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const { toast } = useToast();
+  const fileInput = useRef<HTMLInputElement | null>(null);
+  const list = useRef<HTMLDivElement | null>(null);
+  const generator = useRef<HTMLElement | null>(null);
+  const selectedRef = useRef<string | null>(null);
+  selectedRef.current = selectedId;
+  const savingRef = useRef(false);
+
+  const dirty = editing && draft !== content;
+  const selectedFile = files.find((file) => file.id === selectedId) ?? null;
 
   useEffect(() => {
-    fetchCodeFiles();
+    const mode = readStored(MODE_KEY);
+    if (mode === "guided" || mode === "python") setPreferredMode(mode);
+  }, []);
+
+  /** Loads the files (and the clusters that use them); keeps the selection, else the remembered file, else the first. */
+  const loadFiles = useCallback(async (prefer?: string | null) => {
+    setFilesLoading(true);
+    setFilesFailed(false);
+    try {
+      const [codeResponse, clustersResponse, runsResponse] = await Promise.all([
+        fetch(API_ENDPOINTS.code),
+        fetch(API_ENDPOINTS.clusters).catch(() => null),
+        fetch(API_ENDPOINTS.clustersExecutions).catch(() => null),
+      ]);
+      if (!codeResponse.ok) throw new Error(`HTTP ${codeResponse.status}`);
+      const loaded: CodeFile[] = (await codeResponse.json()).code_files ?? [];
+      setFiles(loaded);
+      setClusters(clustersResponse?.ok ? ((await clustersResponse.json()).clusters ?? []) : []);
+      const runs: { cluster_id: string }[] = runsResponse?.ok ? ((await runsResponse.json()).executions ?? []) : [];
+      const counts: Record<string, number> = {};
+      for (const run of runs) counts[run.cluster_id] = (counts[run.cluster_id] ?? 0) + 1;
+      setRunsByCluster(counts);
+      const keep = [prefer, selectedRef.current, readStored(SELECTED_KEY)].find((id) => id && loaded.some((file) => file.id === id));
+      setSelectedId(keep ?? loaded[0]?.id ?? null);
+    } catch {
+      setFilesFailed(true);
+    } finally {
+      setFilesLoading(false);
+    }
   }, []);
 
   useEffect(() => {
+    void loadFiles();
     fetch(API_ENDPOINTS.datasets)
-      .then((res) => res.json())
-      .then((data) => setDatasets(data.datasets || []))
+      .then((response) => (response.ok ? response.json() : { datasets: [] }))
+      .then((payload) => setDatasets(payload.datasets ?? []))
       .catch(() => setDatasets([]));
-  }, []);
+  }, [loadFiles]);
 
   useEffect(() => {
-    if (!generateDatasetId) {
-      setGenerateColumns([]);
-      setColumnPrompts({});
+    if (!filesLoading) writeStored(SELECTED_KEY, selectedId);
+  }, [selectedId, filesLoading]);
+
+  useEffect(() => {
+    setEditing(false);
+    setSaveError(null);
+    setCopied(false);
+    if (!selectedId) {
+      setContent("");
+      setDraft("");
       return;
     }
-
-    const loadColumns = async () => {
-      try {
-        setLoadingGenerateColumns(true);
-        const response = await fetch(API_ENDPOINTS.datasetById(generateDatasetId));
-        const data = await response.json();
-        const firstTable = data?.tables?.[0];
-        const columns = (firstTable?.columns || [])
-          .map((column: { name?: string }) => (column.name || "").trim())
-          .filter(Boolean);
-
-        setGenerateColumns(columns);
-        setColumnPrompts((previous) => {
-          const next: Record<string, string> = {};
-          for (const column of columns) {
-            next[column] = previous[column] || "";
-          }
-          return next;
-        });
-      } catch (error) {
-        console.error("Error loading dataset columns for generation:", error);
-        setGenerateColumns([]);
-        setColumnPrompts({});
-      } finally {
-        setLoadingGenerateColumns(false);
-      }
+    let cancelled = false;
+    setContentLoading(true);
+    setContentFailed(false);
+    fetch(API_ENDPOINTS.codeById(selectedId))
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const payload = await response.json();
+        if (cancelled) return;
+        setContent(payload.content ?? "");
+        setDraft(payload.content ?? "");
+      })
+      .catch(() => {
+        if (!cancelled) setContentFailed(true);
+      })
+      .finally(() => {
+        if (!cancelled) setContentLoading(false);
+      });
+    return () => {
+      cancelled = true;
     };
+  }, [selectedId, contentReload]);
 
-    void loadColumns();
-  }, [generateDatasetId]);
+  // Leaving the page with unsaved edits asks first.
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
 
-  const fetchCodeFiles = async () => {
-    try {
-      const response = await fetch(API_ENDPOINTS.code);
-      const data = await response.json();
-      if (data.code_files) {
-        setCodeFiles(data.code_files);
-        if (data.code_files.length > 0 && !selectedFile) {
-          const firstFileId = data.code_files[0].id;
-          setSelectedFile(firstFileId);
-          fetchCodeContent(firstFileId);
-        }
-      }
-    } catch (error) {
-      console.error('Error fetching code files:', error);
+  const usage = useMemo(() => {
+    const byCode = new Map<string, ClusterRef[]>();
+    for (const cluster of clusters) if (cluster.code_id) byCode.set(cluster.code_id, [...(byCode.get(cluster.code_id) ?? []), cluster]);
+    return byCode;
+  }, [clusters]);
+
+  const shown = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return files;
+    return files.filter((file) => `${file.filename ?? ""} ${file.description ?? ""} ${file.version ?? ""}`.toLowerCase().includes(needle));
+  }, [files, query]);
+
+  // The guided view needs mappings or formulas it can show; other files open in Python.
+  const hasGuided = useMemo(() => {
+    const document = parseGuidedCode(content);
+    return document.mappings.length > 0 || document.rules.length > 0;
+  }, [content]);
+  const mode: Mode = preferredMode === "guided" && hasGuided ? "guided" : "python";
+  const lineCount = useMemo(() => (content ? content.replace(/\n$/, "").split("\n").length : 0), [content]);
+
+  const chooseMode = (next: Mode) => {
+    setPreferredMode(next);
+    writeStored(MODE_KEY, next);
+  };
+
+  const selectFile = (id: string) => {
+    if (id === selectedId) return;
+    if (dirty) {
+      setDiscard({ kind: "select", id });
+      return;
     }
+    setSelectedId(id);
   };
 
-  const fetchCodeContent = async (codeId: string) => {
-    try {
-      setLoadingContent(true);
-      const response = await fetch(API_ENDPOINTS.codeById(codeId));
-      const data = await response.json();
-      setCodeContent(data.content || '');
-      setEditedContent(data.content || '');
-      setIsEditing(false);
-      setEditorMode("guided");
-    } catch (error) {
-      console.error('Error fetching code content:', error);
-      setCodeContent('// Error loading code content');
-      setEditedContent('// Error loading code content');
-    } finally {
-      setLoadingContent(false);
+  const cancelEdit = () => {
+    if (dirty) {
+      setDiscard({ kind: "cancel" });
+      return;
     }
+    setDraft(content);
+    setEditing(false);
+    setSaveError(null);
   };
 
-  const handleFileSelect = (codeId: string) => {
-    setSelectedFile(codeId);
-    fetchCodeContent(codeId);
+  const confirmDiscard = () => {
+    const intent = discard;
+    setDiscard(null);
+    setDraft(content);
+    setEditing(false);
+    setSaveError(null);
+    if (intent?.kind === "select") setSelectedId(intent.id);
   };
 
-  const handleSaveCode = async () => {
-    if (!selectedFile) return;
-    
+  const save = async () => {
+    // A ref, not the state: two save requests in the same tick (a repeated shortcut) would both see `saving` false.
+    if (!selectedId || !editing || savingRef.current) return;
+    if (!dirty) {
+      setEditing(false);
+      return;
+    }
+    savingRef.current = true;
+    setSaving(true);
+    setSaveError(null);
     try {
-      setSaving(true);
-      const response = await fetch(API_ENDPOINTS.codeById(selectedFile), {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ content: editedContent }),
+      const response = await fetch(API_ENDPOINTS.codeById(selectedId), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: draft }),
       });
-      
-      const data = await response.json().catch(() => ({}));
-      if (response.ok) {
-        setCodeContent(editedContent);
-        setIsEditing(false);
-        toast({
-          title: "Success",
-          description: "Code saved successfully",
-        });
-      } else {
-        throw new Error((data as { detail?: string }).detail || 'Failed to save code');
-      }
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(typeof payload?.detail === "string" ? payload.detail : `HTTP ${response.status}`);
+      setContent(draft);
+      setEditing(false);
+      toast({ title: t("saved"), description: t("savedDesc", { name: selectedFile?.filename ?? "" }) });
     } catch (error) {
-      console.error('Error saving code:', error);
-      toast({
-        title: "Error",
-        description: error instanceof Error ? error.message : "Failed to save code",
-        variant: "destructive",
-      });
+      const message = error instanceof Error ? error.message : t("saveFailed");
+      const line = Number(message.match(/line (\d+)/i)?.[1]) || null;
+      setSaveError({ message, line });
+      // A syntax error is easiest to fix where the line is shown.
+      if (line) chooseMode("python");
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   };
 
-  const handleCancelEdit = () => {
-    setEditedContent(codeContent);
-    setIsEditing(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(editing ? draft : content);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1600);
+    } catch {
+      toast({ title: t("copyFailed"), variant: "destructive" });
+    }
   };
 
-  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
+  const download = () => {
+    const blob = new Blob([editing ? draft : content], { type: "text/x-python" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = selectedFile?.filename || "code.py";
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  };
 
-    if (!file.name.endsWith('.py')) {
-      toast({
-        title: "Invalid file type",
-        description: "Please upload a Python (.py) file",
-        variant: "destructive",
-      });
+  const chooseUpload = (file: File | null | undefined) => {
+    if (!file) return;
+    if (!PYTHON_FILE.test(file.name)) {
+      toast({ title: t("onlyPython"), variant: "destructive" });
       return;
     }
-
-    // Open dialog for version and description input
-    setSelectedFileForUpload(file);
+    setUploadFile(file);
     setVersion("v1.0.0");
     setDescription("");
-    setDialogOpen(true);
-
-    // Reset file input
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
+    setUploadError(null);
   };
+  const drop = useFileDrop(chooseUpload, !uploading);
+  const uploadNameUsed = Boolean(uploadFile) && files.some((file) => (file.filename ?? "").toLowerCase() === uploadFile!.name.toLowerCase());
 
-  const handleUploadSubmit = async () => {
-    if (!selectedFileForUpload || !version.trim()) {
-      toast({
-        title: "Missing information",
-        description: "Please provide a version",
-        variant: "destructive",
-      });
-      return;
-    }
-
+  const upload = async () => {
+    if (!uploadFile || !version.trim() || uploading) return;
     setUploading(true);
-    
+    setUploadError(null);
     try {
-      const formData = new FormData();
-      formData.append('file', selectedFileForUpload);
-      formData.append('version', version.trim());
-      formData.append('description', description.trim());
-
-      const response = await fetch(API_ENDPOINTS.codeUpload, {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`HTTP ${response.status}: ${errorText}`);
-      }
-
-      const result = await response.json();
-      
-      if (result.status === 'error') {
-        toast({
-          title: "Upload failed",
-          description: result.error,
-          variant: "destructive",
-        });
+      const form = new FormData();
+      form.append("file", uploadFile);
+      form.append("version", version.trim());
+      form.append("description", description.trim());
+      const response = await fetch(API_ENDPOINTS.codeUpload, { method: "POST", body: form });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(typeof payload?.detail === "string" ? payload.detail : `HTTP ${response.status}`);
+      if (payload.syntax_valid === false) throw new Error(payload.error || t("uploadFailed"));
+      toast({ title: t("uploaded"), description: t("uploadedDesc", { name: uploadFile.name, version: version.trim() }) });
+      setUploadFile(null);
+      if (dirty) {
+        // Keep the open file and its edits; the new one is in the list.
+        await loadFiles(selectedId);
       } else {
-        toast({
-          title: "Success",
-          description: `Code file uploaded (${version})`,
-        });
-        setDialogOpen(false);
-        setSelectedFileForUpload(null);
-        fetchCodeFiles(); // Refresh the list
+        await loadFiles(payload.id ?? null);
       }
-    } catch (error: any) {
-      toast({
-        title: "Upload failed",
-        description: error.message,
-        variant: "destructive",
-      });
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : t("uploadFailed"));
     } finally {
       setUploading(false);
     }
   };
 
-  const handleUploadClick = () => {
-    fileInputRef.current?.click();
-  };
-
-  const handleDeleteClick = (e: React.MouseEvent, file: { id: string; filename?: string }) => {
-    e.stopPropagation();
-    setCodeToDelete({ id: file.id, name: file.filename || file.id });
-  };
-
-  const handleConfirmDelete = async () => {
-    if (!codeToDelete) return;
+  const remove = async () => {
+    if (!toDelete) return;
     setDeleting(true);
     try {
-      const res = await fetch(API_ENDPOINTS.codeDelete(codeToDelete.id), { method: "DELETE" });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error((err as { detail?: string }).detail || "Delete failed");
+      const response = await fetch(API_ENDPOINTS.codeDelete(toDelete.id), { method: "DELETE" });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(typeof payload?.detail === "string" ? payload.detail : `HTTP ${response.status}`);
       }
-      const wasSelected = selectedFile === codeToDelete.id;
-      const remaining = codeFiles.filter((f) => f.id !== codeToDelete.id);
-      setCodeToDelete(null);
-      await fetchCodeFiles();
-      if (wasSelected) {
-        if (remaining.length > 0) {
-          setSelectedFile(remaining[0].id);
-          fetchCodeContent(remaining[0].id);
-        } else {
-          setSelectedFile(null);
-          setCodeContent("");
-          setEditedContent("");
-        }
+      const removed = toDelete;
+      setToDelete(null);
+      if (removed.id === selectedId) {
+        setEditing(false);
+        setSelectedId(null);
+        selectedRef.current = null;
       }
-      toast({ title: "Code file deleted", description: `"${codeToDelete.name}" has been removed.` });
-    } catch (err) {
-      toast({
-        title: "Delete failed",
-        description: err instanceof Error ? err.message : "Could not delete code file",
-        variant: "destructive",
-      });
+      await loadFiles();
+      toast({ title: t("deleted"), description: t("deletedDesc", { name: removed.filename ?? "" }) });
+    } catch (error) {
+      toast({ title: t("deleteFailed"), description: error instanceof Error ? error.message : undefined, variant: "destructive" });
     } finally {
       setDeleting(false);
     }
   };
 
-  const handleGenerateCode = async () => {
-    if (!generateDatasetId.trim()) {
-      toast({
-        title: "Select a dataset",
-        description: "Choose an Excel dataset to generate code for",
-        variant: "destructive",
-      });
-      return;
-    }
+  const focusFile = (id: string) =>
+    window.requestAnimationFrame(() => list.current?.querySelector<HTMLElement>(`[data-file="${CSS.escape(id)}"]`)?.focus());
 
-    const promptLines = Object.entries(columnPrompts)
-      .map(([column, instruction]) => ({ column, instruction: instruction.trim() }))
-      .filter((item) => item.instruction.length > 0)
-      .map((item) => `- ${item.column}: ${item.instruction}`);
-
-    const composedPrompt = promptLines.length
-      ? [
-          "Apply these column-specific rules when generating the transformation code:",
-          ...promptLines,
-        ].join("\n")
-      : undefined;
-
-    setGenerating(true);
-    try {
-      const res = await fetch(API_ENDPOINTS.generateCode, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          dataset_id: generateDatasetId,
-          prompt: composedPrompt,
-        }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error((err as { detail?: string }).detail || `HTTP ${res.status}`);
-      }
-      const data = await res.json();
-      const code = (data.code ?? "").trim();
-      if (!code) {
-        toast({ title: "No code returned", variant: "destructive" });
-        return;
-      }
-      setGeneratedCodeDialog(code);
-      setGeneratedFileBaseName("");
-      toast({ title: "Code generated", description: "Name the file and save as new." });
-    } catch (e) {
-      toast({
-        title: "Generate failed",
-        description: e instanceof Error ? e.message : "Could not generate code",
-        variant: "destructive",
-      });
-    } finally {
-      setGenerating(false);
+  const onFileKey = (event: KeyboardEvent<HTMLDivElement>, file: CodeFile) => {
+    if (event.target !== event.currentTarget) return;
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      selectFile(file.id);
+    } else if (event.key === "Delete") {
+      event.preventDefault();
+      setToDelete(file);
+    } else if (moveInList(event.key, shown, file, (next) => focusFile(next.id))) {
+      event.preventDefault();
     }
   };
 
-  const handleAutoFillColumnPrompts = async () => {
-    if (!generateColumns.length) {
-      toast({
-        title: "No columns found",
-        description: "Select a dataset with columns before auto-filling.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    setAutoFillingColumnPrompts(true);
-    try {
-      const response = await fetch(API_ENDPOINTS.generateColumnInstructions, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ columns: generateColumns }),
-      });
-
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error((err as { detail?: string }).detail || `HTTP ${response.status}`);
-      }
-
-      const data = await response.json();
-      const instructions = (data?.instructions || {}) as Record<string, string>;
-
-      setColumnPrompts((previous) => {
-        const next: Record<string, string> = { ...previous };
-        for (const column of generateColumns) {
-          const suggestion = (instructions[column] || "").trim();
-          if (suggestion) {
-            next[column] = suggestion;
-          }
-        }
-        return next;
-      });
-
-      toast({
-        title: "Instructions generated",
-        description: "AI suggestions were added using only the column names.",
-      });
-    } catch (error) {
-      toast({
-        title: "Auto-fill failed",
-        description: error instanceof Error ? error.message : "Could not generate column instructions",
-        variant: "destructive",
-      });
-    } finally {
-      setAutoFillingColumnPrompts(false);
-    }
-  };
-
-  const copyGeneratedCode = () => {
-    if (generatedCodeDialog) {
-      navigator.clipboard.writeText(generatedCodeDialog);
-      toast({ title: "Copied to clipboard" });
-    }
-  };
-
-  const handleSaveGeneratedAsNew = async () => {
-    const base = generatedFileBaseName.trim();
-    if (!generatedCodeDialog || !base) {
-      toast({
-        title: "File name required",
-        description: "Enter a name for the new code file",
-        variant: "destructive",
-      });
-      return;
-    }
-    const name = base.endsWith(".py") ? base : base + ".py";
-    const existingNames = (codeFiles || []).map((f: { filename?: string }) => (f.filename || "").toLowerCase());
-    if (existingNames.includes(name.toLowerCase())) {
-      toast({
-        title: "File name already used",
-        description: `A code file named "${name}" already exists. Choose a different name.`,
-        variant: "destructive",
-      });
-      return;
-    }
-    setSavingGenerated(true);
-    try {
-      const blob = new Blob([generatedCodeDialog], { type: "text/plain" });
-      const file = new File([blob], name, { type: "text/plain" });
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("version", "v1.0.0");
-      formData.append("description", "AI generated");
-      const res = await fetch(API_ENDPOINTS.codeUpload, { method: "POST", body: formData });
-      if (!res.ok) {
-        const err = await res.text();
-        throw new Error(err || `HTTP ${res.status}`);
-      }
-      const result = await res.json();
-      const newId = result.id ?? result.code_id;
-      setGeneratedCodeDialog(null);
-      setGeneratedFileBaseName("");
-      await fetchCodeFiles();
-      if (newId) {
-        setSelectedFile(newId);
-        fetchCodeContent(newId);
-      }
-      toast({ title: "Saved", description: `"${name}" created.` });
-    } catch (e) {
-      toast({
-        title: "Save failed",
-        description: e instanceof Error ? e.message : "Could not save file",
-        variant: "destructive",
-      });
-    } finally {
-      setSavingGenerated(false);
-    }
-  };
+  const busy = filesLoading || isLoading;
+  const deleteClusters = toDelete ? usage.get(toDelete.id) ?? [] : [];
+  const deleteRuns = deleteClusters.reduce((sum, cluster) => sum + (runsByCluster[cluster.id] ?? 0), 0);
 
   return (
-    <>
-      <AlertDialog open={!!codeToDelete} onOpenChange={(open) => !open && setCodeToDelete(null)}>
-        <AlertDialogContent>
+    // Bottom room so the last panel can scroll clear of the app's floating assistant button.
+    <div className="space-y-5 pb-16">
+      <PageHeader icon={Code2} title={t("title")} description={t("description")}>
+        <button type="button" className={SECONDARY_BUTTON} onClick={() => generator.current?.scrollIntoView({ behavior: "smooth", block: "start" })}>
+          <Sparkles className="h-4 w-4 text-[#f5c400]" />
+          {t("generateWithAi")}
+        </button>
+        <button type="button" className={PRIMARY_BUTTON} onClick={() => fileInput.current?.click()} disabled={uploading}>
+          <Upload className="h-4 w-4" />
+          {t("upload")}
+        </button>
+      </PageHeader>
+      <input
+        ref={fileInput}
+        type="file"
+        accept=".py"
+        className="hidden"
+        onChange={(event) => {
+          chooseUpload(event.target.files?.[0]);
+          event.target.value = "";
+        }}
+      />
+
+      <div className="grid gap-5 xl:grid-cols-[minmax(280px,340px)_minmax(0,1fr)]">
+        <section className={cn(PANEL, "relative flex min-h-[360px] flex-col xl:max-h-[760px]")} aria-label={t("files")} {...drop.handlers}>
+          <DropOverlay active={drop.active} title={t("dropTitle")} hint={t("dropHint")} />
+          <div className="flex items-center gap-2 border-b border-[#1f252e] px-4 py-3">
+            <h3 className="mr-auto text-[14px] font-semibold text-white">
+              {t("files")}
+              {!busy && files.length ? <span className="ml-2 text-[12px] font-normal text-[#687386]">{t("count", { count: files.length })}</span> : null}
+            </h3>
+            <IconAction label={t("refresh")} onClick={() => void loadFiles()} disabled={busy}>
+              <RefreshCw className={cn("h-4 w-4", filesLoading && "animate-spin")} />
+            </IconAction>
+          </div>
+          {files.length > 0 ? (
+            <div className="px-3 pt-3">
+              <SearchField value={query} onChange={setQuery} placeholder={t("search")} clearLabel={t("clearSearch")} />
+            </div>
+          ) : null}
+          {busy ? (
+            <div className="space-y-2 p-3">
+              {[0, 1, 2, 3].map((index) => <Skeleton key={index} className="h-14 w-full bg-[#121821]" />)}
+            </div>
+          ) : filesFailed ? (
+            <EmptyState icon={AlertTriangle} title={t("loadFailed")}>
+              <button type="button" className={SECONDARY_BUTTON} onClick={() => void loadFiles()}>
+                <RefreshCw className="h-4 w-4" />
+                {t("retry")}
+              </button>
+            </EmptyState>
+          ) : !files.length ? (
+            <EmptyState icon={FileCode2} title={t("emptyTitle")} hint={t("emptyHint")} className="flex-1" />
+          ) : (
+            <div ref={list} role="listbox" aria-label={t("files")} className="min-h-0 flex-1 space-y-0.5 overflow-auto p-2">
+              {shown.map((file) => {
+                const selected = file.id === selectedId;
+                const used = usage.get(file.id) ?? [];
+                const ai = (file.description ?? "").trim().toLowerCase() === "ai generated";
+                return (
+                  <div
+                    key={file.id}
+                    role="option"
+                    aria-selected={selected}
+                    tabIndex={0}
+                    data-file={file.id}
+                    onClick={() => selectFile(file.id)}
+                    onKeyDown={(event) => onFileKey(event, file)}
+                    className={cn(
+                      "group flex cursor-pointer items-start gap-3 rounded-lg px-3 py-2.5 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[#f5c400]/50",
+                      selected ? "bg-[#f5c400]/[0.06] shadow-[inset_3px_0_0_#f5c400]" : "hover:bg-white/[0.03]",
+                    )}
+                  >
+                    <span className={cn("mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border", selected ? "border-[#f5c400]/40 bg-[#f5c400]/10 text-[#f5c400]" : "border-[#2a313c] bg-[#0f141b] text-sky-300/80")}>
+                      <FileCode2 className="h-4 w-4" />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="flex items-center gap-1.5 truncate font-mono text-[12.5px] font-medium text-white" title={file.filename}>
+                        <span className="truncate">{file.filename}</span>
+                        {selected && dirty ? <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#f5c400]" aria-label={t("unsaved")} /> : null}
+                      </p>
+                      <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-[#687386]">
+                        <Tag mono>{file.version || "v1.0.0"}</Tag>
+                        <span title={formatDateTime(file.upload_date, locale)}>{relativeTime(file.upload_date, locale)}</span>
+                        {ai ? (
+                          <Tag tone="gold">
+                            <Sparkles className="h-3 w-3" />
+                            {t("aiGenerated")}
+                          </Tag>
+                        ) : null}
+                      </div>
+                      {used.length ? (
+                        <div className="mt-1.5 flex flex-wrap gap-1">
+                          {used.map((cluster) => (
+                            <Tag key={cluster.id} tone="sky" title={t("runs", { count: runsByCluster[cluster.id] ?? 0 })}>{cluster.name}</Tag>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                    <IconAction
+                      label={t("deleteLabel", { name: file.filename ?? "" })}
+                      tone="danger"
+                      onClick={() => setToDelete(file)}
+                      className={cn("opacity-0 focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100", selected && "opacity-100")}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </IconAction>
+                  </div>
+                );
+              })}
+              {!shown.length ? <p className="px-3 py-6 text-center text-[12.5px] text-[#8c96a8]">{t("noMatch", { query: query.trim() })}</p> : null}
+            </div>
+          )}
+        </section>
+
+        <section
+          className={cn(PANEL, "flex min-w-0 flex-col")}
+          aria-label={t("editor")}
+          onKeyDown={(event) => {
+            // The Python editor handles Ctrl+S itself (and marks the event handled); this covers the guided editor.
+            if (event.defaultPrevented) return;
+            if (editing && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+              event.preventDefault();
+              void save();
+            }
+          }}
+        >
+          {!selectedFile ? (
+            <EmptyState icon={FileCode2} title={files.length ? t("selectTitle") : t("noFileTitle")} hint={files.length ? t("selectHint") : t("noFileHint")} className="min-h-[360px]" />
+          ) : (
+            <>
+              <div className="flex flex-wrap items-center gap-3 border-b border-[#1f252e] px-5 py-3.5">
+                <div className="mr-auto min-w-0">
+                  <p className="flex items-center gap-2 truncate font-mono text-[14px] font-semibold text-white" title={selectedFile.filename}>
+                    <FileCode2 className="h-4 w-4 shrink-0 text-[#f5c400]" />
+                    <span className="truncate">{selectedFile.filename}</span>
+                    {dirty ? (
+                      <span className="flex shrink-0 items-center gap-1.5 text-[11.5px] font-normal text-[#c9a400] [font-family:Inter,sans-serif]">
+                        <span className="h-1.5 w-1.5 rounded-full bg-[#f5c400]" />
+                        {t("unsaved")}
+                      </span>
+                    ) : null}
+                  </p>
+                  <p className="mt-0.5 truncate text-[12px] text-[#8c96a8]">
+                    <span className="font-mono">{selectedFile.version || "v1.0.0"}</span>
+                    {!contentLoading && !contentFailed ? <> · {t("lines", { count: lineCount })}</> : null}
+                    {selectedFile.upload_date ? <> · {t("uploadedOn", { date: formatDateTime(selectedFile.upload_date, locale) })}</> : null}
+                    {selectedFile.description ? <> · {selectedFile.description}</> : null}
+                  </p>
+                </div>
+                <div role="tablist" aria-label={t("modeLabel")} className="flex rounded-lg border border-[#252a33] bg-[#0f141b] p-0.5">
+                  {([["guided", SlidersHorizontal, t("modeGuided")], ["python", Braces, t("modePython")]] as const).map(([value, Icon, label]) => {
+                    const unavailable = value === "guided" && !hasGuided;
+                    const button = (
+                      <button
+                        key={value}
+                        type="button"
+                        role="tab"
+                        aria-selected={mode === value}
+                        aria-disabled={unavailable}
+                        onClick={() => !unavailable && chooseMode(value)}
+                        className={cn(
+                          "flex h-7 items-center gap-1.5 rounded-md px-2.5 text-[12px] font-medium transition-colors",
+                          mode === value ? "bg-[#f5c400]/12 text-[#f5c400] shadow-[inset_0_0_0_1px_rgba(245,196,0,0.3)]" : "text-[#8c96a8] hover:text-white",
+                          unavailable && "cursor-not-allowed opacity-40 hover:text-[#8c96a8]",
+                        )}
+                      >
+                        <Icon className="h-3.5 w-3.5" />
+                        {label}
+                      </button>
+                    );
+                    return unavailable ? (
+                      <Tooltip key={value}>
+                        <TooltipTrigger asChild>{button}</TooltipTrigger>
+                        <TooltipContent side="top" className="max-w-xs">{t("guidedUnavailable")}</TooltipContent>
+                      </Tooltip>
+                    ) : (
+                      button
+                    );
+                  })}
+                </div>
+                <div className="flex items-center gap-0.5">
+                  <IconAction label={copied ? t("copied") : t("copy")} onClick={() => void copy()} disabled={contentLoading || contentFailed}>
+                    {copied ? <Check className="h-4 w-4 text-emerald-300" /> : <Copy className="h-4 w-4" />}
+                  </IconAction>
+                  <IconAction label={t("download")} onClick={download} disabled={contentLoading || contentFailed}>
+                    <Download className="h-4 w-4" />
+                  </IconAction>
+                </div>
+                {editing ? (
+                  <div className="flex items-center gap-1.5">
+                    <button type="button" className={cn(SECONDARY_BUTTON, "h-8")} onClick={cancelEdit} disabled={saving}>
+                      <X className="h-3.5 w-3.5" />
+                      {t("cancel")}
+                    </button>
+                    <button type="button" className={cn(PRIMARY_BUTTON, "h-8 px-3")} onClick={() => void save()} disabled={saving || !dirty}>
+                      {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                      {saving ? t("saving") : t("save")}
+                    </button>
+                  </div>
+                ) : (
+                  <button type="button" className={cn(SECONDARY_BUTTON, "h-8")} onClick={() => setEditing(true)} disabled={contentLoading || contentFailed}>
+                    <PenLine className="h-3.5 w-3.5" />
+                    {t("edit")}
+                  </button>
+                )}
+              </div>
+
+              {saveError ? (
+                <div role="alert" className="flex items-start gap-2 border-b border-rose-400/20 bg-rose-400/[0.06] px-5 py-2.5 text-[12.5px] text-rose-200">
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <span>{saveError.message}</span>
+                </div>
+              ) : null}
+
+              <div className="min-h-0 flex-1 p-4">
+                {contentLoading || isLoading ? (
+                  <Skeleton className="h-[420px] w-full bg-[#10161e]" />
+                ) : contentFailed ? (
+                  <EmptyState icon={AlertTriangle} title={t("contentFailed")}>
+                    <button type="button" className={SECONDARY_BUTTON} onClick={() => setContentReload((value) => value + 1)}>
+                      <RefreshCw className="h-4 w-4" />
+                      {t("retry")}
+                    </button>
+                  </EmptyState>
+                ) : mode === "guided" ? (
+                  <GuidedCodeEditor source={editing ? draft : content} onChange={setDraft} disabled={!editing} />
+                ) : (
+                  <CodeEditor
+                    value={editing ? draft : content}
+                    onChange={setDraft}
+                    readOnly={!editing}
+                    errorLine={saveError?.line ?? null}
+                    onSave={() => void save()}
+                    label={t("editorLabel", { name: selectedFile.filename ?? "" })}
+                    maxHeight="600px"
+                  />
+                )}
+              </div>
+              {editing ? (
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-[#1f252e] px-5 py-2.5 text-[11.5px] text-[#687386]">
+                  <span>{mode === "python" ? t("pythonHint") : t("guidedHint")}</span>
+                  <span className="ml-auto">{t("saveHint")}</span>
+                </div>
+              ) : null}
+            </>
+          )}
+        </section>
+      </div>
+
+      <GeneratePanel
+        ref={generator}
+        datasets={datasets}
+        codeFiles={files}
+        onSaved={(id) => {
+          if (dirty) void loadFiles(selectedId);
+          else void loadFiles(id);
+        }}
+      />
+
+      <Dialog open={uploadFile !== null} onOpenChange={(open) => { if (!open && !uploading) setUploadFile(null); }}>
+        <DialogContent
+          className="border-[#252a33] bg-[#0b0f15] sm:max-w-lg"
+          onEscapeKeyDown={(event) => { if (uploading) event.preventDefault(); }}
+          onInteractOutside={(event) => { if (uploading) event.preventDefault(); }}
+        >
+          <DialogHeader>
+            <DialogTitle className="text-white">{t("uploadTitle")}</DialogTitle>
+            <DialogDescription className="text-[#8c96a8]">{t("uploadDescription")}</DialogDescription>
+          </DialogHeader>
+          <form
+            className="space-y-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void upload();
+            }}
+          >
+            <div className="flex items-center gap-3 rounded-lg border border-[#252a33] bg-[#0f141b] px-3.5 py-3">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-sky-400/25 bg-sky-400/[0.07] text-sky-300">
+                <FileCode2 className="h-4 w-4" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-mono text-[13px] text-white" title={uploadFile?.name}>{uploadFile?.name}</p>
+                <p className="text-[11.5px] text-[#687386]">{uploadFile ? formatBytes(uploadFile.size, locale) : ""}</p>
+              </div>
+              <button type="button" className="text-[12px] font-medium text-[#f5c400] hover:underline disabled:opacity-50" onClick={() => fileInput.current?.click()} disabled={uploading}>
+                {t("changeFile")}
+              </button>
+            </div>
+            {uploadNameUsed ? <p className="rounded-md border border-amber-400/25 bg-amber-400/[0.06] px-3 py-2 text-[12px] text-amber-200">{t("nameUsed")}</p> : null}
+            <label className="block space-y-1.5">
+              <span className="text-[12px] font-medium text-[#aab3c2]">{t("version")}</span>
+              <input className={cn(INPUT, "font-mono")} value={version} onChange={(event) => setVersion(event.target.value)} placeholder="v1.0.0" autoFocus disabled={uploading} />
+            </label>
+            <label className="block space-y-1.5">
+              <span className="text-[12px] font-medium text-[#aab3c2]">{t("descriptionLabel")}</span>
+              <textarea
+                className={cn(INPUT, "h-auto min-h-[76px] resize-y py-2 leading-5")}
+                value={description}
+                onChange={(event) => setDescription(event.target.value)}
+                placeholder={t("descriptionPlaceholder")}
+                disabled={uploading}
+              />
+            </label>
+            {uploading ? <WorkingBar /> : null}
+            {uploadError ? (
+              <p role="alert" className="rounded-md border border-rose-400/30 bg-rose-400/[0.07] px-3 py-2 text-[12.5px] leading-5 text-rose-200">{uploadError}</p>
+            ) : null}
+            <DialogFooter className="gap-2">
+              <button type="button" className={SECONDARY_BUTTON} onClick={() => setUploadFile(null)} disabled={uploading}>
+                {t("cancel")}
+              </button>
+              <button type="submit" className={PRIMARY_BUTTON} disabled={!version.trim() || uploading}>
+                {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                {uploading ? t("uploading") : t("uploadAction")}
+              </button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={toDelete !== null} onOpenChange={(open) => { if (!open && !deleting) setToDelete(null); }}>
+        <AlertDialogContent className="border-[#252a33] bg-[#0b0f15]">
           <AlertDialogHeader>
-            <AlertDialogTitle>{t("deleteCodeFileQuestion")}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t("deleteCodeFileWarning", { name: codeToDelete?.name ?? "" })}
+            <AlertDialogTitle className="text-white">{t("deleteTitle")}</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2.5 text-[13px] leading-5 text-[#aab3c2]">
+                <p>{t("deleteBody", { name: toDelete?.filename ?? "" })}</p>
+                {deleteClusters.length ? (
+                  <p className="rounded-md border border-amber-400/25 bg-amber-400/[0.06] px-3 py-2 text-amber-200">
+                    {t("deleteClusters", { count: deleteClusters.length, names: deleteClusters.map((cluster) => cluster.name).join(", "), runs: deleteRuns })}
+                  </p>
+                ) : null}
+              </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleting}>{tCommon("cancel")}</AlertDialogCancel>
+            <AlertDialogCancel disabled={deleting}>{t("cancel")}</AlertDialogCancel>
             <AlertDialogAction
-              onClick={(e) => { e.preventDefault(); handleConfirmDelete(); }}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={(event) => {
+                event.preventDefault();
+                void remove();
+              }}
               disabled={deleting}
+              className="bg-rose-500 text-white hover:bg-rose-500/90"
             >
-              {deleting ? t("deleting") : tCommon("delete")}
+              {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+              {deleting ? t("deleting") : t("deleteAction")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
 
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{t("uploadDialogTitle")}</DialogTitle>
-            <DialogDescription>
-              {t("uploadDialogDesc")}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="version">{t("version")} *</Label>
-              <Input
-                id="version"
-                placeholder={t("versionPlaceholder")}
-                value={version}
-                onChange={(e) => setVersion(e.target.value)}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="description">{t("description")}</Label>
-              <Textarea
-                id="description"
-                placeholder={t("optionalDescription")}
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                rows={3}
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDialogOpen(false)}>
-              {tCommon("cancel")}
-            </Button>
-            <Button onClick={handleUploadSubmit} disabled={uploading}>
-              {uploading ? t("uploading") : tCommon("upload")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={generatedCodeDialog !== null} onOpenChange={(open) => { if (!open) { setGeneratedCodeDialog(null); setGeneratedFileBaseName(""); } }}>
-        <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
-          <DialogHeader>
-            <DialogTitle>{t("saveGeneratedTitle")}</DialogTitle>
-            <DialogDescription>
-              {t("saveGeneratedDesc")}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 flex-1 min-h-0 flex flex-col">
-            <div className="space-y-2">
-              <Label htmlFor="generated-filename">{t("fileName")}</Label>
-              <div className="flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
-                <Input
-                  id="generated-filename"
-                  value={generatedFileBaseName}
-                  onChange={(e) => setGeneratedFileBaseName((e.target.value || "").replace(/\.py$/i, ""))}
-                  placeholder={t("fileNamePlaceholder")}
-                  className="border-0 p-0 focus-visible:ring-0 focus-visible:ring-offset-0 min-w-0 flex-1"
-                />
-                <span className="text-muted-foreground shrink-0">.py</span>
-              </div>
-            </div>
-            <div className="flex-1 min-h-0 rounded-lg border bg-muted/30 p-3 overflow-auto">
-              <pre className="text-sm whitespace-pre-wrap font-mono">{generatedCodeDialog ?? ""}</pre>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={copyGeneratedCode}>
-              <Copy className="mr-2 h-4 w-4" /> {t("copy")}
-            </Button>
-            <Button variant="outline" onClick={() => setGeneratedCodeDialog(null)}>
-              {tCommon("cancel")}
-            </Button>
-            <Button onClick={handleSaveGeneratedAsNew} disabled={savingGenerated || !generatedFileBaseName.trim()}>
-              {savingGenerated ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle className="mr-2 h-4 w-4" />}
-              {savingGenerated ? t("savingGenerated") : t("saveAsNew")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <div className="grid grid-cols-2 gap-6">
-      {/* Left Column - File Upload and List */}
-      <div className="space-y-6">
-        <Card>
-          <CardHeader className="pb-4">
-<div className="flex flex-row items-center justify-between gap-4">
-            <CardTitle className="text-base font-semibold">{t("generateTitle")}</CardTitle>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label>{t("excelDataset")}</Label>
-              <Select value={generateDatasetId || "__none__"} onValueChange={(v) => setGenerateDatasetId(v === "__none__" ? "" : v)}>
-                <SelectTrigger>
-                  <SelectValue placeholder={t("selectDataset")} />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">{t("selectDataset")}</SelectItem>
-                  {datasets.map((d) => (
-                    <SelectItem key={d.id} value={d.id}>
-                      {d.user_name || d.filename || d.id}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <div className="flex items-center justify-between gap-2">
-                <Label>Column instructions</Label>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={handleAutoFillColumnPrompts}
-                  disabled={!generateDatasetId || loadingGenerateColumns || autoFillingColumnPrompts || generateColumns.length === 0}
-                >
-                  {autoFillingColumnPrompts ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : (
-                    <Wand2 className="mr-2 h-4 w-4" />
-                  )}
-                  {autoFillingColumnPrompts ? "Generating..." : "Auto-fill with AI"}
-                </Button>
-              </div>
-              {!generateDatasetId ? (
-                <div className="rounded-md border border-dashed border-border bg-muted/30 p-3 text-sm text-muted-foreground">
-                  Select a dataset to enter formula instructions per column.
-                </div>
-              ) : loadingGenerateColumns ? (
-                <Skeleton className="h-24 w-full" />
-              ) : generateColumns.length === 0 ? (
-                <div className="rounded-md border border-dashed border-border bg-muted/30 p-3 text-sm text-muted-foreground">
-                  No columns found for this dataset.
-                </div>
-              ) : (
-                <div className="max-h-72 space-y-3 overflow-auto rounded-md border p-3">
-                  {generateColumns.map((column) => (
-                    <div key={column} className="grid grid-cols-[minmax(0,180px)_minmax(0,1fr)] items-start gap-2">
-                      <div className="pt-2 text-sm font-medium text-foreground">{column}</div>
-                      <Textarea
-                        placeholder={`Describe formula or rule for ${column}`}
-                        value={columnPrompts[column] || ""}
-                        onChange={(event) =>
-                          setColumnPrompts((previous) => ({
-                            ...previous,
-                            [column]: event.target.value,
-                          }))
-                        }
-                        rows={2}
-                        className="resize-y"
-                      />
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-            <Button onClick={handleGenerateCode} disabled={generating}>
-              {generating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
-              {generating ? t("generating") : t("generateCode")}
-            </Button>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-4">
-<div className="flex flex-row items-center justify-between gap-4">
-            <CardTitle className="text-base font-semibold">{t("codeFilesTitle")}</CardTitle>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".py"
-                className="hidden"
-                onChange={handleFileChange}
-              />
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button 
-                      variant="outline" 
-                      size="sm"
-                      onClick={handleUploadClick}
-                      disabled={uploading}
-                    >
-                      {uploading ? (
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      ) : (
-                        <Upload className="mr-2 h-4 w-4" />
-                      )}
-                      {uploading ? t("uploading") : t("uploadCodeFile")}
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p>{t("uploadPythonFile")}</p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            </div>
-          </CardHeader>
-          <CardContent>
-            {isLoading ? (
-              <div className="space-y-3">
-                {[1, 2, 3].map((i) => (
-                  <Skeleton key={i} className="h-12 w-full" />
-                ))}
-              </div>
-            ) : codeFiles.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-12 text-center">
-                <FileCode className="mb-4 h-12 w-12 text-muted-foreground" />
-                <h3 className="text-lg font-medium text-foreground">
-                  {t("noCodeFiles")}
-                </h3>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {t("noCodeFilesHint")}
-                </p>
-              </div>
-            ) : (
-              <Table>
-<TableHeader>
-                <TableRow>
-                  <TableHead>{t("fileName")}</TableHead>
-                  <TableHead>{t("uploadDate")}</TableHead>
-                  <TableHead className="w-[80px]">{t("actions")}</TableHead>
-                </TableRow>
-              </TableHeader>
-                <TableBody>
-                  {codeFiles.map((file) => (
-                    <TableRow
-                      key={file.id}
-                      className={`cursor-pointer ${
-                        selectedFile === file.id ? "bg-accent" : ""
-                      }`}
-                      onClick={() => handleFileSelect(file.id)}
-                    >
-                      <TableCell className="font-medium">
-                        <div className="flex items-center gap-2">
-                          <FileCode className="h-4 w-4 text-muted-foreground" />
-                          {file.filename}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        <div className="flex flex-col">
-                          <span className="text-xs font-medium">{file.version}</span>
-                          <span className="text-xs">{new Date(file.upload_date).toLocaleString()}</span>
-                        </div>
-                      </TableCell>
-                      <TableCell onClick={(e) => e.stopPropagation()}>
-                        <TooltipProvider>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
-                                onClick={(e) => handleDeleteClick(e, file)}
-                                disabled={deleting}
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              <p>{t("deleteCodeFileTooltip")}</p>
-                            </TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Right Column - Code Editor */}
-      <Card>
-        <CardHeader className="pb-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <CardTitle className="text-base font-semibold">{t("codeEditorTitle")}</CardTitle>
-              {selectedFile && !loadingContent && (
-                <ToggleGroup
-                  type="single"
-                  variant="outline"
-                  size="sm"
-                  value={editorMode}
-                  onValueChange={(value) => value && setEditorMode(value as "guided" | "python")}
-                  aria-label="Editor mode"
-                >
-                  <ToggleGroupItem value="guided" aria-label="Guided editor">
-                    <SlidersHorizontal className="mr-1.5 h-3.5 w-3.5" />
-                    Guided
-                  </ToggleGroupItem>
-                  <ToggleGroupItem value="python" aria-label="Python editor">
-                    <Braces className="mr-1.5 h-3.5 w-3.5" />
-                    Python
-                  </ToggleGroupItem>
-                </ToggleGroup>
-              )}
-            </div>
-            {selectedFile && !loadingContent && (
-              <div className="flex gap-2">
-                {isEditing ? (
-                  <>
-<Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleCancelEdit}
-                    disabled={saving}
-                  >
-                    {tCommon("cancel")}
-                  </Button>
-                  <Button
-                    size="sm"
-                    onClick={handleSaveCode}
-                    disabled={saving}
-                  >
-                    {saving ? (
-                        <><Loader2 className="mr-2 h-4 w-4 animate-spin" />{t("saving")}</>
-                      ) : (
-                        <><CheckCircle className="mr-2 h-4 w-4" />{tCommon("save")}</>
-                      )}
-                  </Button>
-                </>
-              ) : (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setIsEditing(true)}
-                >
-                  {t("editCode")}
-                </Button>
-                )}
-              </div>
-            )}
-          </div>
-        </CardHeader>
-        <CardContent>
-          {isLoading || loadingContent ? (
-            <Skeleton className="h-[400px] w-full" />
-          ) : !selectedFile ? (
-            <div className="flex flex-col items-center justify-center py-12 text-center rounded-lg border border-border bg-muted/30 min-h-[400px]">
-              <FileCode className="mb-4 h-12 w-12 text-muted-foreground" />
-              <h3 className="text-lg font-medium text-foreground">
-                {t("noCodeFileSelected")}
-              </h3>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {t("noCodeFileSelectedHint")}
-              </p>
-            </div>
-          ) : editorMode === "guided" ? (
-            <GuidedCodeEditor
-              source={isEditing ? editedContent : codeContent}
-              onChange={setEditedContent}
-              disabled={!isEditing}
-            />
-          ) : isEditing ? (
-            <Textarea
-              value={editedContent}
-              onChange={(e) => setEditedContent(e.target.value)}
-              className="min-h-[500px] font-mono text-sm bg-muted/30"
-              placeholder="Enter your Python code here..."
-            />
-          ) : (
-            <div className="rounded-lg border border-border bg-muted/30 p-4 overflow-auto max-h-[500px]">
-              <pre className="text-sm leading-relaxed text-foreground whitespace-pre-wrap break-words">
-                {codeContent || '// No content available'}
-              </pre>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      <AlertDialog open={discard !== null} onOpenChange={(open) => { if (!open) setDiscard(null); }}>
+        <AlertDialogContent className="border-[#252a33] bg-[#0b0f15]">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-white">{t("discardTitle")}</AlertDialogTitle>
+            <AlertDialogDescription className="text-[#aab3c2]">{t("discardBody", { name: selectedFile?.filename ?? "" })}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("keepEditing")}</AlertDialogCancel>
+            <AlertDialogAction className="bg-rose-500 text-white hover:bg-rose-500/90" onClick={confirmDiscard}>
+              {t("discard")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
-    </>
   );
 }
