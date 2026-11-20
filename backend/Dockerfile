@@ -13,7 +13,11 @@ RUN apt-get update && apt-get install -y \
 # Copy requirements first for better caching
 COPY requirements.txt .
 
-# Install Python dependencies
+# Install Python dependencies. PyTorch (needed by sentence-transformers) is installed first as the CPU-only build:
+# the default build from PyPI pulls about 2 GB of NVIDIA CUDA libraries that this server cannot use, which made the
+# build slow and broke the download on Render. requirements.txt then keeps the installed CPU build.
+RUN pip install --no-cache-dir --trusted-host download.pytorch.org --trusted-host pypi.org --trusted-host files.pythonhosted.org \
+    --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple "torch==2.15.0+cpu"
 RUN pip install --no-cache-dir --trusted-host pypi.org --trusted-host files.pythonhosted.org -r requirements.txt
 # Copy application code
 COPY . .
